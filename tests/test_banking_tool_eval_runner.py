@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -50,13 +51,11 @@ class TemplateTokenizer:
             role = message["role"]
             if role == "assistant" and message.get("tool_calls"):
                 parts.append(
-                    "assistant:"
-                    + json.dumps({"tool_calls": message["tool_calls"]}, sort_keys=True)
+                    "assistant:" + json.dumps({"tool_calls": message["tool_calls"]}, sort_keys=True)
                 )
             elif role == "tool":
                 parts.append(
-                    f"tool {message['name']}[{message['tool_call_id']}]:"
-                    f"{message['content']}"
+                    f"tool {message['name']}[{message['tool_call_id']}]:{message['content']}"
                 )
             else:
                 parts.append(f"{role}:{message.get('content', '')}")
@@ -309,9 +308,7 @@ def test_runner_generates_two_isolated_phases_and_metadata(tmp_path: Path) -> No
         rows[0]["grounded_final_raw_output"],
     ]
     assert rows[0]["raw_output"] == "\n".join(rows[0]["raw_passes"])
-    assert rows[0]["ordered_emitted_tool_calls"] == [
-        {"name": "list_accounts", "arguments": {}}
-    ]
+    assert rows[0]["ordered_emitted_tool_calls"] == [{"name": "list_accounts", "arguments": {}}]
     assert rows[0]["appended_tool_results"][0]["name"] == "list_accounts"
     assert rows[0]["stop_reason"] == "final_answer"
     assert rows[1]["first_assistant_parsed"]["content"] == "Please provide the last four digits."
@@ -334,9 +331,7 @@ def test_runner_generates_two_isolated_phases_and_metadata(tmp_path: Path) -> No
         "canonical_results_only_for_exact_emitted_calls": True,
         "teacher_forced_unseen_assistant_tool_calls": False,
     }
-    report = json.loads(
-        Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8")
-    )
+    report = json.loads(Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8"))
     assert report["checkpoint_revision"] == "a" * 40
     assert report["metrics"]["tool_name_accuracy"]["score"] == 1.0
     assert report["metrics"]["grounded_final_factuality"]["score"] == 1.0
@@ -346,20 +341,14 @@ def test_runner_requires_model_to_emit_subsequent_tool_calls(tmp_path: Path) -> 
     config = _single_record_config(tmp_path, _two_tool_record())
 
     metadata = runner.run_eval(config, backend=OneThenFinalBackend())
-    row = json.loads(
-        Path(metadata["outputs"]["predictions_jsonl"]).read_text(encoding="utf-8")
-    )
-    report = json.loads(
-        Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8")
-    )
+    row = json.loads(Path(metadata["outputs"]["predictions_jsonl"]).read_text(encoding="utf-8"))
+    report = json.loads(Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8"))
 
     assert row["raw_passes"] == [
         '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>',
         "Done. You have account ending in 1792.",
     ]
-    assert row["ordered_emitted_tool_calls"] == [
-        {"name": "list_accounts", "arguments": {}}
-    ]
+    assert row["ordered_emitted_tool_calls"] == [{"name": "list_accounts", "arguments": {}}]
     assert "list_cards" not in row["raw_output"]
     assert row["matched_expected_tool_call_count"] == 1
     assert report["metrics"]["tool_name_accuracy"]["numerator"] == 0
@@ -371,9 +360,7 @@ def test_runner_allows_model_owned_followup_tool_calls(tmp_path: Path) -> None:
     config = _single_record_config(tmp_path, _two_tool_record())
 
     metadata = runner.run_eval(config, backend=backend)
-    row = json.loads(
-        Path(metadata["outputs"]["predictions_jsonl"]).read_text(encoding="utf-8")
-    )
+    row = json.loads(Path(metadata["outputs"]["predictions_jsonl"]).read_text(encoding="utf-8"))
 
     assert row["ordered_emitted_tool_calls"] == [
         {"name": "list_accounts", "arguments": {}},
@@ -403,6 +390,38 @@ def test_runner_resumes_existing_prediction_jsonl_without_duplicates(tmp_path: P
     assert len(rows) == 2
     assert first_metadata["outputs"]["new_rows_written"] == 2
     assert second_metadata["outputs"]["new_rows_written"] == 0
+
+
+def test_counterfactual_manifest_is_validated_before_generation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    assert config.manifest is not None
+    data_path = config.manifest.parent / "test.jsonl"
+    config.manifest.write_text(
+        json.dumps(
+            {
+                "contract": "banking-counterfactual-eval-manifest/v1",
+                "schema_version": "banking-tool-sft/v1",
+                "training_allowed": False,
+                "allowed_use": ["counterfactual-evaluation"],
+                "splits": {
+                    "test": {
+                        "path": "test.jsonl",
+                        "record_count": 2,
+                        "bytes": data_path.stat().st_size,
+                        "sha256": "0" * 64,
+                        "allowed_use": ["counterfactual-evaluation"],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    backend = RecordingBackend()
+
+    with pytest.raises(ValueError, match="digest mismatch"):
+        runner.run_eval(config, backend=backend)
+
+    assert backend.calls == []
 
 
 def test_tool_phase_targets_tool_call_after_prior_multiturn_clarification() -> None:
@@ -529,6 +548,58 @@ def test_exact_revision_guard_rejects_branch_names(tmp_path: Path) -> None:
 
     with pytest.raises(runner.ToolEvalGenerationError, match="exact 40-character"):
         runner.run_eval(config, backend=RecordingBackend())
+
+
+def test_four_bit_loader_uses_nf4_double_quantization(tmp_path: Path) -> None:
+    config = runner.EvalConfig(
+        **{**_config(tmp_path).__dict__, "device": "cuda", "load_in_4bit": True}
+    )
+    captured: dict[str, Any] = {}
+
+    class FakeTorch:
+        bfloat16 = "bf16"
+        float16 = "fp16"
+        float32 = "fp32"
+
+    def fake_quantization_config(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return dict(kwargs)
+
+    kwargs = runner.model_load_kwargs(
+        config,
+        torch_module=FakeTorch,
+        quantization_config_factory=fake_quantization_config,
+    )
+
+    assert kwargs["dtype"] == "fp32"
+    assert kwargs["device_map"] == {"": 0}
+    assert kwargs["quantization_config"] == captured
+    assert captured == {
+        "load_in_4bit": True,
+        "bnb_4bit_quant_type": "nf4",
+        "bnb_4bit_use_double_quant": True,
+        "bnb_4bit_compute_dtype": "fp32",
+    }
+
+
+def test_four_bit_loader_rejects_cpu_device(tmp_path: Path) -> None:
+    config = runner.EvalConfig(**{**_config(tmp_path).__dict__, "load_in_4bit": True})
+
+    with pytest.raises(runner.ToolEvalGenerationError, match="requires --device cuda"):
+        runner.validate_config(config)
+
+
+def test_local_manifest_accepts_only_matching_sha256_identity(tmp_path: Path) -> None:
+    base = _config(tmp_path)
+    assert base.manifest is not None
+    digest = hashlib.sha256(base.manifest.read_bytes()).hexdigest()
+    config = runner.EvalConfig(**{**base.__dict__, "dataset_revision": f"sha256:{digest}"})
+
+    runner.validate_config(config)
+
+    mismatched = runner.EvalConfig(**{**base.__dict__, "dataset_revision": f"sha256:{'0' * 64}"})
+    with pytest.raises(runner.ToolEvalGenerationError, match="does not match"):
+        runner.validate_config(mismatched)
 
 
 def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:

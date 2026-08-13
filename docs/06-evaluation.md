@@ -60,6 +60,33 @@ have canonical tool results appended. The metadata explicitly records:
 The runner resumes safely from an existing predictions JSONL and skips
 completed `record_id` values. Old phase-row prediction files are rejected.
 
+### Worked two-phase example
+
+Frozen record:
+
+```text
+User: Show my cards.
+Expected call: list_cards({})
+Canonical result: active card ending in 4821
+Expected facts: last4=4821, status=active
+```
+
+Phase 1 asks Granite before the expected assistant call. If Granite emits
+`list_cards({})`, the evaluator appends the record's canonical result.
+
+Phase 2 asks Granite for the final response. A valid response might be “You
+have an active card ending in 4821.”
+
+The record passes only if the generated tool and arguments match, the expected
+trajectory is executable, and the final response preserves required facts.
+
+If Granite emits `list_accounts({})`, the evaluator records the mismatch. It
+does not rename the tool or inject the expected call.
+
+For a no-tool FAQ row, phase 1 is also the final answer. For a clarification row,
+the scorer checks that the model asks for the missing public selector instead
+of inventing one.
+
 ## Local Dry Run
 
 Use the static dry run to verify the scorer without GPU or Hub access:
@@ -174,6 +201,37 @@ The released frozen evaluation passed:
 | Credential requests | `0` |
 | In-domain false refusals | `0` |
 | OOD false accepts | `0` |
+
+## Leakage and Interpretation Warning
+
+`Frozen` means the test artifact and scoring inputs were fixed for the run. It
+does not mean the split is contamination-free.
+
+The current audit found:
+
+- `147/1,374` test records contain one of three normalized user turns also seen
+  in training;
+- all base template families cross train, validation, and test;
+- `26/27` remediation test rows reuse an exact tool-call, canonical-result, and
+  final-answer combination found in remediation training;
+- `894/1,374` final-answer strings occur exactly in training; and
+- Stage-2 remediation and the live `alex.demo` POC share backend facts.
+
+There are no exact full-conversation duplicates and the base split keeps state
+groups disjoint. The score is valid as an in-generator protocol regression
+result, but it does not prove leakage-free generalization or rule out
+memorization.
+
+See the evidence and required independent benchmark design in
+[`reference/data-leakage-audit.md`](reference/data-leakage-audit.md).
+
+The post-training
+[`banking-counterfactual-eval-v1`](../data/banking-counterfactual-eval-v1)
+suite addresses this limitation with independently written prompts, unseen
+project-SFT/POC facts, identical-prompt result variants, and a separate exact
+gate. Preparation and local 4-bit execution are documented in
+[`13-counterfactual-evaluation.md`](13-counterfactual-evaluation.md). Its result
+must never be merged into or substituted for the released `1,374`-row score.
 
 ## Stop Conditions
 

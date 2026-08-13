@@ -97,6 +97,14 @@ class LearnedBankingRouter:
                 "RETAIL_BANK_ROUTER_REVISION must pin the published v4 router commit"
             )
         root = Path(snapshot_download(ROUTER_REPO_ID, revision=ROUTER_REVISION))
+        return cls.from_artifact_dir(root)
+
+    @classmethod
+    def from_artifact_dir(
+        cls,
+        artifact_dir: str | Path,
+    ) -> LearnedBankingRouter:
+        root = Path(artifact_dir)
         config = verify_artifact(root)
         tokenizer = AutoTokenizer.from_pretrained(
             root,

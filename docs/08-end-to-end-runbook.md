@@ -279,6 +279,27 @@ clarification, FAQ, OOD, and multi-turn cases. The diagnostics panel must show
 the active model revision, active router revision, and CUDA-backed generation
 for model-handled turns.
 
+## One Scenario Across the Runbook
+
+Use “Show my service cases” followed by “When was that created?” as a mental
+checkpoint at every stage:
+
+| Stage | Evidence to inspect |
+| --- | --- |
+| Stage-1 data | A valid `list_service_cases` call, correlated result, and grounded final answer. |
+| Stage-2 data | A separately authored contextual `created_at` follow-up. |
+| Granite training | Assistant-only labels cover the call and final responses. |
+| Router data | Current turn and visible history exist; target call/result do not. |
+| Router calibration | Clear banking routes in-domain; ambiguous context may route uncertain, not OOD. |
+| Frozen evaluation | Tool, arguments, trajectory, and `created_at` fact pass. |
+| Live POC | Diagnostics show the pinned 9B model, CUDA, context applied, call, result, and final response. |
+
+If a stage cannot produce its expected evidence, stop there. A later green
+deployment cannot compensate for invalid data or evaluation.
+
+The conceptual trace is expanded in
+[End-to-End Flow by Example](11-end-to-end-flow-by-example.md).
+
 ## Stop Conditions
 
 Stop before release if:

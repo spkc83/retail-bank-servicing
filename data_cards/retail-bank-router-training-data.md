@@ -33,5 +33,23 @@ checksum-pinned UCI CLINC150 OOD language, and deterministic synthetic
 conversation variants. Exact captured POC failures are reserved for held-out
 regression rows and are not copied into training.
 
+## Example Row
+
+```text
+[CURRENT_USER]
+When was that created?
+[PREVIOUS_ASSISTANT]
+You have a closed mailing-address update case.
+[PREVIOUS_USER]
+Show my service cases.
+```
+
+Targets mark the row as supported banking, `service_cases`, and
+`context_dependent`. The row excludes the current assistant answer, target tool
+call, tool result, and grounding facts to prevent label leakage.
+
+At serving time, a middle-domain score is `uncertain` and continues to the 9B
+agent. Only high-confidence OOD stops generation.
+
 See `manifest.json` in the dataset repository for source revisions, hashes,
 mapping policy, and audit counts.

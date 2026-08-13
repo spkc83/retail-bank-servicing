@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import os
+import threading
+from typing import Any
+
+MODEL_ID = os.environ.get(
+    "RETAIL_BANK_MODEL_ID",
+    "spkc83/retail-bank-servicing-agent-9b",
+)
+MODEL_REVISION = os.environ.get(
+    "RETAIL_BANK_MODEL_REVISION",
+    "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+)
+
+
+class LocalGraniteRuntime:
+    """Deterministic Granite runtime quantized at load time for a 12GB CUDA GPU."""
+
+    def __init__(
+        self,
+        *,
+        tokenizer: Any | None,
+        model: Any | None,
+        torch_module: Any | None,
+        cuda_metadata: dict[str, str],
+        weight_quantization: str,
+    ) -> None:
+        self.tokenizer = tokenizer
+        self.model = model
+        self.torch = torch_module
+        self.cuda_metadata = dict(cuda_metadata)
+        self.weight_quantization = weight_quantization
+        self._generation_lock = threading.Lock()
+
+    @classmethod
+    def load(cls) -> LocalGraniteRuntime:
+        if os.environ.get("LOCAL_POC_SKIP_MODEL_LOAD") == "1":
+            return cls(
+                tokenizer=None,
+                model=None,
+                torch_module=None,
+                cuda_metadata={
+                    "cuda_device_name": "unavailable",
+                    "cuda_compute_capability": "unavailable",
+                    "cuda_compiled_arch": "unavailable",
+                },
+                weight_quantization="not-loaded-test-mode",
+            )
+
+        try:
+            import torch
+            from transformers import (
+                AutoModelForCausalLM,
+                AutoTokenizer,
+                BitsAndBytesConfig,
+            )
+        except ImportError as error:
+            raise RuntimeError(
+                "Local Granite inference requires torch, transformers, and bitsandbytes"
+            ) from error
+
+        cuda_metadata = validate_cuda_runtime(torch)
+        tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            token=os.environ.get("HF_TOKEN"),
+            trust_remote_code=False,
+        )
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            token=os.environ.get("HF_TOKEN"),
+            trust_remote_code=False,
+            **build_model_load_kwargs(
+                torch_module=torch,
+                quantization_config_factory=BitsAndBytesConfig,
+            ),
+        )
+        model.eval()
+        return cls(
+            tokenizer=tokenizer,
+            model=model,
+            torch_module=torch,
+            cuda_metadata=cuda_metadata,
+            weight_quantization="bitsandbytes-nf4-double",
+        )
+
+    def count_tokens(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+    ) -> int:
+        tokenizer, _model, _torch = self._required_components()
+        rendered = tokenizer.apply_chat_template(
+            messages,
+            tools=tools,
+            tokenize=True,
+            add_generation_prompt=True,
+        )
+        input_ids = rendered.get("input_ids") if hasattr(rendered, "get") else rendered
+        if hasattr(input_ids, "shape"):
+            return int(input_ids.shape[-1])
+        if not hasattr(input_ids, "__len__"):
+            raise RuntimeError("tokenizer did not return countable input IDs")
+        return len(input_ids)
+
+    def generate(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_new_tokens: int,
+    ) -> str:
+        tokenizer, model, torch = self._required_components()
+        if not messages or messages[0].get("role") != "system":
+            raise ValueError("model messages must begin with a system prompt")
+        if not 1 <= max_new_tokens <= 512:
+            raise ValueError("max_new_tokens must be between 1 and 512")
+        rendered = tokenizer.apply_chat_template(
+            messages,
+            tools=tools,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        encoded = tokenizer(rendered, return_tensors="pt")
+        device = _model_device(model)
+        inputs = {
+            name: tensor.to(device)
+            for name, tensor in encoded.items()
+            if hasattr(tensor, "to")
+        }
+        if "attention_mask" not in inputs:
+            inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+        with self._generation_lock, torch.inference_mode():
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                use_cache=True,
+            )
+        prompt_width = int(inputs["input_ids"].shape[-1])
+        new_ids = output_ids[0, prompt_width:]
+        return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+
+    def runtime_metadata(self) -> dict[str, str]:
+        device = "unavailable" if self.model is None else str(_model_device(self.model))
+        metadata = {
+            "model_id": MODEL_ID,
+            "model_revision": MODEL_REVISION,
+            "runtime_device": device,
+            "weight_quantization": self.weight_quantization,
+            **self.cuda_metadata,
+        }
+        if self.model is not None and self.torch is not None:
+            allocated = self.torch.cuda.memory_allocated(0) / (1024**3)
+            reserved = self.torch.cuda.memory_reserved(0) / (1024**3)
+            metadata["cuda_memory_allocated_gib"] = f"{allocated:.2f}"
+            metadata["cuda_memory_reserved_gib"] = f"{reserved:.2f}"
+        return metadata
+
+    def _required_components(self) -> tuple[Any, Any, Any]:
+        if self.tokenizer is None or self.model is None or self.torch is None:
+            raise RuntimeError("Local Granite model is unavailable")
+        return self.tokenizer, self.model, self.torch
+
+
+def build_model_load_kwargs(
+    *,
+    torch_module: Any,
+    quantization_config_factory: Any,
+) -> dict[str, Any]:
+    dtype = torch_module.float16
+    return {
+        "dtype": dtype,
+        "device_map": {"": 0},
+        "low_cpu_mem_usage": True,
+        "quantization_config": quantization_config_factory(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=dtype,
+        ),
+    }
+
+
+def validate_cuda_runtime(torch_module: Any) -> dict[str, str]:
+    if not torch_module.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable; local Granite 9B requires a CUDA GPU")
+    major, minor = torch_module.cuda.get_device_capability(0)
+    compiled_arch = f"sm_{major}{minor}"
+    arch_list = set(torch_module.cuda.get_arch_list())
+    if compiled_arch not in arch_list:
+        raise RuntimeError(
+            f"The installed PyTorch build does not include {compiled_arch}; "
+            f"compiled architectures: {sorted(arch_list)}"
+        )
+    return {
+        "cuda_device_name": str(torch_module.cuda.get_device_name(0)),
+        "cuda_compute_capability": f"{major}.{minor}",
+        "cuda_compiled_arch": compiled_arch,
+    }
+
+
+def _model_device(model: Any) -> Any:
+    device = getattr(model, "device", None)
+    if device is not None:
+        return device
+    return next(model.parameters()).device

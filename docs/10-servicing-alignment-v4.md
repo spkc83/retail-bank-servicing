@@ -77,6 +77,38 @@ The augmentation contains:
 Tool calls contain only public arguments. Synthetic tool results match the
 mock backend fields used by the POC.
 
+### Worked remediation example
+
+Observed failure shape:
+
+```text
+User: Show my service cases.
+Assistant: You have a closed mailing-address update case.
+User: When was that created?
+Bad behavior: repeats the first answer or chooses an unrelated tool.
+```
+
+The Granite remediation record includes visible history, a model-owned
+`list_service_cases` target when fresh customer data is needed, a correlated
+synthetic result, and a final assistant target grounded in `created_at`.
+
+The matching router row stops before the current assistant action:
+
+```text
+input: current user turn + prior visible user/assistant exchange
+domain target: supported banking
+capability target: service_cases
+relation target: context_dependent
+excluded: expected tool call, tool result, grounding facts, final answer
+```
+
+This pairing teaches two separate abilities. The router learns not to block the
+follow-up. Granite learns how to answer it.
+
+Training and test use separately worded variants. Copying the exact observed
+sentence into training would make the regression easy without proving the
+general behavior.
+
 ## Generate and Verify
 
 From the repository root:

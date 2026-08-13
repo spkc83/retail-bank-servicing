@@ -3,12 +3,19 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #   "accelerate==1.12.0",
+#   "bitsandbytes==0.50.0",
 #   "datasets==4.5.0",
 #   "huggingface-hub==1.22.0",
 #   "safetensors==0.8.0",
-#   "torch>=2.9,<3",
+#   "torch==2.12.1",
 #   "transformers==5.13.0",
 # ]
+# [tool.uv.sources]
+# torch = { index = "pytorch-cu126" }
+# [[tool.uv.index]]
+# name = "pytorch-cu126"
+# url = "https://download.pytorch.org/whl/cu126"
+# explicit = true
 # ///
 """Generate read-only banking-v3 frozen tool-eval predictions from a merged Hub model."""
 
@@ -28,6 +35,12 @@ from typing import Any, Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from hello_slm.banking_counterfactual_eval_data import (
+    COUNTERFACTUAL_GATE_CONTRACT,
+    COUNTERFACTUAL_MANIFEST_CONTRACT,
+    counterfactual_gate_failures,
+    validate_counterfactual_manifest,
+)
 from hello_slm.banking_tool_eval import (
     StaticPredictionModel,
     TaggedJsonToolAdapter,
@@ -87,6 +100,7 @@ class EvalConfig:
     push_to_hub: bool
     enforce_release_gates: bool
     token: str | None
+    load_in_4bit: bool = False
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -109,6 +123,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-tool-calls", type=int, default=6)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument(
+        "--load-in-4bit",
+        action="store_true",
+        help="Load CUDA linear weights with bitsandbytes NF4 double quantization.",
+    )
     parser.add_argument("--push-to-hub", action="store_true")
     parser.add_argument("--enforce-release-gates", action="store_true")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
@@ -138,6 +157,7 @@ def config_from_args(args: argparse.Namespace) -> EvalConfig:
         push_to_hub=bool(args.push_to_hub),
         enforce_release_gates=bool(args.enforce_release_gates),
         token=args.token,
+        load_in_4bit=bool(args.load_in_4bit),
     )
 
 
@@ -151,6 +171,12 @@ def validate_exact_revision(value: str, *, field: str) -> None:
 def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> dict[str, Any]:
     validate_config(config)
     manifest_path = resolve_manifest(config)
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    is_counterfactual = (
+        manifest_payload.get("contract") == COUNTERFACTUAL_MANIFEST_CONTRACT
+    )
+    if is_counterfactual:
+        validate_counterfactual_manifest(manifest_path)
     records = load_manifest_records(manifest_path, config.split)
     if config.limit is not None:
         records = records[: config.limit]
@@ -200,13 +226,16 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
 
     report = evaluate_records(
         records,
-        model=StaticPredictionModel(
-            load_predictions_jsonl(output_paths["predictions"])
-        ),
+        model=StaticPredictionModel(load_predictions_jsonl(output_paths["predictions"])),
         adapter=TaggedJsonToolAdapter(template_hash=adapter.template_hash),
         checkpoint_revision=config.model_revision,
     )
-    gate_failures = release_gate_failures(report)
+    if is_counterfactual:
+        gate_contract = COUNTERFACTUAL_GATE_CONTRACT
+        gate_failures = counterfactual_gate_failures(report, records)
+    else:
+        gate_contract = "banking-tool-release-gate/v1"
+        gate_failures = release_gate_failures(report)
     write_json(output_paths["report"], report)
     metadata = build_metadata(
         config,
@@ -221,6 +250,7 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         report_path=output_paths["report"],
     )
     metadata["release_gate"] = {
+        "contract": gate_contract,
         "enforced": config.enforce_release_gates,
         "eligible": not gate_failures,
         "failures": gate_failures,
@@ -230,14 +260,25 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         publish_eval_artifacts(config, output_paths)
     if config.enforce_release_gates and gate_failures:
         raise ToolEvalGenerationError(
-            "frozen evaluation release gates failed: " + "; ".join(gate_failures)
+            f"{gate_contract} failed: " + "; ".join(gate_failures)
         )
     return metadata
 
 
 def validate_config(config: EvalConfig) -> None:
     validate_exact_revision(config.model_revision, field="--model-revision")
-    validate_exact_revision(config.dataset_revision, field="--dataset-revision")
+    if config.dataset_revision.startswith("sha256:"):
+        if config.manifest is None:
+            raise ToolEvalGenerationError("sha256 dataset identity requires a local --manifest")
+        if not config.manifest.is_file():
+            raise ToolEvalGenerationError(f"manifest is unavailable: {config.manifest}")
+        expected = f"sha256:{sha256_file(config.manifest)}"
+        if config.dataset_revision != expected:
+            raise ToolEvalGenerationError(
+                "--dataset-revision sha256 does not match the local manifest"
+            )
+    else:
+        validate_exact_revision(config.dataset_revision, field="--dataset-revision")
     if config.max_new_tokens_first < 1:
         raise ToolEvalGenerationError("--max-new-tokens-first must be at least 1")
     if config.max_new_tokens_final < 1:
@@ -248,6 +289,8 @@ def validate_config(config: EvalConfig) -> None:
         raise ToolEvalGenerationError("--max-tool-calls must be at least 1")
     if config.limit is not None and config.limit < 1:
         raise ToolEvalGenerationError("--limit must be at least 1")
+    if config.load_in_4bit and config.device != "cuda":
+        raise ToolEvalGenerationError("--load-in-4bit requires --device cuda")
 
 
 def resolve_manifest(config: EvalConfig) -> Path:
@@ -276,7 +319,8 @@ def resolve_manifest(config: EvalConfig) -> Path:
 
 
 def output_paths_for(config: EvalConfig) -> dict[str, Path]:
-    slug = f"{config.model_revision[:12]}-{config.dataset_revision[:12]}-{config.split}"
+    dataset_identity = config.dataset_revision.removeprefix("sha256:")
+    slug = f"{config.model_revision[:12]}-{dataset_identity[:12]}-{config.split}"
     return {
         "predictions": config.predictions_jsonl or config.output_dir / f"predictions-{slug}.jsonl",
         "metadata": config.metadata_json or config.output_dir / f"metadata-{slug}.json",
@@ -384,13 +428,9 @@ def generate_record_prediction_row(
         max_tool_passes=max_tool_passes,
         max_tool_calls=max_tool_calls,
     )
-    requires_tool = (
-        bool(expected.get("requires_tool")) if isinstance(expected, Mapping) else None
-    )
+    requires_tool = bool(expected.get("requires_tool")) if isinstance(expected, Mapping) else None
     expected_path = expected.get("path") if isinstance(expected, Mapping) else None
-    expected_tool_calls = (
-        expected.get("tool_calls", []) if isinstance(expected, Mapping) else []
-    )
+    expected_tool_calls = expected.get("tool_calls", []) if isinstance(expected, Mapping) else []
     expected_grounding_facts = (
         expected.get("grounding_facts", []) if isinstance(expected, Mapping) else []
     )
@@ -431,9 +471,7 @@ def generate_iterative_trajectory(
     requires_tool = expected_requires_tool(record)
 
     for pass_index in range(max_tool_passes):
-        max_new_tokens = (
-            max_new_tokens_first if pass_index == 0 else max_new_tokens_final
-        )
+        max_new_tokens = max_new_tokens_first if pass_index == 0 else max_new_tokens_final
         prompt_count = len(transcript)
         raw = backend.generate_text(transcript, max_new_tokens=max_new_tokens)
         parsed, parse_error = parse_or_error(adapter, raw)
@@ -517,9 +555,7 @@ def generate_iterative_trajectory(
         "appended_tool_results": appended_results,
         "matched_expected_tool_call_count": next_expected_index,
         "stop_reason": stop_reason,
-        "first_assistant_parsed": (
-            pass_reports[0]["parsed_assistant"] if pass_reports else None
-        ),
+        "first_assistant_parsed": (pass_reports[0]["parsed_assistant"] if pass_reports else None),
         "first_assistant_parse_error": (
             pass_reports[0]["parse_error"] if pass_reports else "no_generation_pass"
         ),
@@ -553,8 +589,7 @@ def canonical_tool_results(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
         dict(message)
         for message in messages_list(record)
-        if message.get("role") == "tool"
-        and str(message.get("tool_call_id", "")) in target_ids
+        if message.get("role") == "tool" and str(message.get("tool_call_id", "")) in target_ids
     ]
 
 
@@ -605,16 +640,11 @@ class TransformersGenerationBackend:
     def _load(self) -> None:
         try:
             import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         except ImportError as exc:
             raise ToolEvalGenerationError("transformers and torch are required") from exc
         if self.config.device == "cuda" and not torch.cuda.is_available():
             raise ToolEvalGenerationError("CUDA device requested but unavailable")
-        dtype_by_name = {
-            "bf16": torch.bfloat16,
-            "fp16": torch.float16,
-            "fp32": torch.float32,
-        }
         tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_repo,
             revision=self.config.model_revision,
@@ -624,13 +654,17 @@ class TransformersGenerationBackend:
         if getattr(tokenizer, "pad_token_id", None) is None:
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
+        load_kwargs = model_load_kwargs(
+            self.config,
+            torch_module=torch,
+            quantization_config_factory=BitsAndBytesConfig,
+        )
         model = AutoModelForCausalLM.from_pretrained(
             self.config.model_repo,
             revision=self.config.model_revision,
             token=self.config.token,
-            dtype=dtype_by_name[self.config.dtype],
-            device_map={"": 0} if self.config.device == "cuda" else None,
             trust_remote_code=self.config.trust_remote_code,
+            **load_kwargs,
         )
         if self.config.device != "cuda":
             model.to(self.config.device)
@@ -677,6 +711,32 @@ class TransformersGenerationBackend:
 
     def close(self) -> None:
         self.model = None
+
+
+def model_load_kwargs(
+    config: EvalConfig,
+    *,
+    torch_module: Any,
+    quantization_config_factory: Any,
+) -> dict[str, Any]:
+    dtype_by_name = {
+        "bf16": torch_module.bfloat16,
+        "fp16": torch_module.float16,
+        "fp32": torch_module.float32,
+    }
+    dtype = dtype_by_name[config.dtype]
+    kwargs: dict[str, Any] = {
+        "dtype": dtype,
+        "device_map": {"": 0} if config.device == "cuda" else None,
+    }
+    if config.load_in_4bit:
+        kwargs["quantization_config"] = quantization_config_factory(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=dtype,
+        )
+    return kwargs
 
 
 def read_completed_predictions(path: Path) -> set[str]:
@@ -743,6 +803,7 @@ def build_metadata(
             "max_tool_calls": config.max_tool_calls,
             "dtype": config.dtype,
             "device": config.device,
+            "weight_quantization": ("bitsandbytes-nf4-double" if config.load_in_4bit else "none"),
         },
         "phases": {
             "first_assistant_records": first_phase,
@@ -755,7 +816,9 @@ def build_metadata(
             "report_sha256": sha256_file(report_path),
             "new_rows_written": written,
             "hub_path_prefix": (
-                f"evaluation/{config.model_revision[:12]}-{config.dataset_revision[:12]}"
+                "evaluation/"
+                f"{config.model_revision[:12]}-"
+                f"{config.dataset_revision.removeprefix('sha256:')[:12]}"
             ),
         },
         "elapsed_seconds": round(elapsed_seconds, 3),
@@ -775,7 +838,8 @@ def publish_eval_artifacts(config: EvalConfig, output_paths: Mapping[str, Path])
         raise ToolEvalGenerationError(
             "huggingface-hub is required to publish evaluation artifacts"
         ) from exc
-    path_prefix = f"evaluation/{config.model_revision[:12]}-{config.dataset_revision[:12]}"
+    dataset_identity = config.dataset_revision.removeprefix("sha256:")
+    path_prefix = f"evaluation/{config.model_revision[:12]}-{dataset_identity[:12]}"
     operations = [
         CommitOperationAdd(
             path_in_repo=f"{path_prefix}/{path.name}",
@@ -793,8 +857,7 @@ def publish_eval_artifacts(config: EvalConfig, output_paths: Mapping[str, Path])
         operations=operations,
         commit_message="Add frozen banking-v3 tool-use evaluation",
         commit_description=(
-            f"Model revision {config.model_revision}; "
-            f"dataset revision {config.dataset_revision}."
+            f"Model revision {config.model_revision}; dataset revision {config.dataset_revision}."
         ),
     )
 

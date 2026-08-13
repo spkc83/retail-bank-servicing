@@ -311,6 +311,10 @@ def build_dry_run_plan(config: WorkerConfig) -> dict[str, Any]:
 
 def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any]]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("training_allowed") is False or manifest.get("contract") == (
+        "banking-counterfactual-eval-manifest/v1"
+    ):
+        raise ValueError(f"evaluation-only manifest cannot be used for training: {manifest_path}")
     base_dir = manifest_path.parent
     paths: list[Path] = []
     if "splits" in manifest and split in manifest["splits"]:
@@ -342,6 +346,16 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
                     records.append(json.loads(line))
     if not records:
         raise ValueError(f"manifest split {split!r} is empty")
+    non_trainable = [
+        str(record.get("record_id", "<missing>"))
+        for record in records
+        if record.get("metadata", {}).get("trainable") is False
+    ]
+    if non_trainable:
+        raise ValueError(
+            "evaluation-only records cannot be used for training: "
+            + ", ".join(non_trainable[:3])
+        )
     return records
 
 

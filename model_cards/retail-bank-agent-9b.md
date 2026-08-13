@@ -65,6 +65,19 @@ anaphora, clarification answers, agent repair, and topic shifts. The composite
 corpus keeps the full initial SFT corpus and appends 427 targeted remediation
 records in split.
 
+## Inference Example
+
+```text
+User: Show my cards.
+Model pass 1: <tool_call>{"name":"list_cards","arguments":{}}</tool_call>
+Runtime: executes the synthetic list_cards tool
+Model pass 2: You have an active card ending in 4821.
+```
+
+For “Replace the active one,” the model also needs retained visible history.
+The router may label the turn `in_domain` or `uncertain`; either route invokes
+this model. Router capability candidates do not enter the model prompt.
+
 ## Servicing-Remediation Training Result
 
 - Training job: `spkc83/6a6ca6276b79c09949c1d6cb`
@@ -100,6 +113,32 @@ because the corrected rows are prompt-identical to the training/evaluation
 rows: the rendered prompts, target tool calls, and target final responses are
 equivalent for generation and scoring. This card does not claim that a second
 generation run was performed.
+
+### Evaluation-integrity limitation
+
+The frozen score is an in-generator protocol regression result, not a
+leakage-free generalization benchmark. A repository audit found shared POC
+facts, shared template families, repeated user turns, and repeated targets
+between training and test.
+
+In particular, `26/27` remediation test rows reuse an exact expected tool call,
+canonical tool result, and final answer found in remediation training. Across
+the complete test split, `894/1,374` final-answer strings occur in training.
+
+No exact full-conversation duplicates were found, and base state groups remain
+disjoint. These protections do not rule out memorization as one contributor to
+the reported score or live `alex.demo` behavior.
+
+See
+[`docs/reference/data-leakage-audit.md`](../docs/reference/data-leakage-audit.md)
+for scope, evidence, and the clean counterfactual benchmark required before
+claiming independent generalization.
+
+That benchmark is now implemented as the evaluation-only local
+[`banking-counterfactual-eval-v1`](../data/banking-counterfactual-eval-v1)
+suite. Its preparation audit and any pinned-model result are reported
+separately from the released `1,374`-record regression score; a preparation
+pass is not itself evidence that this checkpoint passed the benchmark.
 
 ## Intended Use
 

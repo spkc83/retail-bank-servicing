@@ -36,6 +36,28 @@ runtime defaults.
 | Tool format | Granite native tagged JSON |
 | Remote-job bootstrap source | `1da0bdc1cdcc5a0e1c5ce137c32384d927c1948b` |
 
+### How to follow one released artifact chain
+
+Read the ledger as a dependency chain:
+
+```text
+IBM base revision
+  -> stage-1 dataset revision
+  -> stage-1 checkpoint revision
+  -> stage-2 dataset revision
+  -> servicing-model weights revision
+  -> evaluation head revision
+  -> Space runtime model variable
+```
+
+The live Space must load model revision
+`1d56824995aa1adecfe20f62ca42fb1c0c443817`, not the mutable `main` branch.
+Evaluation head `214fc0d9e143e4fa7b658de1993113562b90958a` describes
+that model and its pinned corrected dataset revision.
+
+Changing any upstream revision creates a new experiment. Reusing a downstream
+metric after such a change would break provenance.
+
 ## Paid Job Records
 
 These are the job records for the released artifacts. Do not start new paid jobs
@@ -92,6 +114,32 @@ The corrected dataset revision
 revision `fea8aa1cda716954eb7322325e2be25c9f570ea3` for generation and scoring.
 The final report is therefore a rescore of equivalent prompts, not a second
 generation run. The rescore helper is `scripts/retail_bank/rescore_tool_eval.py`.
+
+The released metric is an in-generator protocol regression result. It is not a
+leakage-free generalization claim. The local audit found shared POC facts,
+template families, and targets between training and test. See
+[`data-leakage-audit.md`](data-leakage-audit.md).
+
+## Local Counterfactual Evaluation
+
+The clean project-SFT/POC acceptance set is tracked locally and is not a
+published training dataset.
+
+| Field | Value |
+| --- | --- |
+| Manifest | [`data/banking-counterfactual-eval-v1/manifest.json`](../../data/banking-counterfactual-eval-v1/manifest.json) |
+| Manifest SHA-256 | `3737655087d79136f719ecf7f251d6a79f89f28392684bb3059cdab243a97b5b` |
+| Test rows | `18` |
+| Counterfactual pairs | `5` |
+| Test JSONL SHA-256 | `d0b60766a659496fa1809c6a8124027172ebce22081db087fedfca4e2b71c6f6` |
+| Training allowed | `false` |
+| Preparation audit | pass |
+
+The preparation pass proves only that the tracked rows satisfy the local
+contamination and pair contracts. A model result exists only when a run emits
+predictions, a report, and metadata under
+`artifacts/banking-counterfactual-eval-v1`. See
+[`13-counterfactual-evaluation.md`](../13-counterfactual-evaluation.md).
 
 ## Initial Tool-Use SFT Dataset
 

@@ -76,7 +76,7 @@ Outputs:
 - `data/banking-conversation-router-v4/validation.jsonl`;
 - `data/banking-conversation-router-v4/test.jsonl`;
 - `data/banking-conversation-router-v4/manifest.json`;
-- `data/banking-conversation-router-v4/preparation-report.json`.
+- `data/banking-conversation-router-v4/README.md`.
 
 The prepared public dataset contains 61,759 train rows, 13,173 validation rows,
 and 15,466 test rows. Exact captured POC failure utterances are held out in the
@@ -134,6 +134,41 @@ The classifier's capability and relation outputs are diagnostics only. They do
 not enter the Granite prompt, select tools, or provide tool arguments. If the
 router fails during normal serving, the POC reports `classifier_error` and does
 not invoke the model for that turn.
+
+### Worked threshold examples
+
+The values below illustrate the released policy. They are not captured model
+outputs for the example text.
+
+| Banking | Highest rescue relation | Decision | What the application does |
+| ---: | ---: | --- | --- |
+| `0.91` | `0.05` | `in_domain` | Invoke Granite 9B. |
+| `0.32` | `0.15` | `uncertain` | Invoke Granite 9B. |
+| `0.08` | `0.72` | `uncertain` | Rescue the likely conversational follow-up and invoke Granite. |
+| `0.04` | `0.11` | `out_of_domain` | Return the stock scope response; do not invoke Granite. |
+
+The entire `0.10 <= banking < 0.50` band is uncertain. It does not require a
+relation rescue. Rescue prevents a likely follow-up below `0.10` from being
+rejected as OOD.
+
+Example contextual input:
+
+```text
+[CURRENT_USER]
+When was that created?
+[PREVIOUS_ASSISTANT]
+You have a closed mailing-address update case.
+[PREVIOUS_USER]
+Show my service cases.
+```
+
+The shared encoder lets “that” interact with “mailing-address update case.” The
+relation head can mark the turn `context_dependent`, while the domain head
+estimates whether the combined conversation is supported banking.
+
+For background, see
+[decision-threshold tuning](https://scikit-learn.org/stable/modules/classification_threshold.html)
+and [selective classification](https://arxiv.org/abs/1705.08500).
 
 ## Stop Conditions
 

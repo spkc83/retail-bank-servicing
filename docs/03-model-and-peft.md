@@ -10,6 +10,10 @@ The source of truth for local training defaults is
 [../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py)
 and [../configs/banking-tool-sft-granite.toml](../configs/banking-tool-sft-granite.toml).
 
+For a detailed, example-driven explanation of instruction SFT, assistant-only
+loss, LoRA matrices, the two training stages, and the merged inference model,
+read [12-instruction-fine-tuning-and-peft.md](12-instruction-fine-tuning-and-peft.md).
+
 ## Base Model Identity
 
 | Field | Value |
@@ -107,6 +111,41 @@ The parser validates:
 The adapter intentionally does not infer intent, repair malformed output,
 rename tools, or fill missing arguments. Invalid model output is a model
 protocol error.
+
+## Worked Example: What LoRA Learns
+
+Suppose a training row contains:
+
+```text
+user context: Replace card 4821.
+assistant target: <tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>
+tool context: card.status=replacement_pending
+assistant target: A replacement for card 4821 is pending.
+```
+
+The pretrained Granite weights already encode English and general instruction
+behavior. LoRA adds trainable low-rank updates to selected attention and MLP
+projections so the model can learn this repo's tool protocol and response style.
+
+Conceptually, a frozen weight matrix `W` is used with a learned update:
+
+```text
+effective weight = W + scale * (B @ A)
+```
+
+`A` and `B` are much smaller than `W` when the LoRA rank is small. The released
+rank is `32`; the base matrix is not replaced by a 32-parameter model.
+
+During assistant-only SFT, user and tool-result tokens receive label `-100`.
+Only the assistant tool call and final answer contribute to cross-entropy loss.
+
+After training, the adapter is merged into the base weights for the published
+FP16 checkpoint. The unmerged adapter is also retained for provenance and
+recovery.
+
+See [PEFT's LoRA guide](https://huggingface.co/docs/peft/main/conceptual_guides/lora)
+and the [original LoRA paper](https://arxiv.org/abs/2106.09685) for the general
+method.
 
 ## Local Planning And Smoke Checks
 

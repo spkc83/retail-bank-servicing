@@ -220,7 +220,43 @@ def test_tool_calls_execute_in_order_and_second_model_pass_writes_final_answer()
         "tool",
         "assistant",
     ]
+    assert "## Transfers" in result.response
+    assert "## Recent transactions" in result.response
+    assert "| Recipient | Amount | Status | Created |" in result.response
+    assert "| Date | Description | Amount | Status | Category | Disputed |" in result.response
     assert result.conversation[-1]["content"] == result.response
+    assert result.response_path == "base_tool_rendered"
+
+
+def test_invalid_action_answer_gets_one_grounding_repair_without_tools() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "cancel_transfer", "arguments": '
+            '{"recipient": "River Consulting"}}</tool_call>',
+            "Done — I cancelled Jamie Lee's transfer.",
+            "Done — I cancelled the transfer to River Consulting.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="repair-session",
+        message="Cancel the River Consulting transfer.",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Done — I cancelled the transfer to River Consulting."
+    assert result.response_path == "base_tool_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "grounded_final",
+        "final_repair_1",
+    ]
+    assert len(model.calls) == 3
+    assert model.calls[-1]["tools"] is None
+    assert "River Consulting" in model.calls[-1]["messages"][-1]["content"]
 
 
 def test_model_selected_write_uses_friendly_argument_without_authorization_layer() -> None:

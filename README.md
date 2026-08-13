@@ -46,7 +46,7 @@ authenticated synthetic customer
         -> Granite tagged-JSON tool call
            -> synthetic SQLite tool execution
            -> correlated result returned to Granite
-           -> Granite-authored grounded response
+           -> exact read table or validated Granite-authored grounded response
 ```
 
 The router's domain decision and conversation-relation probabilities control
@@ -54,7 +54,8 @@ whether a turn reaches Granite; capability predictions are diagnostics only.
 None of the classifier outputs enter the Granite prompt, select tools,
 authorize actions, or provide arguments. The model receives token-budgeted
 interaction groups and owns conversation, clarification, tool selection,
-public arguments, and final wording.
+public arguments, and action wording. The harness renders read-only record
+lists from exact backend fields and validates essential action facts.
 
 ## Start Here
 
@@ -64,17 +65,72 @@ without reading the implementation first:
 1. [System overview](docs/01-system-overview.md)
 2. [Data generation](docs/02-data-generation.md)
 3. [Granite architecture and PEFT](docs/03-model-and-peft.md)
-4. [Training, continuation, and recovery](docs/04-training-and-recovery.md)
-5. [Conversation router](docs/05-dual-head-router.md)
-6. [Frozen evaluation](docs/06-evaluation.md)
-7. [Inference and ZeroGPU POC](docs/07-inference-and-poc.md)
-8. [End-to-end runbook](docs/08-end-to-end-runbook.md)
-9. [Conversation Router v4 release](docs/09-conversation-router-v4.md)
-10. [Granite Servicing Alignment v4](docs/10-servicing-alignment-v4.md)
-11. [Code/file map](docs/reference/file-map.md) and
+4. [Instruction fine-tuning and PEFT design](docs/12-instruction-fine-tuning-and-peft.md)
+5. [Training, continuation, and recovery](docs/04-training-and-recovery.md)
+6. [Conversation router](docs/05-dual-head-router.md)
+7. [Frozen evaluation](docs/06-evaluation.md)
+8. [Inference and ZeroGPU POC](docs/07-inference-and-poc.md)
+9. [End-to-end runbook](docs/08-end-to-end-runbook.md)
+10. [Conversation Router v4 release](docs/09-conversation-router-v4.md)
+11. [Granite Servicing Alignment v4](docs/10-servicing-alignment-v4.md)
+12. [End-to-end flow by example](docs/11-end-to-end-flow-by-example.md)
+13. [Leakage-controlled counterfactual evaluation](docs/13-counterfactual-evaluation.md)
+14. [ASR output to Granite fine-tuning data](docs/15-asr-to-sft-pipeline.md)
+15. [Code/file map](docs/reference/file-map.md) and
    [artifact ledger](docs/reference/artifacts.md)
 
+If you want intuition before commands, start with items 4 and 12. They explain
+the model adaptation design and follow one
+customer request through scenario design, SFT and router records, masking,
+training, evaluation, routing, tool execution, and the final response.
+
+Before interpreting the released perfect regression metrics as evidence of
+generalization, read the
+[Granite SFT data-leakage audit](docs/reference/data-leakage-audit.md). The
+current POC, generator templates, and remediation targets are not independent.
+The new evaluation-only counterfactual suite is independently authored against
+the project SFT and POC fixtures; its pinned-model result is reported separately
+from the released in-generator regression score.
+
+### Routing example
+
+```text
+banking=0.84                  -> in_domain  -> Granite runs
+banking=0.29                  -> uncertain  -> Granite runs
+banking=0.07, rescue=0.61     -> uncertain  -> Granite runs
+banking=0.03, rescue=0.08     -> OOD        -> stock response; no Granite call
+classifier exception          -> error      -> failure response; no Granite call
+```
+
+The numbers illustrate the released threshold policy. Actual scores are shown
+in live diagnostics.
+
 ## Local Quick Start
+
+### Run the Granite 9B Streamlit POC on a 12GB CUDA GPU
+
+The local UI is separate from the public Gradio/ZeroGPU Space. It loads the
+same pinned merged Granite checkpoint with bitsandbytes NF4 double quantization
+and FP16 compute, then reuses the released history-aware router, model-owned
+tool loop, session-isolated SQLite bank, and full conversation budgeting.
+
+On the TITAN V, run:
+
+```bash
+uv run scripts/retail_bank/run_local_streamlit.py
+```
+
+Open <http://127.0.0.1:8501>. The local-only default credentials are displayed
+on the login page. Set `DEMO_AUTH_JSON` before launch to override them. The first
+launch may download the approximately 16GB pinned checkpoint; subsequent runs
+reuse the Hugging Face cache. Streamlit caches the loaded router, model, and
+controller, so normal page reruns do not reload GPU weights.
+
+The sidebar and diagnostics must show the exact model revision, `cuda:0`, the
+CUDA device name, `bitsandbytes-nf4-double`, generated tool calls, tool results,
+and raw model-pass hashes. See the
+[POC README](poc/retail-bank-customer-service-poc/README.md#local-streamlit-on-titan-v)
+for credentials, overrides, startup behavior, and troubleshooting.
 
 Install the root development and training dependencies:
 
@@ -172,7 +228,7 @@ data/sources/   pinned source and release-digest locks
 data_cards/     dataset-card sources
 docs/           canonical implementation and reproduction guide
 model_cards/    model-card sources
-poc/            standalone authenticated Gradio/ZeroGPU application
+poc/            authenticated Gradio/ZeroGPU and local Streamlit/NF4 applications
 scripts/        data, training, recovery, evaluation, and Hub job entry points
 src/hello_slm/  reusable corpus, tool-wire, evaluator, and router modules
 tests/          root regression and documentation-contract tests

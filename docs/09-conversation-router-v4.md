@@ -128,6 +128,24 @@ shift can still be rejected because `topic_shift` is intentionally not a
 rescue signal. This policy prefers an extra model call over a false refusal of
 a valid conversational continuation.
 
+### Numeric routing examples
+
+The values are illustrative policy inputs, not captured predictions:
+
+| Banking probability | Context/repair/clarification maximum | Result |
+| ---: | ---: | --- |
+| `0.73` | `0.09` | `in_domain` because banking reaches `0.50`. |
+| `0.26` | `0.12` | `uncertain`; the middle band goes to Granite. |
+| `0.06` | `0.58` | `uncertain`; relation rescue prevents an OOD block. |
+| `0.06` | `0.18` | `out_of_domain`; both OOD conditions are satisfied. |
+
+`topic_shift=0.90` does not enter `rescue_probability`. A weather follow-up can
+therefore remain OOD even when the relation head correctly detects a shift.
+
+An `uncertain` capability is set to `None` in the route result, though the top
+three capability candidates remain visible as diagnostics. The application
+does not convert those candidates into tool choices.
+
 ## Governed Data
 
 [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py)

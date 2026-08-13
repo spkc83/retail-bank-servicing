@@ -55,43 +55,78 @@ cards under [../model_cards](../model_cards), and the data cards under
    Learn the Granite base model identity, two-stage LoRA training path,
    assistant-only masking, Granite tool wire, and merged/adapted release layout.
 
-4. [Training, continuation, and recovery](04-training-and-recovery.md)
+4. [Instruction Fine-Tuning and PEFT Design](12-instruction-fine-tuning-and-peft.md)
+
+   Build intuition for instruction SFT, causal loss, assistant-only masking,
+   LoRA updates, trainable versus frozen weights, two-stage adaptation, and the
+   merged inference checkpoint through concrete examples.
+
+5. [Training, continuation, and recovery](04-training-and-recovery.md)
 
    Learn the guarded local and paid-job paths, checkpoint resume, continuation,
    rescore, recovery, merge parity, and publication gates.
 
-5. [Conversation router](05-dual-head-router.md)
+6. [Conversation router](05-dual-head-router.md)
 
    Learn the shared DistilBERT cross-encoder, domain/capability/relation heads,
    governed data, calibration, release gates, and serving thresholds.
 
-6. [Frozen evaluation](06-evaluation.md)
+7. [Frozen evaluation](06-evaluation.md)
 
    Learn the two-phase frozen evaluation contract, exact rescore correctness,
    and metrics needed for release.
 
-7. [Inference and ZeroGPU POC](07-inference-and-poc.md)
+8. [Inference and ZeroGPU POC](07-inference-and-poc.md)
 
    Learn model loading, token-budgeted history, static demo auth, the
    model-owned tool loop, synthetic SQLite state, and inference diagnostics.
 
-8. [End-to-end runbook](08-end-to-end-runbook.md)
+9. [End-to-end runbook](08-end-to-end-runbook.md)
 
    Follow the complete install, data, training, rescore, router, evaluation,
    local POC, and deployment sequence.
 
-9. [Conversation Router v4](09-conversation-router-v4.md)
+10. [Conversation Router v4](09-conversation-router-v4.md)
 
    Understand the released cross-encoder, leakage-safe data contract,
    multi-label conversation relations, local training path, and rollout gate.
 
-10. [Granite Servicing Alignment v4](10-servicing-alignment-v4.md)
+11. [Granite Servicing Alignment v4](10-servicing-alignment-v4.md)
 
     Understand the composite continuation-SFT data, use-case alignment,
     prompt-equivalent corrected dataset revision, and release stop condition.
 
+12. [End-to-End Flow by Example](11-end-to-end-flow-by-example.md)
+
+    Follow a concrete servicing request from behavior design through SFT and
+    router records, masking, training, evaluation, runtime routing, tools, and
+    final response generation.
+
+13. [Leakage-Controlled Counterfactual Evaluation](13-counterfactual-evaluation.md)
+
+    Build the evaluation-only post-training suite, understand paired unseen
+    facts and contamination gates, run the pinned 9B model in 4-bit locally,
+    and interpret the strict benchmark result.
+
+14. [Questions and Answers](14-questions-and-answers.md)
+
+    Find concise, example-driven answers to recurring implementation questions,
+    including how the SFT `messages` array becomes model input during training
+    and inference.
+
+15. [ASR Output to Granite Fine-Tuning Data](15-asr-to-sft-pipeline.md)
+
+    Convert reviewed speech-recognition utterances into leakage-safe,
+    trainer-compatible tool-use overlays while preserving validated semantic
+    targets, provenance, and split groups.
+
 Use the [file map](reference/file-map.md) to jump from concepts to code and the
 [artifact ledger](reference/artifacts.md) for immutable revisions and hashes.
+The [learning resources](reference/learning-resources.md) annotate official
+documentation and primary papers behind the design.
+The [data-leakage audit](reference/data-leakage-audit.md) explains why the
+released score is a protocol regression result rather than a clean
+generalization benchmark.
 
 ## Repository Map
 
@@ -101,7 +136,9 @@ Use the [file map](reference/file-map.md) to jump from concepts to code and the
 | [../data/banking-v3-tool-sft](../data/banking-v3-tool-sft) | Generated local copy of the initial tool-use SFT dataset. |
 | [../data/banking-servicing-alignment-v4](../data/banking-servicing-alignment-v4) | Generated local composite servicing-remediation SFT dataset. |
 | [../data/banking-conversation-router-v4](../data/banking-conversation-router-v4) | Generated local history-aware router data. |
+| [../data/banking-counterfactual-eval-v1](../data/banking-counterfactual-eval-v1) | Evaluation-only counterfactual benchmark with unseen SFT/POC facts. |
 | [../data/sources](../data/sources) | Tracked source locks for governed data preparation. |
+| [../examples/asr](../examples/asr) | Synthetic reviewed ASR input examples for the overlay pipeline. |
 | [../data_cards](../data_cards) | Dataset documentation. |
 | [../model_cards](../model_cards) | Model documentation. |
 | [../poc/retail-bank-customer-service-poc](../poc/retail-bank-customer-service-poc) | Gradio/ZeroGPU customer-service POC. |

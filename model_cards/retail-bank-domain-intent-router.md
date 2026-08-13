@@ -70,6 +70,18 @@ Both `in_domain` and `uncertain` continue to the 9B agent. Capability
 predictions and relation probabilities are displayed only as diagnostics; they
 do not enter the prompt, select a tool, or provide tool arguments.
 
+### Threshold examples
+
+| Banking | Rescue | Route | Generation |
+| ---: | ---: | --- | --- |
+| `0.75` | `0.08` | `in_domain` | 9B invoked |
+| `0.27` | `0.15` | `uncertain` | 9B invoked |
+| `0.07` | `0.62` | `uncertain` | 9B invoked |
+| `0.03` | `0.09` | `out_of_domain` | no 9B call |
+
+These values illustrate the released policy. They are not captured predictions
+for a specific sentence.
+
 ## Data and Licenses
 
 Classifier-only data combines the governed synthetic tool-use/SFT conversations
@@ -79,8 +91,10 @@ are held out in test and are not copied into training.
 
 ## Serving Fallback
 
-If the artifact is unavailable or classification fails, the POC returns its
-explicit model-failure response and does not call the 9B model for that turn.
-This makes a missing classifier visible instead of silently changing the
-experiment. The router remains an experimental component, not a production
-authorization or safety boundary.
+During normal serving, a classifier exception becomes `classifier_error`. The
+POC returns its explicit failure response and does not call the 9B model for
+that turn.
+
+In explicit local test mode, `POC_SKIP_ROUTER_LOAD=1` leaves the router absent.
+That test-only path returns `uncertain` and delegates the turn to the 9B model.
+The router remains experimental, not a production authorization boundary.

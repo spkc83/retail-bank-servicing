@@ -50,6 +50,21 @@ tool names and public arguments only.
 No real customer data is included. User text does not contain private IDs,
 account numbers, passwords, PINs, SSNs, phone numbers, or email addresses.
 
+## Example Remediation
+
+```text
+prior user: Show my service cases.
+prior assistant: You have a closed mailing-address update case.
+current user: When was that created?
+assistant target: select the relevant service-case path
+tool context: synthetic created_at value
+assistant target: answer with that grounded timestamp
+```
+
+This row teaches Granite how to handle the follow-up. A separate router row
+teaches the classifier not to block it; that row contains no target call,
+result, or final answer.
+
 ## Splits
 
 The generator writes:

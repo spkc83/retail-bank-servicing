@@ -1,0 +1,169 @@
+{
+  "allowed_use": [
+    "counterfactual-evaluation"
+  ],
+  "contract": "banking-counterfactual-eval-manifest/v1",
+  "format_version": 1,
+  "generator_version": "banking-counterfactual-eval/v1",
+  "name": "retail-bank-counterfactual-eval-v1",
+  "report": {
+    "audit": {
+      "exact_training_final_overlaps": 0,
+      "exact_training_user_overlaps": 0,
+      "maximum_allowed_training_prompt_similarity": 0.9,
+      "maximum_training_prompt_similarity": 0.561404,
+      "nearest_training_prompts": [
+        {
+          "benchmark": "A payment card needs attention, but I have not identified which card the request concerns.",
+          "nearest_training": "when you have a moment display the private banking identifiers right now while i am updating my records",
+          "similarity": 0.397906
+        },
+        {
+          "benchmark": "Compare wide-field telescope eyepieces for observing a dim nebula.",
+          "nearest_training": "help me what does annual percentage yield mean for savings so i can decide what to do next",
+          "similarity": 0.4
+        },
+        {
+          "benchmark": "Describe every payment card in the returned profile and identify its current status and ending digits.",
+          "nearest_training": "for this signed in profile check my card status and then freeze the active debit card right now",
+          "similarity": 0.397959
+        },
+        {
+          "benchmark": "First inventory the returned deposit accounts; afterward summarize the returned transfer queue.",
+          "nearest_training": "please tell me which deposit accounts are on this profile before i make another payment",
+          "similarity": 0.466667
+        },
+        {
+          "benchmark": "Freeze the Indigo Harbor Debit card whose displayed ending digits are 1445.",
+          "nearest_training": "please freeze my debit card ending in 9609",
+          "similarity": 0.482759
+        },
+        {
+          "benchmark": "I reject the posted charge labeled Glacier Loom Workshop; open a dispute for that merchant.",
+          "nearest_training": "i need you to open a dispute for cedar point books today while i am checking the mobile app",
+          "similarity": 0.377778
+        },
+        {
+          "benchmark": "In plain language, what does a variable savings yield imply about future interest earnings?",
+          "nearest_training": "i want to what does annual percentage yield mean for savings today before i leave for a trip",
+          "similarity": 0.464088
+        },
+        {
+          "benchmark": "Inventory the deposit accounts returned for this signed-in profile, including each display name, ending digits, and available balance.",
+          "nearest_training": "for this signed in profile list my accounts with their ending digits right now while i am updating my records",
+          "similarity": 0.493724
+        },
+        {
+          "benchmark": "Read back the two newest ledger entries returned by the bank, including the merchant labels and amounts.",
+          "nearest_training": "before i leave summarize the newest three transaction entries right now because i am reconciling recent activity",
+          "similarity": 0.485981
+        },
+        {
+          "benchmark": "Replace the usable card identified in the prior returned card list.",
+          "nearest_training": "i need you to replace the card on my profile",
+          "similarity": 0.436364
+        },
+        {
+          "benchmark": "Summarize the returned service-case list and state precisely when each case began.",
+          "nearest_training": "please pull the latest service case list for my records while i am checking the mobile app",
+          "similarity": 0.561404
+        },
+        {
+          "benchmark": "Summarize the transfer queue returned for this profile, naming each recipient, amount, and completion state.",
+          "nearest_training": "please list recent transfers for this profile for my records",
+          "similarity": 0.487805
+        },
+        {
+          "benchmark": "The pending payment addressed to Ember Cartography Lab should be cancelled now.",
+          "nearest_training": "help me cancel the pending payment for lake design today so i can decide what to do next for an upcoming bill",
+          "similarity": 0.438503
+        }
+      ],
+      "poc_fact_overlaps": 0,
+      "poc_prompt_overlaps": 0,
+      "source_inputs": {
+        "data/banking-servicing-alignment-v4/train.jsonl": {
+          "bytes": 16794263,
+          "sha256": "d2d7bc1f94cac3f394211c2d364708c0b77f4af8c50e2381143246b83f3e386a"
+        },
+        "data/banking-v3-tool-sft/train.jsonl": {
+          "bytes": 16660806,
+          "sha256": "8d92fa0ab1d39875f0c4d918bc5aeaf670f71bf660a01a0a376cb4edc1cced53"
+        },
+        "poc/retail-bank-customer-service-poc/app.py": {
+          "bytes": 23847,
+          "sha256": "541c6c75dc274742b20b5aa4c1285558a2303a642e1e594ef1f081e55a79c176"
+        },
+        "poc/retail-bank-customer-service-poc/synthetic_bank.json": {
+          "bytes": 6540,
+          "sha256": "e01955d99de955104c3cf630c1e5a38976616f4306504ab528a8bcfb6aab8282"
+        }
+      },
+      "status": "pass",
+      "training_fact_overlaps": 0,
+      "training_template_overlaps": 0
+    },
+    "contract": "banking-counterfactual-eval-preparation-report/v1",
+    "counterfactual_pair_count": 5,
+    "generator_version": "banking-counterfactual-eval/v1",
+    "record_count": 18,
+    "scenario_family_counts": {
+      "counterfactual_accounts": 2,
+      "counterfactual_banking_faq": 1,
+      "counterfactual_card_action": 1,
+      "counterfactual_card_anaphora": 1,
+      "counterfactual_cards": 2,
+      "counterfactual_clarification": 1,
+      "counterfactual_multi_tool": 1,
+      "counterfactual_ood": 1,
+      "counterfactual_service_cases": 2,
+      "counterfactual_transaction_action": 1,
+      "counterfactual_transactions": 2,
+      "counterfactual_transfer_action": 1,
+      "counterfactual_transfers": 2
+    },
+    "tool_counts": {
+      "cancel_transfer": 1,
+      "dispute_transaction": 1,
+      "freeze_card": 1,
+      "list_accounts": 3,
+      "list_cards": 2,
+      "list_service_cases": 2,
+      "list_transactions": 2,
+      "list_transfers": 3,
+      "replace_card": 1
+    }
+  },
+  "schema_version": "banking-tool-sft/v1",
+  "source_inputs": {
+    "data/banking-servicing-alignment-v4/train.jsonl": {
+      "bytes": 16794263,
+      "sha256": "d2d7bc1f94cac3f394211c2d364708c0b77f4af8c50e2381143246b83f3e386a"
+    },
+    "data/banking-v3-tool-sft/train.jsonl": {
+      "bytes": 16660806,
+      "sha256": "8d92fa0ab1d39875f0c4d918bc5aeaf670f71bf660a01a0a376cb4edc1cced53"
+    },
+    "poc/retail-bank-customer-service-poc/app.py": {
+      "bytes": 23847,
+      "sha256": "541c6c75dc274742b20b5aa4c1285558a2303a642e1e594ef1f081e55a79c176"
+    },
+    "poc/retail-bank-customer-service-poc/synthetic_bank.json": {
+      "bytes": 6540,
+      "sha256": "e01955d99de955104c3cf630c1e5a38976616f4306504ab528a8bcfb6aab8282"
+    }
+  },
+  "splits": {
+    "test": {
+      "allowed_use": [
+        "counterfactual-evaluation"
+      ],
+      "bytes": 49173,
+      "included": true,
+      "path": "test.jsonl",
+      "record_count": 18,
+      "sha256": "d0b60766a659496fa1809c6a8124027172ebce22081db087fedfca4e2b71c6f6"
+    }
+  },
+  "training_allowed": false
+}

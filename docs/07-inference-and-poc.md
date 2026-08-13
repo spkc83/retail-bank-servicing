@@ -40,12 +40,13 @@ Gradio authenticated user
   -> Granite 9B either answers directly or emits tagged-JSON tool calls
   -> generated calls execute against session-isolated SQLite
   -> tool results return to Granite 9B
-  -> Granite 9B writes the final customer-facing response
+  -> exact read lists render as tables; other grounded answers are validated
 ```
 
-The router does not choose tools, write arguments, add facts to the prompt, or
-repair model output. The runtime only budgets context, validates generated tool
-syntax, executes the synthetic backend, and records diagnostics.
+The router does not choose tools or write arguments. The runtime budgets
+context, validates generated tool syntax, executes the synthetic backend,
+renders successful list results from exact records, validates action wording,
+and records diagnostics.
 
 ## Static Authentication
 
@@ -91,6 +92,27 @@ explicit local test mode produces an `uncertain` test route; a classifier
 exception during a normal model turn produces a visible `classifier_error` and
 the 9B generator is not invoked.
 
+### What happens to `uncertain`
+
+`uncertain` is an accepted generation route. It falls through to the same
+`ConversationalBankingAgent.run_turn()` path as `in_domain`.
+
+Only two router outcomes stop generation:
+
+- `out_of_domain`: return the governed scope response;
+- `classifier_error`: return the visible failure response.
+
+Example policy inputs:
+
+```text
+banking=0.31, rescue=0.18 -> uncertain -> Granite runs
+banking=0.07, rescue=0.65 -> uncertain -> Granite runs
+banking=0.03, rescue=0.09 -> out_of_domain -> Granite does not run
+```
+
+The values illustrate the thresholds. Actual probabilities are displayed in
+the diagnostics panel.
+
 ## Model Loading
 
 ZeroGPU model loading is isolated in
@@ -119,6 +141,54 @@ export POC_SKIP_MODEL_LOAD=1
 When `POC_SKIP_MODEL_LOAD=1`, the module installs a local `spaces.GPU`
 decorator stub and leaves the tokenizer/model unset. Tests can then validate
 routing, auth, state, parsing, and UI plumbing without downloading the model.
+
+## Local Streamlit NF4 Boundary
+
+The repository also provides a local-only Streamlit path for the 12GB TITAN V:
+
+```bash
+uv run scripts/retail_bank/run_local_streamlit.py
+```
+
+The launcher executes
+[`streamlit_app.py`](../poc/retail-bank-customer-service-poc/streamlit_app.py)
+with a CUDA 12.6 PyTorch build containing `sm_70`. Unlike the Space runtime,
+[`local_gpu_runtime.py`](../poc/retail-bank-customer-service-poc/local_gpu_runtime.py)
+loads the pinned merged checkpoint using bitsandbytes NF4 double quantization
+and FP16 compute. Quantization occurs at load time and is not published or
+saved as another model.
+
+The Streamlit layer delegates each accepted turn to
+[`LocalBankingController`](../poc/retail-bank-customer-service-poc/local_app_service.py).
+That controller calls the same CPU router and `ConversationalBankingAgent` used
+by the POC design. Granite still owns direct responses, clarifications, tool
+selection, tool arguments, and action wording. The shared harness—not the
+UI—renders read-list tables and may request one text-only repair for an
+ungrounded action answer.
+
+Resource ownership differs from browser conversation state:
+
+- `st.cache_resource` retains one router, NF4 runtime, and controller across
+  Streamlit reruns;
+- a generation lock serializes access to the single TITAN V;
+- `st.session_state` retains the authenticated username, browser-session key,
+  canonical conversation, and diagnostics;
+- SQLite state remains isolated by username and browser-session key.
+
+The local path first checks
+`artifacts/banking-conversation-router-v4-release` and verifies its manifest.
+It downloads the same immutable router revision from the Hub only when that
+local release artifact is unavailable. `LOCAL_ROUTER_ARTIFACT_DIR` can point to
+another complete verified copy.
+
+The local login page displays two local-only default accounts. A valid
+`DEMO_AUTH_JSON` environment value overrides those defaults. This does not
+change the Space authentication contract.
+
+Local diagnostics identify the execution boundary as `Local CUDA / NF4`, not
+`ZeroGPU large`, and expose the model/revision, CUDA device, quantization,
+allocated VRAM, route probabilities, model passes, generated calls, and tool
+results.
 
 ## ZeroGPU Boundary
 
@@ -171,6 +241,17 @@ the same model for the next response. The model may emit another tool call after
 seeing a tool result. The loop stops when the model emits a normal assistant
 response.
 
+After the loop:
+
+- if every executed call is a successful read-list tool, `response_policy.py`
+  renders Markdown tables directly from the backend result;
+- otherwise, essential action selectors and outcomes are checked against the
+  tool envelopes;
+- a failed action-answer check permits exactly one `final_repair_1` model pass
+  with tools disabled and immutable tool events supplied as data;
+- malformed tool syntax, wrong tool names, and wrong arguments are never
+  automatically repaired.
+
 Limits:
 
 - maximum input budget: 8,192 tokens
@@ -180,6 +261,25 @@ Limits:
 Unsupported tool names, duplicate call IDs, out-of-order indexes, malformed
 JSON, and invalid argument types raise protocol errors. Backend errors are
 returned to the model as safe tool-result envelopes.
+
+### Worked tool turn
+
+```text
+1. User: Show my cards.
+2. Router: in_domain or uncertain.
+3. Granite: <tool_call>{"name":"list_cards","arguments":{}}</tool_call>
+4. Runtime: validates the call and executes list_cards in the session database.
+5. Tool result: one active card ending in 4821.
+6. Runtime: render the exact card fields as a Markdown table.
+7. Diagnostics: two model passes, CUDA device, exact revision, call, and result.
+```
+
+On the next turn, “Replace the active one” is routed with visible history. The
+same 9B model receives the retained interaction group and can emit
+`replace_card(last4="4821")`.
+
+See [End-to-End Flow by Example](11-end-to-end-flow-by-example.md) for data and
+training records that correspond to this runtime exchange.
 
 ## Conversation Budget
 
@@ -198,6 +298,10 @@ definitions fit within 8,192 input tokens. A tool chain is never split across
 the context boundary.
 
 The app reserves 512 new tokens for each model pass.
+
+The runtime does not promote browser/session transcript dictionaries into a
+trusted system-memory block. Prior context remains ordinary role-tagged model
+messages, and only complete interaction groups are retained.
 
 ## Synthetic SQLite State
 
@@ -244,7 +348,8 @@ The current v4 branch panel shows:
 - in-domain and OOD probabilities
 - whether complete visible conversation context was applied
 - conversation-relation probabilities and router failure details
-- response path, such as `direct_answer`, `base_tool`, or `base_tool_chain`
+- response path, such as `direct_answer`, `base_tool_rendered`,
+  `base_tool_repaired`, or `base_tool_chain`
 - top diagnostic servicing-capability candidates
 - generated tool calls and public arguments
 - tool-result success or safe error code
@@ -311,6 +416,8 @@ The Space app files are in
 - [`router.py`](../poc/retail-bank-customer-service-poc/router.py): CPU router
 - [`model_service.py`](../poc/retail-bank-customer-service-poc/model_service.py):
   model-owned tool loop
+- [`response_policy.py`](../poc/retail-bank-customer-service-poc/response_policy.py):
+  deterministic tables and grounded action-answer checks
 - [`mock_bank.py`](../poc/retail-bank-customer-service-poc/mock_bank.py): SQLite
   synthetic backend
 - [`state.py`](../poc/retail-bank-customer-service-poc/state.py): session

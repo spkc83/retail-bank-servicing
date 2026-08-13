@@ -146,6 +146,26 @@ def test_manifest_loader_resolves_relative_paths_from_manifest_directory(tmp_pat
     assert worker.load_manifest_records(manifest_path, "train") == [record]
 
 
+def test_manifest_loader_rejects_evaluation_only_data(tmp_path: Path) -> None:
+    data_path = tmp_path / "test.jsonl"
+    data_path.write_text(json.dumps(worker.tiny_smoke_records()[0]) + "\n", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "contract": "banking-counterfactual-eval-manifest/v1",
+                "training_allowed": False,
+                "allowed_use": ["counterfactual-evaluation"],
+                "splits": {"test": {"path": "test.jsonl"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="evaluation-only manifest"):
+        worker.load_manifest_records(manifest_path, "test")
+
+
 def test_pretokenized_collator_pads_only_to_the_longest_batch_item() -> None:
     batch = [
         {
@@ -238,18 +258,18 @@ def test_remote_trainer_construction_does_not_pass_quantization_config() -> None
     )[0]
 
     assert "data_collator=partial(" in trainer_call
-    assert "peft_config=configs[\"lora\"]" in trainer_call
+    assert 'peft_config=configs["lora"]' in trainer_call
     assert "quantization_config" not in trainer_call
 
 
 def test_remote_model_load_has_no_blanket_quantized_fallback() -> None:
     source = WORKER_PATH.read_text(encoding="utf-8")
-    remote_body = source.split("def run_remote_training", 1)[1].split(
-        "def tiny_smoke_records", 1
-    )[0]
+    remote_body = source.split("def run_remote_training", 1)[1].split("def tiny_smoke_records", 1)[
+        0
+    ]
 
     assert "except Exception" not in remote_body
-    assert "if configs[\"quantization\"] is not None" in remote_body
+    assert 'if configs["quantization"] is not None' in remote_body
 
 
 def test_hub_upload_ignores_hidden_checkpoint_temp_files() -> None:

@@ -21,7 +21,7 @@ Authenticated synthetic customer
   -> direct answer, clarification, or tagged-JSON tool call
   -> synthetic SQLite tool execution
   -> tool result returned to the model
-  -> model-authored final response
+  -> deterministic read table or validated model-authored response
 ```
 
 The released architecture is documented across these files:
@@ -88,9 +88,14 @@ owns the model/tool protocol:
 7. Ask the same model for the grounded final response.
 8. Repeat only if the model emits another valid tool call, up to eight total
    tool calls.
+9. Render successful read-list results directly from backend fields, or check
+   essential action selectors and outcomes in the model answer.
+10. If an action answer fails that check, allow one text-only repair with tools
+    disabled; never repair a generated tool name or argument.
 
-The runtime does not infer intent, repair malformed calls, rename tools, fill
-missing arguments, or synthesize a banking answer if the model fails.
+The runtime does not infer intent, repair malformed calls, rename tools, or fill
+missing arguments. Deterministic list rendering presents exact tool data; it
+does not infer an action or substitute another banking backend.
 
 ### Synthetic bank backend
 
@@ -106,6 +111,37 @@ The seed records live in
 [../poc/retail-bank-customer-service-poc/synthetic_bank.json](../poc/retail-bank-customer-service-poc/synthetic_bank.json).
 Each browser session gets isolated state, so a write action in one demo session
 does not modify another session.
+
+## Worked Runtime Turn
+
+Consider this two-turn conversation:
+
+```text
+User: Show my cards.
+Assistant: You have an active card ending in 4821.
+User: Replace the active one.
+```
+
+The router encodes the current turn with the visible exchange. If its banking
+score is high, the route is `in_domain`. If the score is in the middle band or
+the relation head rescues the follow-up, the route is `uncertain`.
+
+Both routes invoke Granite. Granite receives token-budgeted conversation
+history and the public tool schemas. It may emit:
+
+```text
+<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>
+```
+
+The runtime validates the call, executes it against the session SQLite state,
+and returns the result to Granite. Granite then writes the visible answer.
+
+If the banking score is below `0.10` and no relation rescue reaches `0.40`, the
+route is `out_of_domain`; the stock scope response is returned with zero 9B
+generation calls.
+
+See [End-to-End Flow by Example](11-end-to-end-flow-by-example.md) for the same
+behavior traced through data preparation, training, evaluation, and serving.
 
 ## Training-Time Counterparts
 

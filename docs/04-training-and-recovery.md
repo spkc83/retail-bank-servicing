@@ -72,6 +72,22 @@ The release has two Granite SFT stages:
    exposed failures in service-case follow-ups, card anaphora, clarification
    answers, agent repair, and topic shifts.
 
+### Choose the correct execution path
+
+| Situation | Start point | Operation | Example |
+| --- | --- | --- | --- |
+| Rebuild the full release | Pinned IBM Granite base | Run stage 1, then stage 2 | New infrastructure or independent reproduction. |
+| Improve a released behavior | Pinned stage-1 or released checkpoint | Continue SFT with base plus remediation data | Add robust service-case follow-ups. |
+| Export failed after training | Retained completed adapter | Export-only recovery | Merge/upload failed after the trainer completed. |
+| Training stopped mid-run | Matching checkpoint and fingerprint | Resume training | Worker interruption after checkpoint 500. |
+
+If adapter state proves step 500 completed, resume may continue training. If
+training completed but only Hub upload failed, export recovery must not call
+`trainer.train` again.
+
+The fingerprint prevents an invalid recovery, such as resuming a stage-2
+adapter with a different chat template or dataset revision.
+
 ## Local Preflight
 
 Run these before any paid job:

@@ -68,6 +68,22 @@ are trainable; system, user, and tool-result tokens are context only.
 The data validator rejects semantically empty final responses and asserts
 path-specific content for clarification, FAQ, OOD, and hard-negative rows.
 
+## Example Record Shape
+
+```text
+user context: Show my accounts and balances.
+assistant target: call list_accounts({})
+tool context: synthetic account rows and balances
+assistant target: summarize account names, last four digits, and balances
+expected: exact tool/arguments plus required grounding facts
+```
+
+The tool result is not a model target. At inference time it comes from the
+backend. The model learns the assistant-owned call and grounded final response.
+
+Related variants share split keys so a paraphrase of one state/template group
+cannot appear in both training and frozen test data.
+
 ## Source and privacy policy
 
 All included rows are self-authored synthetic data under MIT. External

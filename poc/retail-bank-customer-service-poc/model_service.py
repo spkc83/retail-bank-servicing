@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mock_bank import SessionBankRegistry
+from response_policy import (
+    build_final_repair_messages,
+    render_read_tool_results,
+    validate_grounded_answer,
+)
 
 INPUT_TOKEN_BUDGET = 8192
 MAX_NEW_TOKENS = 512
@@ -405,6 +410,40 @@ class ConversationalBankingAgent:
                 pending_calls = next_calls
                 if not response_path.endswith("_chain"):
                     response_path = f"{response_path}_chain"
+            rendered = render_read_tool_results(all_calls, results)
+            if rendered is not None:
+                final_output = rendered
+                response_path = f"{response_path}_rendered"
+            else:
+                validation = validate_grounded_answer(final_output, all_calls, results)
+                if not validation.valid:
+                    repair_messages = build_final_repair_messages(
+                        user_message=message.strip(),
+                        draft=final_output,
+                        calls=all_calls,
+                        results=results,
+                        errors=validation.errors,
+                    )
+                    repaired, repair_trace = self._generate_pass(
+                        "final_repair_1",
+                        repair_messages,
+                        None,
+                    )
+                    model_passes.append(repair_trace)
+                    if "<tool_call" in repaired:
+                        raise AgentProtocolError("final-answer repair attempted a tool call")
+                    repaired_validation = validate_grounded_answer(
+                        repaired,
+                        all_calls,
+                        results,
+                    )
+                    if not repaired_validation.valid:
+                        raise AgentProtocolError(
+                            "final-answer repair failed grounding validation: "
+                            + "; ".join(repaired_validation.errors)
+                        )
+                    final_output = repaired
+                    response_path = f"{response_path}_repaired"
         except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
             raise AgentExecutionError(
                 str(error),
@@ -775,7 +814,9 @@ def _conversation_groups(
     return groups
 
 
-def _system_message(_router_result: dict[str, Any]) -> dict[str, str]:
+def _system_message(
+    _router_result: dict[str, Any],
+) -> dict[str, str]:
     return {
         "role": "system",
         "content": AGENT_SYSTEM_PROMPT,
