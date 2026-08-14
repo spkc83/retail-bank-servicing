@@ -1,173 +1,181 @@
-# System Overview
+# V5 System Overview
 
-This repository builds a model-driven synthetic retail-bank service agent. The
-active release has three runtime pieces:
+Harbor is a model-driven retail-bank customer-service assistant for the
+fictional Harborlight Bank. The V5 system combines a small CPU router, bounded
+deterministic dialogue state, versioned policy retrieval, a PEFT-adapted
+Granite 8.79B model, and session-isolated fictional bank records.
 
-- A CPU history-aware router for domain/OOD gating, servicing-capability
-  diagnostics, and conversation-relation scoring.
-- A Granite 8.79B generative agent fine-tuned with PEFT/LoRA.
-- A synthetic SQLite banking backend wrapped by the Gradio/ZeroGPU POC.
+## Component Boundaries
 
-All customer data is fictional. No file in this repository connects to a real
-bank.
+| Component | Responsibility | Must not do |
+| --- | --- | --- |
+| V5 router | Score banking domain, one fine intent, and five conversation relations from the current turn, recent visible history, and prior dialogue state. | Select an action, provide action arguments, or write customer-facing text. |
+| Dialogue state | Retain at most one pending servicing task and whether a policy detour is active. | Authorize an action or invent a summary of the earlier request. |
+| Policy retriever | Return current versioned policy chunks through deterministic lexical scoring. | Generate prose or execute a customer action. |
+| Granite | Converse, clarify, choose public banking actions and arguments, and write grounded responses. | Bypass the action schema or cite policy chunks that retrieval did not supply. |
+| Action/backend boundary | Validate and execute supported calls against session-isolated fictional state. | Expose private internal identifiers in the chat. |
+| Response policy | Render exact read tables; validate action facts, policy citations, and internal-language exclusions. | Replace ordinary model responses with hard-coded customer-service scripts. |
 
-## Runtime Flow
+## Router Inputs and Outputs
 
-```text
-Authenticated synthetic customer
-  -> CPU history-aware router
-  -> high-confidence OOD: governed scope response
-  -> in-domain or uncertain: ZeroGPU Granite 8.79B generation
-  -> direct answer, clarification, or tagged-JSON tool call
-  -> synthetic SQLite tool execution
-  -> tool result returned to the model
-  -> deterministic read table or validated model-authored response
-```
+The router is a shared DistilBERT cross-encoder with three classification
+heads:
 
-The released architecture is documented across these files:
+1. **Domain head:** `out_of_domain` or `in_domain`.
+2. **Intent head:** 12 mutually exclusive fine intents.
+3. **Relation head:** five independent sigmoid labels.
 
-| Step | Code |
-| --- | --- |
-| Gradio event and OOD shortcut | [../poc/retail-bank-customer-service-poc/app.py](../poc/retail-bank-customer-service-poc/app.py) |
-| History-aware router loading and prediction | [../poc/retail-bank-customer-service-poc/router.py](../poc/retail-bank-customer-service-poc/router.py) |
-| Model/tool loop | [../poc/retail-bank-customer-service-poc/model_service.py](../poc/retail-bank-customer-service-poc/model_service.py) |
-| ZeroGPU model loading and deterministic decoding | [../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py](../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py) |
-| Synthetic bank state and tool execution | [../poc/retail-bank-customer-service-poc/mock_bank.py](../poc/retail-bank-customer-service-poc/mock_bank.py) |
-
-## Component Responsibilities
-
-### History-aware router
-
-The router is a shared DistilBERT cross-encoder with:
-
-- a binary supported-banking/OOD head;
-- a coarse servicing-capability diagnostic head;
-- a multi-label conversation-relation head.
-
-The POC loads the artifact from `spkc83/retail-bank-conversation-router` at
-revision `9e090c0fa21cebbaa03a431a7ce61e656c0739fe`. Its released thresholds
-are recorded in
-[the router model card](../model_cards/retail-bank-domain-intent-router.md):
-
-- banking probability below `0.10` with no relation rescue: high-confidence OOD;
-- banking probability at least `0.50`: in-domain;
-- the middle region, or rescued relation turns: uncertain.
-
-High-confidence OOD requests receive the static governed response from
-[../poc/retail-bank-customer-service-poc/responses.py](../poc/retail-bank-customer-service-poc/responses.py).
-Uncertain requests continue to the 8.79B model. Capability and relation outputs
-are diagnostics only; they are not added to the prompt and they do not choose
-tools.
-
-### Granite generative agent
-
-The POC loads `spkc83/retail-bank-servicing-agent-9b` at revision
-`1d56824995aa1adecfe20f62ca42fb1c0c443817` by default in
-[../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py](../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py).
-The model uses deterministic generation:
-
-- `do_sample=False`;
-- max new tokens `512`;
-- FP16 weights on CUDA in the live Space.
-
-The model receives the system prompt, retained conversation history, and the
-nine public tool schemas. It can answer directly or emit Granite tagged-JSON
-tool calls.
-
-### Tool loop
-
-[../poc/retail-bank-customer-service-poc/model_service.py](../poc/retail-bank-customer-service-poc/model_service.py)
-owns the model/tool protocol:
-
-1. Build a token-budgeted prompt with an 8,192-token input budget.
-2. Ask the model for a first response.
-3. Parse `<tool_call>...</tool_call>` blocks when present.
-4. Validate tool names, argument types, argument ranges, call IDs, and indexes.
-5. Execute each tool against the session-isolated synthetic bank.
-6. Append tool results to the conversation.
-7. Ask the same model for the grounded final response.
-8. Repeat only if the model emits another valid tool call, up to eight total
-   tool calls.
-9. Render successful read-list results directly from backend fields, or check
-   essential action selectors and outcomes in the model answer.
-10. If an action answer fails that check, allow one text-only repair with tools
-    disabled; never repair a generated tool name or argument.
-
-The runtime does not infer intent, repair malformed calls, rename tools, or fill
-missing arguments. Deterministic list rendering presents exact tool data; it
-does not infer an action or substitute another banking backend.
-
-### Synthetic bank backend
-
-[../poc/retail-bank-customer-service-poc/mock_bank.py](../poc/retail-bank-customer-service-poc/mock_bank.py)
-creates a SQLite database per authenticated user/session pair. It supports:
-
-- read tools: `list_accounts`, `list_cards`, `list_service_cases`,
-  `list_transactions`, `list_transfers`;
-- write tools: `cancel_transfer`, `dispute_transaction`, `freeze_card`,
-  `replace_card`.
-
-The seed records live in
-[../poc/retail-bank-customer-service-poc/synthetic_bank.json](../poc/retail-bank-customer-service-poc/synthetic_bank.json).
-Each browser session gets isolated state, so a write action in one demo session
-does not modify another session.
-
-## Worked Runtime Turn
-
-Consider this two-turn conversation:
+The rendered input can contain:
 
 ```text
-User: Show my cards.
-Assistant: You have an active card ending in 4821.
-User: Replace the active one.
+[PRIOR_DIALOGUE_STATE]
+{"knowledge_detour_active":true,"pending_servicing":{...},"version":1}
+[CURRENT_USER]
+Let's continue with that dispute.
+[PREVIOUS_ASSISTANT]
+Savings interest uses the disclosed APY ...
+[PREVIOUS_USER]
+First, how does savings interest work?
 ```
 
-The router encodes the current turn with the visible exchange. If its banking
-score is high, the route is `in_domain`. If the score is in the middle band or
-the relation head rescues the follow-up, the route is `uncertain`.
+Only visible prior user/assistant text and trusted pre-turn state are included.
+Current-turn action plans, results, expected answers, and hidden labels are not
+router input.
 
-Both routes invoke Granite. Granite receives token-budgeted conversation
-history and the public tool schemas. It may emit:
+The 12 intents are:
 
 ```text
-<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>
+view_accounts       view_cards          freeze_card
+replace_card        view_transactions   dispute_transaction
+view_transfers      cancel_transfer     view_service_cases
+policy_knowledge    conversation        other_banking
 ```
 
-The runtime validates the call, executes it against the session SQLite state,
-and returns the result to Granite. Granite then writes the visible answer.
+The five relations are:
 
-If the banking score is below `0.10` and no relation rescue reaches `0.40`, the
-route is `out_of_domain`; the stock scope response is returned with zero 9B
-generation calls.
+```text
+context_dependent   agent_repair         topic_shift
+clarification_answer                     resume_previous_service
+```
 
-See [End-to-End Flow by Example](11-end-to-end-flow-by-example.md) for the same
-behavior traced through data preparation, training, evaluation, and serving.
+The broad lane is derived from the fine intent. It is not a fourth learned
+head.
 
-## Training-Time Counterparts
+## Bounded Dialogue State
 
-Runtime behavior mirrors the SFT and evaluation code:
+[`dialogue_state.py`](../poc/retail-bank-customer-service-poc/dialogue_state.py)
+stores this state per authenticated user and session:
 
-| Runtime behavior | Training/evaluation counterpart |
-| --- | --- |
-| Public tool schema | `public_tool_manifest()` in [../src/hello_slm/banking_tool_sft_data.py](../src/hello_slm/banking_tool_sft_data.py) |
-| Granite tagged-JSON parsing | [../src/hello_slm/banking_tool_wire.py](../src/hello_slm/banking_tool_wire.py) |
-| Assistant-only targets | `ToolWireAdapter.render_training()` in [../src/hello_slm/banking_tool_wire.py](../src/hello_slm/banking_tool_wire.py) |
-| Frozen tool/final-response scoring | [../src/hello_slm/banking_tool_eval.py](../src/hello_slm/banking_tool_eval.py) |
-| Router architecture | [../src/hello_slm/banking_conversation_router.py](../src/hello_slm/banking_conversation_router.py) |
+```json
+{
+  "version": 1,
+  "pending_servicing": {
+    "intent": "dispute_transaction",
+    "anchor_user_message": "Dispute the North Harbor Market purchase.",
+    "anchor_assistant_message": "Which purchase would you like to dispute?",
+    "phase": "awaiting_user"
+  },
+  "knowledge_detour_active": true
+}
+```
 
-## Failure Behavior
+This is intentionally not a general task stack. It retains one servicing task,
+allows one policy detour, and resets after the expected action succeeds or the
+session is reset. A confident different servicing intent replaces the pending
+task. Low-confidence, uncertain, or OOD observations do not mutate it.
 
-The POC is explicit about failure boundaries:
+When the router activates `resume_previous_service`, the state machine chooses
+the servicing lane and supplies the original user/assistant exchange as a
+pinned context group. The state machine does not create a synthetic summary;
+Granite sees the actual earlier exchange.
 
-- Explicit local router-skip mode marks the route uncertain. A normal-turn
-  classifier exception reports `classifier_error` and does not invoke the 8.79B
-  model, so a classifier outage cannot masquerade as a valid experiment.
-- If ZeroGPU allocation or generation fails, the UI reports model
-  unavailability.
-- If the model emits malformed tool syntax or invalid tool arguments, the UI
-  reports a model failure and exposes diagnostics.
-- The application does not substitute a CPU-authored banking answer for a
-  failed model response.
+## Policy Question During a Servicing Task
 
-See [../poc/retail-bank-customer-service-poc/README.md](../poc/retail-bank-customer-service-poc/README.md)
-for the public POC card and live verification expectations.
+Consider this sequence:
+
+```text
+Customer: Dispute the North Harbor Market purchase.
+Harbor:    I can help. What would you like to confirm first?
+Customer: How does a card dispute investigation work?
+Harbor:    ... [Policy: card.dispute.us.v1]
+Customer: Thanks. Continue with the dispute.
+```
+
+The V5 path is:
+
+1. The first turn starts a pending `dispute_transaction` state.
+2. The policy question receives intent `policy_knowledge`; the state records an
+   active knowledge detour without discarding the dispute.
+3. [`policy_retrieval.py`](../poc/retail-bank-customer-service-poc/policy_retrieval.py)
+   retrieves matching chunks from
+   [`policy_knowledge.json`](../poc/retail-bank-customer-service-poc/policy_knowledge.json).
+4. Granite receives only the policy evidence and no banking action schemas.
+5. The visible answer must cite an allowed chunk as `[Policy: chunk_id]`.
+6. The resume turn restores the servicing lane and pins the original dispute
+   exchange into Granite's token-budgeted context.
+7. Granite may emit the supported `dispute_transaction` action. The pending
+   state clears only after that action succeeds.
+
+If retrieval finds no eligible chunk, the runtime returns a policy-not-found
+response and does not ask Granite to improvise an answer.
+
+## Servicing and Action Loop
+
+For accepted non-policy turns, Granite receives the Harborlight system prompt,
+token-budgeted conversation, and nine public actions:
+
+```text
+list_accounts        list_cards          list_service_cases
+list_transactions    list_transfers      freeze_card
+replace_card         dispute_transaction cancel_transfer
+```
+
+Granite may answer directly or emit tagged JSON:
+
+```text
+<tool_call>{"name":"list_transactions","arguments":{"limit":5}}</tool_call>
+```
+
+The harness validates the name, arguments, types, call order, unique IDs, and
+an eight-call maximum. It executes valid calls against session-isolated state
+and returns correlated results to Granite. Multiple dependent calls are
+supported one pass at a time.
+
+Successful read-only lists are rendered by the harness as Markdown tables from
+exact result fields. Action responses remain Granite-authored, but the harness
+checks essential facts such as card ending digits, transaction description,
+recipient, and successful outcome.
+
+## Customer-Experience Validation
+
+The model prompt establishes the Harborlight Bank and Harbor identity, asks for
+warm concise wording, and requires empathy for distress. A final validator
+rejects internal vocabulary such as `synthetic`, `demo`, `mock`, `model`,
+`router`, `GPU`, `CPU`, or `tool`. One tools-disabled repair pass may rewrite
+the response while preserving authoritative action results or policy
+citations. A second invalid answer fails closed to the generic model-failure
+response.
+
+Branding and fictional-data notices remain in the UI. They must not leak into
+the assistant's ordinary customer-facing answers.
+
+## Runtime Deployments
+
+| Runtime | Model loading | UI |
+| --- | --- | --- |
+| Hugging Face Space | FP16 Granite inside `@spaces.GPU(size="large", duration=90)` | Gradio |
+| Local CUDA | bitsandbytes NF4 double quantization, FP16 compute, device `cuda:0` | Streamlit |
+
+Both paths share the router, dialogue state, policy retriever, Granite action
+service, response policy, Harborlight branding helpers, and fictional bank
+backend.
+
+The generalized state-conditioned router is published at
+`c8f154266612e79afe20af8abef25761fa56d589` from dataset revision
+`8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc`. Granite inference composes base
+`spkc83/retail-bank-servicing-agent-9b@1d568249...` with PEFT adapter
+`spkc83/retail-bank-servicing-agent-9b-peft@cc95e446...`. Merged candidates are
+not used because they failed the unchanged behavioral-parity gates. Evaluation
+job `6a7f89edc97db76cbdf31893` then failed strict behavioral gates. A corrected
+evaluator and generalized incremental SFT are underway; no passing result is
+claimed here.

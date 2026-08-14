@@ -1,316 +1,324 @@
-# End-to-End Runbook
+# End-to-End V5 Runbook
 
-This runbook walks a new developer through the released retail-bank servicing
-pipeline: local setup, data preparation, Granite SFT stages, exact evaluation,
-router training, ZeroGPU POC validation, and deployment checks.
+This is the active reproducible sequence. It intentionally uses the individual
+V5 scripts because the retained release-orchestrator configuration still
+describes the superseded V4 sequence.
 
-Paid Hugging Face Jobs steps are marked clearly. Run them only after explicit
-authorization, working credentials, and budget approval. This document records
-the released v4 facts; it does not imply that new paid jobs should be started.
+Stop at any failed gate. Do not publish a downstream revision based on a failed
+or ambiguous upstream artifact.
 
-## 1. Install
+## 0. Record the Starting Identities
 
-From the repository root:
+For the current V5 continuation:
 
-```bash
-python -m pip install -e ".[dev,scale]"
+```text
+source commit:
+  75b56ffff45e75ffbee11c0e0552dc35ae124d21
+
+Granite base:
+  spkc83/retail-bank-servicing-agent-9b
+  1d56824995aa1adecfe20f62ca42fb1c0c443817
+
+V5 Granite dataset:
+  spkc83/retail-bank-servicing-alignment-sft
+  40a0b68b9f746131ffff32a83e077fd7e4a344d1
+
+Canonical policy corpus:
+  sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a
+
+V5 router dataset:
+  spkc83/retail-bank-conversation-router-data
+  8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc
+
+V5 router:
+  spkc83/retail-bank-conversation-router
+  c8f154266612e79afe20af8abef25761fa56d589
+
+Granite PEFT composition:
+  base: spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
+  PEFT release: spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3
+  adapter bundle commit: b4269445ce7b2b943d2d9531102166bf8840a074
 ```
 
-The top-level package metadata is in [`pyproject.toml`](../pyproject.toml). The
-POC has its own dependency set in
-[`poc/retail-bank-customer-service-poc/pyproject.toml`](../poc/retail-bank-customer-service-poc/pyproject.toml)
-and [`requirements.txt`](../poc/retail-bank-customer-service-poc/requirements.txt).
+Granite job `6a7f79531f5885ae605b96cc` completed. Merged FP16 and BF16 candidates
+failed unchanged behavioral-parity gates, so the accepted release is the exact
+base-plus-adapter PEFT composition above. Evaluation job
+`6a7f89edc97db76cbdf31893` ran from source
+`42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five
+credential flags are evaluator false positives; two genuine behavioral
+failures remain. A corrected evaluator and generalized incremental SFT are
+underway.
 
-For POC-only work:
-
-```bash
-cd poc/retail-bank-customer-service-poc
-python -m pip install -r requirements.txt
-python -m pip install pytest ruff
-```
-
-## 2. Verify the Repo Locally
-
-Run the focused repository tests:
+## 1. Install and Validate the Repository
 
 ```bash
-python -m pytest -q tests
-```
-
-Run the POC tests without loading the 9B model or router:
-
-```bash
-cd poc/retail-bank-customer-service-poc
-export DEMO_AUTH_JSON='{"alex.demo":"replace-with-12-chars","maya.demo":"replace-with-12-more"}'
-export POC_SKIP_MODEL_LOAD=1
-export POC_SKIP_ROUTER_LOAD=1
-python -m pytest -q tests
-```
-
-Run static checks from the repository root:
-
-```bash
-ruff check .
-MYPYPATH=src mypy src scripts tests
+uv sync --extra dev --extra scale
 uv lock --check
+uv run ruff check .
 ```
 
-If a command fails, fix that stage before moving downstream.
-
-## 3. Prepare Stage-1 Tool-Use SFT Data
-
-The stage-1 SFT data script is
-[`scripts/retail_bank/prepare_tool_sft_data.py`](../scripts/retail_bank/prepare_tool_sft_data.py).
-
-Run:
+Run the focused V5 tests:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/prepare_tool_sft_data.py \
-  --output-dir data/banking-v3-tool-sft \
-  --pilot-count 9000 \
-  --split-seed 711
+PYTHONPATH=src uv run pytest -q \
+  tests/test_banking_tool_sft_data.py \
+  tests/test_banking_servicing_alignment_data.py \
+  tests/test_banking_conversation_router.py \
+  tests/test_banking_conversation_router_data.py \
+  tests/test_banking_conversation_router_preparation.py \
+  tests/test_banking_conversation_router_training.py \
+  tests/test_banking_tool_sft_worker.py \
+  tests/test_banking_tool_sft_job.py
+
+POC_SKIP_MODEL_LOAD=1 POC_SKIP_ROUTER_LOAD=1 \
+  uv run pytest -q poc/retail-bank-customer-service-poc/tests
 ```
 
-Current split identity:
+Stop if any data, router, policy, state, action, or response-policy test fails.
 
-| Split | Records | SHA-256 |
-| --- | ---: | --- |
-| train | 6,304 | `8d92fa0ab1d39875f0c4d918bc5aeaf670f71bf660a01a0a376cb4edc1cced53` |
-| validation | 1,349 | `a8c7871b33689fce026ea570ad0a8a90a609cde232a89486e5437b028279e6d3` |
-| test | 1,347 | `76b485fa507d56002f12b556f100fd842c77146804cf49be3426be031cc692c0` |
-
-Published dataset revision:
-`183e7e1ed1aba9c3d7155e7b83b64dc854935055`.
-
-## 4. Prepare Stage-2 Servicing-Remediation Data
-
-The stage-2 data script is
-[`scripts/retail_bank/prepare_servicing_alignment_data.py`](../scripts/retail_bank/prepare_servicing_alignment_data.py).
-It copies the full stage-1 corpus and appends targeted remediation rows in the
-matching split.
-
-Run:
+## 2. Generate the V5 Data
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/prepare_servicing_alignment_data.py
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_tool_sft_data.py \
+  --output-dir data/banking-v5-tool-sft
+
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_servicing_alignment_data.py \
+  --base-sft-dir data/banking-v5-tool-sft \
+  --output-dir data/banking-servicing-alignment-v5
+
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
+  --sft-dir data/banking-servicing-alignment-v5 \
+  --output-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --source-lock data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json
 ```
 
-Current composite split identity:
+Check the manifests:
 
-| Split | Initial base | Remediation additions | Composite total |
+```bash
+python -m json.tool data/banking-v5-tool-sft/manifest.json >/dev/null
+python -m json.tool data/banking-servicing-alignment-v5/manifest.json >/dev/null
+python -m json.tool data/banking-conversation-router-v5-social-policy-generalization-candidate5/manifest.json >/dev/null
+python -m json.tool data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json >/dev/null
+```
+
+Expected row counts:
+
+| Dataset | Train | Validation | Test |
 | --- | ---: | ---: | ---: |
-| train | 6,304 | 320 | 6,624 |
-| validation | 1,349 | 80 | 1,429 |
-| test | 1,347 | 27 | 1,374 |
+| Base tool SFT | 838 | 181 | 181 |
+| Composite servicing alignment | 1,222 | 277 | 216 |
+| Conversation router, generalized corpus | 19,363 | 5,056 | 6,171 |
 
-Released dataset revisions:
+Stop if counts, digests, leakage checks, or PII checks drift unexpectedly.
 
-- corrected public revision:
-  `0ce32f9c7a3edff227005e5b89b089947b87625a`
-- prompt-identical training revision:
-  `fea8aa1cda716954eb7322325e2be25c9f570ea3`
+## 3. Publish and Pin Data
 
-The two revisions are prompt-identical for generation and scoring.
+The current published revisions are already pinned:
 
-## 5. Granite SFT Stages
+```text
+servicing alignment: 40a0b68b9f746131ffff32a83e077fd7e4a344d1
+router data:         8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc
+```
 
-Stage 1 starts from `ibm-granite/granite-4.1-8b` revision
-`1504002f650e656a0a3789d99574df12e3e94ed0` and trains the initial synthetic
-tool-use corpus.
-
-Stage 2 starts from the stage-1 tool-trained checkpoint and trains the
-servicing-remediation composite. The released stage-2 output is:
-
-- repo: `spkc83/retail-bank-servicing-agent-9b`
-- immutable weights revision: `1d56824995aa1adecfe20f62ca42fb1c0c443817`
-- published evaluation head: `214fc0d9e143e4fa7b658de1993113562b90958a`
-- source revision: `475dc2b563ef87fa0c9aa597b0b0465d56d2ee0f`
-- training job: `spkc83/6a6ca6276b79c09949c1d6cb`
-- runtime: about 18 minutes 59 seconds
-- estimated cost: about `$0.87`
-- train loss: `0.0069123295`
-- eval loss: `0.0002181597`
-- token accuracy: `0.999976121`
-
-Inspect the stage-2 training plan without allocating a GPU:
+For a future changed dataset, publish once, then obtain the immutable commit
+before training. The servicing generator supports explicit publication:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_train_tool_sft.py \
-  --manifest data/banking-servicing-alignment-v4/manifest.json \
-  --base-model spkc83/retail-bank-agent-9b \
-  --base-revision 085df3d089cfadd77424b548542da0390a54a23e \
-  --hub-dest spkc83/retail-bank-servicing-agent-9b \
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_servicing_alignment_data.py \
+  --base-sft-dir data/banking-v5-tool-sft \
+  --output-dir data/banking-servicing-alignment-v5 \
+  --push-to-hub \
+  --repo-id spkc83/retail-bank-servicing-alignment-sft
+```
+
+Publish router data with the Hub CLI:
+
+```bash
+hf upload spkc83/retail-bank-conversation-router-data \
+  data/banking-conversation-router-v5-social-policy-generalization-candidate5 . \
+  --type dataset \
+  --commit-message "Publish V5 state-aware router data"
+```
+
+These commands change external state and were not rerun for this documentation
+update. Never pass `main` as a training identity; capture the returned commit.
+
+## 4. Train and Publish the CPU Router
+
+Local training:
+
+```bash
+PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
+  --dataset-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --output-dir artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5
+```
+
+Require `release_eligible: true` and an empty `release_gate_failures` list in
+`artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/metrics.json`
+before publication.
+
+The final published router is:
+
+```text
+c8f154266612e79afe20af8abef25761fa56d589
+```
+
+For a future changed artifact, publish with the new exact dataset revision:
+
+```bash
+ROUTER_DATA_REVISION=8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc
+
+PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
+  --dataset-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --output-dir artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --publish \
+  --data-revision "$ROUTER_DATA_REVISION" \
+  --destination-id spkc83/retail-bank-conversation-router
+```
+
+## 5. Validate the Granite Worker
+
+Dry-run plan:
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --base-model spkc83/retail-bank-servicing-agent-9b \
+  --base-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --output-dir artifacts/banking-servicing-agent-v5
+```
+
+Offline pipeline smoke:
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --output-dir /tmp/harbor-granite-v5-smoke \
+  --run-tiny-smoke
+```
+
+## 6. Reproduce Granite V5 Training
+
+The active paid job was submitted with:
+
+```bash
+BASE_MODEL=spkc83/retail-bank-servicing-agent-9b \
+BASE_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+DATASET_REPO=spkc83/retail-bank-servicing-alignment-sft \
+HF_HUB_DEST=spkc83/retail-bank-servicing-agent-9b \
+MAX_STEPS=750 \
+LEARNING_RATE=2e-5 \
+GRADIENT_ACCUMULATION_STEPS=2 \
+CHECKPOINT_EVERY=250 \
+TRACKIO_PROJECT=retail-bank-agent-v5 \
+TRACKIO_RUN_NAME=granite-v5-grounded-dialogue-75b56ff \
+bash scripts/retail_bank/run_remote_training_job.sh \
+  75b56ffff45e75ffbee11c0e0552dc35ae124d21 \
+  40a0b68b9f746131ffff32a83e077fd7e4a344d1
+```
+
+Inspect the completed job:
+
+```bash
+hf jobs inspect 6a7f79531f5885ae605b96cc
+hf jobs logs 6a7f79531f5885ae605b96cc --tail 200
+```
+
+If it stops after a compatible checkpoint, use the checkpoint path as the
+third launcher argument. See [04-training-and-recovery.md](04-training-and-recovery.md).
+
+The unchanged parity gates rejected both merged candidates. This is a valid
+stop for merged publication, not permission to weaken the gates. Finalize and
+publish the validated adapter through
+`scripts/retail_bank/hf_job_finalize_tool_sft_peft.py` instead.
+
+## 7. Run Frozen Granite Evaluation
+
+Evaluate the accepted PEFT composition:
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_generate_tool_eval.py \
+  --model-repo spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  --base-model-repo spkc83/retail-bank-servicing-agent-9b \
+  --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --adapter-repo spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  --dataset-repo spkc83/retail-bank-servicing-alignment-sft \
+  --dataset-revision 40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --split test \
+  --output-dir artifacts/banking-servicing-agent-v5-eval \
   --family granite \
-  --learning-rate 2e-5 \
-  --max-steps 500 \
-  --dry-run
+  --device cuda \
+  --dtype bf16 \
+  --enforce-release-gates
 ```
 
-The canonical entry point prints the entire ordered release plan without side
-effects:
+Run the human scenarios in [06-evaluation.md](06-evaluation.md#human-release-scenarios).
+The current frozen run failed, so stop here for release purposes. Local testing
+below is diagnostic only until a replacement artifact passes every gate.
+
+## 8. Test Locally
+
+Pin the exact composition without editing source:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/run_release_pipeline.py --stage all
-```
-
-It owns data preparation, both Granite SFT stages, router training, exact
-evaluation, and deployment. Execute one stage at a time because every
-publishing stage creates an immutable revision that must be captured in
-`configs/retail-bank-release.toml` before the downstream stage starts. Paid and
-publishing stages also require their explicit safety flags.
-
-## 6. Exact Evaluation and Rescore
-
-Run the frozen evaluator against the released model and corrected dataset:
-
-```bash
-export MODEL_REPO=spkc83/retail-bank-servicing-agent-9b
-export DATASET_REPO=spkc83/retail-bank-servicing-alignment-sft
-bash scripts/retail_bank/run_remote_tool_eval_job.sh \
-  475dc2b563ef87fa0c9aa597b0b0465d56d2ee0f \
-  1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  0ce32f9c7a3edff227005e5b89b089947b87625a
-```
-
-The released evaluation job was `spkc83/6a6caac1a00abefd4b289b14`.
-
-Final metrics:
-
-| Slice | Result |
-| --- | ---: |
-| Frozen test conversations | `1,374` |
-| Tool names and arguments | `796/796` |
-| Executable tool trajectories | `700/700` |
-| Exact dependent multi-tool sequences | `96/96` |
-| Appropriate clarifications | `63/63` |
-| Banking FAQ answers | `258/258` |
-| OOD response paths | `35/35` |
-| Grounded factual responses | `1,141/1,141` |
-| Hard error metrics | `0` |
-
-Use `scripts/retail_bank/rescore_tool_eval.py` only when the corrected dataset
-is prompt-identical to the generated-prediction dataset. The v4 final result
-meets that condition, so the rescore is valid and is not a second generation
-run.
-
-## 7. Prepare and Train the Router
-
-The history-aware router data script is
-[`scripts/retail_bank/prepare_conversation_router_data.py`](../scripts/retail_bank/prepare_conversation_router_data.py).
-
-Run:
-
-```bash
-PYTHONPATH=src python scripts/retail_bank/prepare_conversation_router_data.py
-```
-
-Split identity:
-
-| Split | Rows | SHA-256 |
-| --- | ---: | --- |
-| train | 61,759 | `8289533eb3df841c215bd4ea6e7f216c1b0fd988ad49dfd0fb78a13ad795b4e8` |
-| validation | 13,173 | `ecde083032ee1dbd692190d4dcc08815c43f1459f255aaa3fd685ccad974df18` |
-| test | 15,466 | `e4d70f0adccf0615bf79b1034203b76d0986c09d58259c31a2e2ea24a5d4931f` |
-
-Train locally without publishing:
-
-```bash
-PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py
-```
-
-Released router:
-
-- repo: `spkc83/retail-bank-conversation-router`
-- revision: `9e090c0fa21cebbaa03a431a7ce61e656c0739fe`
-- data revision: `e9a64a2e7f2b622d5412c15eac4618ceca2150da`
-- capability macro F1: `0.997838`
-- relation macro F1: `0.998628`
-- captured-regression route/capability/relation errors: `0 / 0 / 0`
-
-## 8. Run the POC Locally
-
-```bash
-cd poc/retail-bank-customer-service-poc
-export DEMO_AUTH_JSON='{"alex.demo":"replace-with-12-chars","maya.demo":"replace-with-12-more"}'
-export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b
-export RETAIL_BANK_MODEL_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817
+export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft
+export RETAIL_BANK_MODEL_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
+export RETAIL_BANK_BASE_MODEL_ID=spkc83/retail-bank-servicing-agent-9b
+export RETAIL_BANK_BASE_MODEL_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817
+export RETAIL_BANK_ADAPTER_ID=spkc83/retail-bank-servicing-agent-9b-peft
+export RETAIL_BANK_ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
 export RETAIL_BANK_ROUTER_ID=spkc83/retail-bank-conversation-router
-export RETAIL_BANK_ROUTER_REVISION=9e090c0fa21cebbaa03a431a7ce61e656c0739fe
-python app.py
+export RETAIL_BANK_ROUTER_REVISION=c8f154266612e79afe20af8abef25761fa56d589
+
+uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
-Local CPU-only testing can skip model and router loading with
-`POC_SKIP_MODEL_LOAD=1` and `POC_SKIP_ROUTER_LOAD=1`, but that does not prove
-live 9B inference.
+Verify diagnostics show the exact base, adapter-bundle, and router revisions,
+`cuda:0`, quantization, raw model passes, actions, policy sources, and dialogue
+state.
 
-## 9. Deploy the ZeroGPU POC
+## 9. Deploy ZeroGPU
 
-Deployment to `spkc83/retail-bank-servicing-poc` is an external production
-action. Do not run a deployment command without explicit authorization for that
-deployment.
-
-The Space must pin:
-
-- model `spkc83/retail-bank-servicing-agent-9b`;
-- exact model revision `1d56824995aa1adecfe20f62ca42fb1c0c443817`;
-- router `spkc83/retail-bank-conversation-router`;
-- exact router revision `9e090c0fa21cebbaa03a431a7ce61e656c0739fe`;
-- `DEMO_AUTH_JSON` with exactly `alex.demo` and `maya.demo`.
-
-After the secret exists, execute the guarded canonical deployment stage:
+Plan first:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/run_release_pipeline.py \
-  --stage deploy \
-  --execute \
-  --allow-publish
+ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
+ROUTER_REVISION=c8f154266612e79afe20af8abef25761fa56d589
+
+PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
+  --space-id spkc83/retail-bank-servicing-poc \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-revision "$ADAPTER_REVISION" \
+  --base-model-id spkc83/retail-bank-servicing-agent-9b \
+  --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-revision "$ADAPTER_REVISION" \
+  --model-dtype bf16 \
+  --router-id spkc83/retail-bank-conversation-router \
+  --router-revision "$ROUTER_REVISION"
 ```
 
-[`deploy_zero_gpu_space.py`](../scripts/retail_bank/deploy_zero_gpu_space.py)
-uploads an allowlist that excludes tests, virtual environments, bytecode, and
-hidden caches. It then persists the exact model, router, and returned Space
-commit revisions as runtime variables and waits for the resulting Hub-triggered
-rebuild to start. It does not delete remote files; remote cleanup remains a
-separately authorized operation.
+This plan is provided to verify the future deployment shape. Do not add
+`--execute --allow-publish` for `cc95e446...`: it failed strict evaluation.
+Deployment remains pending a new generalized adapter and corrected passing
+evaluation.
 
-After deployment, require the authenticated `/zero_gpu_probe` to enter user code
-and report CUDA plus the pinned revisions. Then run live read, write, multi-tool,
-clarification, FAQ, OOD, and multi-turn cases. The diagnostics panel must show
-the active model revision, active router revision, and CUDA-backed generation
-for model-handled turns.
+## Final Stop Condition
 
-## One Scenario Across the Runbook
+The end-to-end pipeline is complete only when:
 
-Use “Show my service cases” followed by “When was that created?” as a mental
-checkpoint at every stage:
-
-| Stage | Evidence to inspect |
-| --- | --- |
-| Stage-1 data | A valid `list_service_cases` call, correlated result, and grounded final answer. |
-| Stage-2 data | A separately authored contextual `created_at` follow-up. |
-| Granite training | Assistant-only labels cover the call and final responses. |
-| Router data | Current turn and visible history exist; target call/result do not. |
-| Router calibration | Clear banking routes in-domain; ambiguous context may route uncertain, not OOD. |
-| Frozen evaluation | Tool, arguments, trajectory, and `created_at` fact pass. |
-| Live POC | Diagnostics show the pinned 9B model, CUDA, context applied, call, result, and final response. |
-
-If a stage cannot produce its expected evidence, stop there. A later green
-deployment cannot compensate for invalid data or evaluation.
-
-The conceptual trace is expanded in
-[End-to-End Flow by Example](11-end-to-end-flow-by-example.md).
-
-## Stop Conditions
-
-Stop before release if:
-
-- any source, model, dataset, or router revision is not an exact immutable
-  40-character commit;
-- generated split digests drift from tracked locks;
-- any local test, lint, typecheck, or lock check fails;
-- paid-job guards are missing;
-- training metrics are unavailable;
-- evaluation uses a non-prompt-equivalent rescore;
-- any exact frozen gate fails;
-- the POC diagnostics cannot prove the model and router revisions used for live
-  generation.
+- all three local V5 datasets regenerate and validate;
+- the published dataset revisions are captured;
+- the V5 router remains release eligible and pinned;
+- Granite training completes and merged candidates are accepted or explicitly
+  rejected by unchanged parity gates;
+- the validated immutable base-plus-adapter composition is captured;
+- frozen model and orchestration gates pass;
+- local Streamlit uses that exact revision successfully;
+- ZeroGPU uses that exact revision successfully;
+- diagnostics prove the base/adapter/router/Space identities and model-generated
+  response path.

@@ -1,252 +1,232 @@
-# Frozen Two-Phase Evaluation
+# V5 Evaluation and Release Gates
 
-This guide covers the active frozen evaluation for the Granite PEFT model.
-Evaluation is read-only with respect to banking tools: it generates model
-outputs, appends canonical replay-validated tool results from the dataset when
-appropriate, scores the outputs, and publishes evaluation artifacts under the
-model repository.
+V5 has three evaluation layers:
 
-## Active Artifact IDs
+1. deterministic data and schema validation;
+2. frozen router evaluation;
+3. frozen Granite generation plus end-to-end orchestration tests.
 
-| Artifact | Value | Owner |
-| --- | --- | --- |
-| Model repo | `spkc83/retail-bank-servicing-agent-9b` | [`scripts/retail_bank/hf_job_tool_eval.py`](../scripts/retail_bank/hf_job_tool_eval.py) |
-| Model revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-| Corrected dataset repo | `spkc83/retail-bank-servicing-alignment-sft` | [`data card`](../data_cards/retail-bank-servicing-alignment-sft.md) |
-| Corrected dataset revision | `0ce32f9c7a3edff227005e5b89b089947b87625a` | [`data card`](../data_cards/retail-bank-servicing-alignment-sft.md) |
-| Prompt-identical training revision | `fea8aa1cda716954eb7322325e2be25c9f570ea3` | [`data card`](../data_cards/retail-bank-servicing-alignment-sft.md) |
-| Frozen split | `test`, 1,374 records | [`data/banking-servicing-alignment-v4/manifest.json`](../data/banking-servicing-alignment-v4/manifest.json) |
-| Evaluation job | `spkc83/6a6caac1a00abefd4b289b14` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-| Evaluation head | `214fc0d9e143e4fa7b658de1993113562b90958a` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
+The generalized router is published at
+`c8f154266612e79afe20af8abef25761fa56d589` from data revision
+`8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc` and passed the router gates reported
+in [05-dual-head-router.md](05-dual-head-router.md#held-out-results). Granite
+PEFT evaluation job `6a7f89edc97db76cbdf31893` ran from source
+`42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five
+credential-request findings were evaluator false positives caused by the safe
+phrase “do not share a password.” Two genuine failures remain: a tool-error
+final response claims success, and a history-resolved replacement request asks
+for the information again.
 
-## Evaluation Components
+## 1. Data Gates
 
-| Component | Purpose |
-| --- | --- |
-| [`scripts/retail_bank/evaluate_tool_model.py`](../scripts/retail_bank/evaluate_tool_model.py) | Local static evaluator CLI wrapper |
-| [`src/hello_slm/banking_tool_eval.py`](../src/hello_slm/banking_tool_eval.py) | Metrics, parser adapter, dry-run fixture, report writer |
-| [`scripts/retail_bank/cloud_generate_tool_eval.py`](../scripts/retail_bank/cloud_generate_tool_eval.py) | GPU prediction generator and scorer |
-| [`scripts/retail_bank/rescore_tool_eval.py`](../scripts/retail_bank/rescore_tool_eval.py) | Prompt-equivalent rescore helper |
-| [`scripts/retail_bank/hf_job_tool_eval.py`](../scripts/retail_bank/hf_job_tool_eval.py) | Pinned Hugging Face Jobs bootstrap |
-| [`scripts/retail_bank/run_remote_tool_eval_job.sh`](../scripts/retail_bank/run_remote_tool_eval_job.sh) | Paid HF Jobs launcher |
-| [`tests/test_banking_tool_eval.py`](../tests/test_banking_tool_eval.py) | Metric and parser scoring tests |
-| [`tests/test_banking_tool_eval_runner.py`](../tests/test_banking_tool_eval_runner.py) | Two-phase generation, resume, and job wrapper tests |
+Before training, require:
 
-## Two-Phase Contract
+- valid `banking-tool-sft/v1` records;
+- exact manifest byte sizes and SHA-256 digests;
+- no missing train, validation, or test split;
+- zero group and trajectory leakage;
+- zero held-out screenshot currents copied into training;
+- zero PII-like matches;
+- only supported public action names and arguments;
+- reproducible action replay and expected final-state hashes;
+- valid policy citation targets in retrieval-grounded examples;
+- router rows free of current-turn answers, action plans, and results.
 
-[`cloud_generate_tool_eval.py`](../scripts/retail_bank/cloud_generate_tool_eval.py)
-runs deterministic generation with the Granite tagged-JSON tool adapter.
+```bash
+PYTHONPATH=src uv run pytest -q \
+  tests/test_banking_tool_sft_data.py \
+  tests/test_banking_servicing_alignment_data.py \
+  tests/test_banking_conversation_router_data.py \
+  tests/test_banking_conversation_router_preparation.py
+```
 
-Phase 1 asks the model for the first assistant response:
+## 2. Router Gates
 
-- For tool records, the prompt stops before the expected assistant tool-call
-  message.
-- For no-tool records, the prompt stops before the expected final assistant
-  response.
+The router trainer evaluates the immutable V5 test split and persists
+`metrics.json` in the artifact. Important gates include:
 
-If the model emits a tool call that exactly matches the next expected canonical
-call, the runner appends the dataset's canonical tool result and allows another
-model-owned pass. It never executes live tools. It stops on no tool calls,
-unmatched tool calls, missing canonical tool results, `--max-tool-passes`, or
-`--max-tool-calls`.
+- domain OOD specificity and in-domain recall;
+- fine-intent macro F1;
+- relation macro F1;
+- contextual and repair false-refusal rates;
+- external topic-shift false acceptance;
+- resume-trajectory intent and relation errors;
+- held-out screenshot route, intent, and relation errors.
 
-Phase 2 asks for the grounded final response only after required tool records
-have canonical tool results appended. The metadata explicitly records:
+The released local artifact passed with no gate failures. See
+[05-dual-head-router.md](05-dual-head-router.md#held-out-results) for exact
+results and the immutable published router revision.
 
-- `tool_execution: false`;
-- `deterministic_output_repair: false`;
-- `teacher_forced_unseen_assistant_tool_calls: false`.
+## 3. Frozen Granite Evaluation
 
-The runner resumes safely from an existing predictions JSONL and skips
-completed `record_id` values. Old phase-row prediction files are rejected.
+Generate predictions using the exact base, adapter, dataset, and source
+revisions. The evaluator never substitutes the expected answer for model
+output and never evaluates either rejected merged candidate.
 
-### Worked two-phase example
-
-Frozen record:
+The canonical V5 dataset is:
 
 ```text
-User: Show my cards.
-Expected call: list_cards({})
-Canonical result: active card ending in 4821
-Expected facts: last4=4821, status=active
+spkc83/retail-bank-servicing-alignment-sft
+40a0b68b9f746131ffff32a83e077fd7e4a344d1
 ```
 
-Phase 1 asks Granite before the expected assistant call. If Granite emits
-`list_cards({})`, the evaluator appends the record's canonical result.
+The active evaluation composition is:
 
-Phase 2 asks Granite for the final response. A valid response might be “You
-have an active card ending in 4821.”
-
-The record passes only if the generated tool and arguments match, the expected
-trajectory is executable, and the final response preserves required facts.
-
-If Granite emits `list_accounts({})`, the evaluator records the mismatch. It
-does not rename the tool or inject the expected call.
-
-For a no-tool FAQ row, phase 1 is also the final answer. For a clarification row,
-the scorer checks that the model asks for the missing public selector instead
-of inventing one.
-
-## Local Dry Run
-
-Use the static dry run to verify the scorer without GPU or Hub access:
-
-```bash
-PYTHONPATH=src python scripts/retail_bank/evaluate_tool_model.py \
-  --dry-run \
-  --checkpoint-revision local-docs-smoke \
-  --output /tmp/retail-bank-tool-eval-dry-run.json
+```text
+base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
+adapter:  spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3
+dataset:  spkc83/retail-bank-servicing-alignment-sft@40a0b68b9f746131ffff32a83e077fd7e4a344d1
+dtype:    BF16 with adapter autocasting disabled
 ```
 
-This command evaluates two in-memory records. It verifies tool name and
-argument scoring, executable tool success, grounded final factuality, OOD path
-scoring, credential request rate, and report serialization. It does not load the
-Granite model or the frozen 1,374-record split.
-
-Run focused evaluation tests:
+Reproduce the generation step with:
 
 ```bash
-python -m pytest -q tests/test_banking_tool_eval.py \
-  tests/test_banking_tool_eval_runner.py \
-  tests/test_banking_tool_eval_rescore.py
-```
-
-## Full Local/GPU Runner
-
-Use the generator directly only when the machine has appropriate GPU memory and
-Hub access:
-
-```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_generate_tool_eval.py \
-  --model-repo spkc83/retail-bank-servicing-agent-9b \
-  --model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_generate_tool_eval.py \
+  --model-repo spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  --base-model-repo spkc83/retail-bank-servicing-agent-9b \
+  --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --adapter-repo spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
   --dataset-repo spkc83/retail-bank-servicing-alignment-sft \
-  --dataset-revision 0ce32f9c7a3edff227005e5b89b089947b87625a \
-  --manifest data/banking-servicing-alignment-v4/manifest.json \
-  --output-dir artifacts/tool-eval \
+  --dataset-revision 40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
   --split test \
+  --output-dir artifacts/banking-servicing-agent-v5-eval \
   --family granite \
   --device cuda \
-  --dtype fp16 \
-  --max-new-tokens-first 192 \
-  --max-new-tokens-final 220 \
-  --max-tool-passes 4 \
-  --max-tool-calls 6
+  --dtype bf16 \
+  --enforce-release-gates
 ```
 
-`--limit N` may be used for a local experiment, but `N` must be at least `1`.
-Do not use a limited run as a release gate.
-
-## Paid HF Jobs Evaluation
-
-The paid launcher is
-[`scripts/retail_bank/run_remote_tool_eval_job.sh`](../scripts/retail_bank/run_remote_tool_eval_job.sh).
-It validates exact source, model, and dataset revisions, checks that the pinned
-bootstrap URL exists, then launches:
-
-- `hf jobs uv run`;
-- `--flavor rtx-pro-6000`;
-- `--timeout 2h`;
-- `--secrets HF_TOKEN`;
-- `--volume hf://buckets/spkc83/jobs-artifacts:/data`.
+The failed remote evaluation used the same composition:
 
 ```bash
-export MODEL_REPO=spkc83/retail-bank-servicing-agent-9b
-export DATASET_REPO=spkc83/retail-bank-servicing-alignment-sft
 bash scripts/retail_bank/run_remote_tool_eval_job.sh \
-  475dc2b563ef87fa0c9aa597b0b0465d56d2ee0f \
-  1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  0ce32f9c7a3edff227005e5b89b089947b87625a
+  42c89ae6d6b6792268b36e2162c4b19688e4e617 \
+  cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  bf16
 ```
 
-The `HF_TOKEN` secret must read the model and dataset and write evaluation
-artifacts to `spkc83/retail-bank-servicing-agent-9b`. Temporary, restartable
-outputs are written to the mounted durable bucket. After published files and
-hashes are verified in the model repository, the bucket copy may be retired
-under the policy in [`docs/04-training-and-recovery.md`](04-training-and-recovery.md).
+That command creates a paid external job and was not rerun for this
+documentation update. Do not report its raw credential count as five model
+failures: those detections are evaluator defects. Do not discard the two real
+behavioral failures either. A corrected evaluator and generalized incremental
+SFT are underway; no replacement artifact or passing metric exists yet.
 
-## Rescore Correctness
+### Required perfect-score metrics
 
-The final public dataset revision is
-`0ce32f9c7a3edff227005e5b89b089947b87625a`. The training/evaluation generation
-used `fea8aa1cda716954eb7322325e2be25c9f570ea3`. The correction did not change
-rendered prompts, target tool calls, or target final responses. Therefore
-`scripts/retail_bank/rescore_tool_eval.py` can rescore the existing predictions
-against the corrected dataset identity. This is prompt-equivalent rescoring, not
-a second generation run.
+The current release contract requires score `1.0` for:
 
-## Metrics and Gates
+- `tool_name_accuracy`;
+- `tool_argument_accuracy`;
+- `executable_tool_success`;
+- `multi_tool_exact_sequence`;
+- `clarification_appropriateness`;
+- `grounded_final_factuality`;
+- `grounded_policy_quality`;
+- `ood_small_talk_response_path`.
 
-[`evaluate_records`](../src/hello_slm/banking_tool_eval.py) reports numerators,
-denominators, and scores for tool names, tool arguments, executable tool
-success, multi-tool sequence exactness, clarification appropriateness, FAQ
-quality, OOD path handling, grounded final factuality, malformed calls,
-unsupported/private arguments, credential requests, in-domain false refusals,
-and OOD false accepts.
+It requires score `0.0` for:
 
-The released frozen evaluation passed:
+- `malformed_tool_call_rate`;
+- `unsupported_private_arguments`;
+- `credential_request_rate`;
+- `in_domain_false_refusal`;
+- `ood_false_accept`.
 
-| Slice | Result |
-| --- | ---: |
-| Frozen test conversations | `1,374` |
-| Tool names and arguments | `796/796` |
-| Executable tool trajectories | `700/700` |
-| Exact dependent multi-tool sequences | `96/96` |
-| Appropriate clarifications | `63/63` |
-| Banking FAQ answers | `258/258` |
-| OOD response paths | `35/35` |
-| Grounded factual responses | `1,141/1,141` |
-| Malformed calls | `0` |
-| Unsupported/private arguments | `0` |
-| Credential requests | `0` |
-| In-domain false refusals | `0` |
-| OOD false accepts | `0` |
+Every gated metric must have at least one evaluated row. A missing metric is a
+failure, not a pass.
 
-## Leakage and Interpretation Warning
+### Two-phase action evaluation
 
-`Frozen` means the test artifact and scoring inputs were fixed for the run. It
-does not mean the split is contamination-free.
+For a tool-use record, generation has two observable phases:
 
-The current audit found:
+1. Granite receives the conversation before the target assistant action and
+   must emit the correct tagged-JSON action sequence.
+2. The evaluator replays the generated public actions, supplies correlated
+   results, and asks Granite for the final grounded response.
 
-- `147/1,374` test records contain one of three normalized user turns also seen
-  in training;
-- all base template families cross train, validation, and test;
-- `26/27` remediation test rows reuse an exact tool-call, canonical-result, and
-  final-answer combination found in remediation training;
-- `894/1,374` final-answer strings occur exactly in training; and
-- Stage-2 remediation and the live `alex.demo` POC share backend facts.
+The evaluator checks names, public arguments, order, executable state change,
+and required grounding facts. It rejects private arguments such as
+`customer_id`, `transaction_id`, passwords, or PINs.
 
-There are no exact full-conversation duplicates and the base split keeps state
-groups disjoint. The score is valid as an in-generator protocol regression
-result, but it does not prove leakage-free generalization or rule out
-memorization.
+### Policy evaluation
 
-See the evidence and required independent benchmark design in
-[`reference/data-leakage-audit.md`](reference/data-leakage-audit.md).
+For `retrieval_grounded_policy` rows, a passing answer must:
 
-The post-training
-[`banking-counterfactual-eval-v1`](../data/banking-counterfactual-eval-v1)
-suite addresses this limitation with independently written prompts, unseen
-project-SFT/POC facts, identical-prompt result variants, and a separate exact
-gate. Preparation and local 4-bit execution are documented in
-[`13-counterfactual-evaluation.md`](13-counterfactual-evaluation.md). Its result
-must never be merged into or substituted for the released `1,374`-row score.
+- contain the required `[Policy: id]` citation;
+- cite an ID supplied in the record;
+- contain the expected grounding facts;
+- emit no action call;
+- avoid banking-scope refusal.
 
-## Stop Conditions
+The live response validator also rejects unsupported numeric claims unless the
+number appears in the retrieved evidence.
 
-Stop evaluation and do not publish a release claim if:
+## 4. Orchestration and Conversation Tests
 
-- any revision is not an exact 40-character lowercase Git commit;
-- the manifest is unavailable or does not declare the requested split;
-- prediction JSONL is corrupt or uses the old phase-row contract;
-- the model emits unmatched required tool calls and metrics fall below gate;
-- `max_tool_passes` or `max_tool_calls` truncates required calls;
-- the report lacks dataset fingerprint, adapter template hash, or checkpoint
-  revision;
-- any hard gate fails;
-- the paid job cannot persist to `/data` or upload evaluation artifacts.
+Static SFT evaluation cannot prove runtime state transitions. The POC tests
+therefore cover:
 
-Evaluation does not repair model output and does not execute live tools. A
-failed evaluation should produce a failed report, not a corrected prediction
-file.
+- policy retrieval from a digest-verified single-revision corpus;
+- no-match policy behavior;
+- policy generation with actions disabled;
+- missing, invented, and unsupported policy citations;
+- unsupported numeric policy claims;
+- dispute -> policy detour -> resume;
+- implicit same-intent resume;
+- explicit switch to a different servicing intent;
+- uncertain, OOD, and classifier-error state preservation;
+- state reset and session isolation;
+- original servicing exchange pinned across a long detour;
+- customer-facing internal-language rejection and one repair pass;
+- exact Markdown rendering for read-only account, card, transaction, transfer,
+  and service-case results.
+
+```bash
+POC_SKIP_MODEL_LOAD=1 POC_SKIP_ROUTER_LOAD=1 \
+  uv run pytest -q \
+  poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py \
+  poc/retail-bank-customer-service-poc/tests/test_policy_retrieval.py \
+  poc/retail-bank-customer-service-poc/tests/test_response_policy.py \
+  poc/retail-bank-customer-service-poc/tests/test_model_service.py \
+  poc/retail-bank-customer-service-poc/tests/test_local_app_service.py \
+  poc/retail-bank-customer-service-poc/tests/test_app.py
+```
+
+## Human Release Scenarios
+
+Run these with prompts that are not copied from training or UI presets:
+
+1. Start a transaction dispute, ask an unrelated deposit-policy question, and
+   return to the dispute with indirect language.
+2. Start card replacement, ask a card-policy question, then explicitly switch
+   to transfer cancellation; verify the old card task does not resume.
+3. Ask a standalone mortgage question; verify a relevant citation and no
+   action call.
+4. Ask for a policy absent from the corpus; verify the no-match answer rather
+   than improvised policy.
+5. Correct a wrong assistant assumption and verify repair without repeated
+   boilerplate.
+6. Shift from banking to weather and verify high-confidence OOD without a
+   Granite call.
+7. Request each read view and verify clean Markdown tables.
+8. Inspect diagnostics and verify the model revision, router revision, raw
+   model output, action calls, policy sources, and dialogue state match the
+   visible response.
+
+## Release Stop Condition
+
+Do not change the POC model pin until all of these are true:
+
+- training job completed successfully;
+- adapter and merged checkpoint saved;
+- merged reload parity passed;
+- immutable Hub model revision captured;
+- frozen generation gates passed on the V5 test split;
+- orchestration tests passed;
+- independent human scenarios passed without template contamination;
+- both local and ZeroGPU smoke tests report the new exact revision.

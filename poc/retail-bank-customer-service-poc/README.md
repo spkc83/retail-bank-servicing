@@ -10,256 +10,258 @@ app_file: app.py
 pinned: false
 suggested_hardware: zero-a10g
 models:
+  - spkc83/retail-bank-servicing-agent-9b-peft
   - spkc83/retail-bank-servicing-agent-9b
   - spkc83/retail-bank-conversation-router
 datasets:
   - spkc83/retail-bank-servicing-alignment-sft
   - spkc83/retail-bank-conversation-router-data
-short_description: Model-driven 8.79B synthetic retail-bank service agent.
+short_description: Harborlight Bank model-driven 8.79B customer-service POC.
 ---
 
-# Retail Bank Customer Service POC
+# Harborlight Bank Customer-Service POC
 
-This authenticated POC tests whether a history-aware OOD/capability/relation
-router plus a two-stage SFT 8.79B Granite model can provide natural multi-turn
-customer service and operate a synthetic retail-bank backend.
+This authenticated POC tests Harbor, a model-driven retail-bank assistant,
+through Gradio/ZeroGPU and a local Streamlit interface. It combines:
 
-Everything is fictional. The application has no connection to a bank and
-cannot access real accounts or perform real transactions.
+- a PEFT-adapted Granite 8.79B generator;
+- a state-aware CPU router with domain, 12 fine-intent, and five relation
+  heads;
+- one bounded pending servicing task with policy-detour/resume behavior;
+- deterministic retrieval from a versioned policy knowledge base;
+- nine Granite-selected banking actions over fictional session data;
+- response grounding, exact read tables, policy citations, and customer-facing
+  language validation.
 
-## Released v4 stack
+All profiles and records are fictional. Nothing connects to a real bank or can
+perform a real transaction.
 
-The Space pins the history-aware cross-encoder router and servicing-aligned
-Granite model at immutable Hub revisions. The router has domain,
-servicing-capability, and multi-label conversation-relation heads. Capability
-predictions remain diagnostics and never enter the Granite prompt or choose
-tools.
+## V5 Status
 
-## Live artifacts
+| Component | Revision/status |
+| --- | --- |
+| Generalized router `spkc83/retail-bank-conversation-router` | `c8f154266612e79afe20af8abef25761fa56d589` |
+| Generalized router data `spkc83/retail-bank-conversation-router-data` | `8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc` |
+| Canonical-policy Granite SFT data `spkc83/retail-bank-servicing-alignment-sft` | `40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
+| Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
+| Granite V5 PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3`; bundle commit `b4269445ce7b2b943d2d9531102166bf8840a074` |
+| Strict evaluation | job `6a7f89edc97db76cbdf31893` failed; replacement evaluator/SFT underway |
 
-- Application: https://huggingface.co/spaces/spkc83/retail-bank-servicing-poc
-- POC source: https://github.com/spkc83/retail-bank-servicing-poc
-- Model-development source: https://github.com/spkc83/retail-bank-servicing
-- Model: https://huggingface.co/spkc83/retail-bank-servicing-agent-9b
-- Tool-use dataset:
-  https://huggingface.co/datasets/spkc83/retail-bank-servicing-alignment-sft
-- History-aware classifier:
-  https://huggingface.co/spkc83/retail-bank-conversation-router
+Both runtimes load the exact Stage-2 base and attach the immutable BF16 LoRA
+adapter without merging. Merged FP16/BF16 candidates failed unchanged parity
+gates. The PEFT candidate also failed strict evaluation: five credential flags
+were evaluator false positives and two genuine behavioral failures remain.
+Use the UI for diagnosis only; it is not an approved deployment.
 
-## Runtime
-
-```text
-Authenticated synthetic customer and session transcript
-  → one managed ZeroGPU chat event
-  → CPU history-aware router
-  → high-confidence OOD: governed scope response
-  → in-domain or uncertain: 8.79B model generation
-  → direct answer, clarification, or tagged-JSON tool calls
-  → generated calls execute against session-isolated synthetic SQLite
-  → exact read lists render as tables; other grounded answers are validated
-```
-
-The router's capability and relation outputs are diagnostic metadata. They do
-not enter the generation prompt, select a tool, or supply arguments. The 8.79B
-model owns greetings, conversation, clarification, tool choice, public
-arguments, and action wording. The runtime budgets context, parses and validates
-the tagged-JSON wire format, invokes the named mock function, renders successful
-read-list results from exact fields, validates action wording, and records
-diagnostics.
-
-The live generation prompt and iterative model → tool → model protocol match
-the SFT corpus and frozen evaluator. A first-pass answer without a tool call is
-returned directly. Read-list presentation is host-rendered. An action answer
-that omits or contradicts an essential selector or outcome gets at most one
-text-only repair pass with tools disabled. Tool calls and arguments are never
-automatically repaired.
-
-### Route examples
+## Request Flow
 
 ```text
-high banking score          → in_domain → run the 8.79B model
-middle banking score        → uncertain → run the 8.79B model
-low banking + relation cue  → uncertain → run the 8.79B model
-low banking + no rescue     → OOD       → stock scope response
-classifier exception        → error     → visible failure response
+authenticated Harborlight customer + conversation + prior dialogue state
+  -> V5 CPU cross-encoder
+     -> high-confidence OOD: fixed banking-scope answer; Granite not called
+     -> accepted/uncertain: bounded state transition
+        -> policy: retrieve versioned chunks; Granite called without actions
+           -> require [Policy: chunk_id]
+        -> conversation/servicing: Granite may answer or emit tagged JSON
+           -> validate and execute against session-isolated fictional SQLite
+           -> exact read table or validated Granite-authored action answer
+  -> reject internal implementation language; allow one text-only repair
 ```
 
-`uncertain` is deliberate abstention by the classifier, not a model failure.
-The actual probabilities, thresholds, route, and generation-call count appear
-in the diagnostics panel.
+The router intent never enters Granite's prompt and never authorizes an action.
+Granite chooses public actions and arguments. The state machine only tracks one
+pending service task, preserves it through a policy detour, and pins the actual
+original exchange when the customer returns.
 
-## Conversation context
-
-The application stores complete valid interaction groups: user messages,
-assistant tool calls, correlated tool results, and final model responses.
-
-Each inference uses an 8,192-token input budget and reserves 512 tokens for
-generation. The current interaction and system instructions are retained
-first; newest complete prior interaction groups are then added while they fit.
-A tool chain is never split across the context boundary.
-
-The harness does not promote browser/session transcript dictionaries into the
-trusted system prompt. Prior context remains ordinary role-tagged messages.
-
-## Synthetic tools
-
-- list accounts, cards, transactions, transfers, and service cases;
-- freeze or replace a card;
-- dispute a transaction by merchant description;
-- cancel a pending transfer by recipient.
-
-Calls execute in generated order. Schema or backend errors return to the model
-as tool results so it can explain the outcome conversationally.
-
-Example:
+## Policy Detour Example
 
 ```text
-User: Show my cards.
-Granite: list_cards({})
-SQLite: active card ending in 4821
-Harness: renders the exact card result as a Markdown table.
+Customer: Dispute the North Harbor Market purchase.
+Harbor:    I can help. What would you like to confirm first?
+Customer: How does a card dispute investigation work?
+Harbor:    ... [Policy: card.dispute.us.v1]
+Customer: Thanks. Continue with the dispute.
+Harbor:    <tool_call>{"name":"dispute_transaction",...}</tool_call>
 ```
 
-## Proving model inference
+The policy turn receives retrieved text and no banking actions. The final turn
+receives the original dispute exchange as pinned context. The pending task
+clears only after `dispute_transaction` succeeds.
 
-The diagnostics panel exposes:
+## Supported Actions
 
-- exact model repository and immutable revision;
-- runtime and CUDA device;
-- response path and model-call count;
-- raw `base`, `grounded_final`, and iterative tool-follow-up outputs;
-- generated tool names and public arguments;
-- correlated tool results;
-- prompt and output SHA-256 values for every model pass.
+```text
+list_accounts        list_cards          list_service_cases
+list_transactions    list_transfers      freeze_card
+replace_card         dispute_transaction cancel_transfer
+```
 
-The authenticated `/zero_gpu_probe` API performs no generation. It returns
-only after a managed ZeroGPU worker enters application code and reports the
-packed model's device plus exact model and router revisions. If it fails in
-ZeroGPU `worker_init`, the failure is in GPU allocation before the chat or model
-code runs.
+Granite emits tagged JSON such as:
 
-A successful live turn is counted as 8.79B inference only when diagnostics show
-`spkc83/retail-bank-servicing-agent-9b` at revision
-`1d56824995aa1adecfe20f62ca42fb1c0c443817` and a CUDA device. Preset prompts
-are evaluation cases, not hard-coded routes.
+```text
+<tool_call>{"name":"list_transactions","arguments":{"limit":5}}</tool_call>
+```
 
-The pinned checkpoint passed all 1,374 frozen test conversations: 796/796 tool
-names and arguments, 700/700 executable trajectories, 96/96 exact dependent
-multi-tool sequences, 63/63 appropriate clarifications, 258/258 banking FAQs,
-35/35 OOD paths, and 1,141/1,141 grounded facts. It produced zero
-parse failures, malformed calls, private arguments, credential requests,
-in-domain false refusals, or OOD false accepts.
+The harness validates the schema, executes the call, and returns the correlated
+result. Read-only result lists render as Markdown tables from exact fields.
+Action answers remain Granite-authored and must preserve essential result
+facts without exposing private internal IDs.
 
-If ZeroGPU allocation or generation fails, the UI reports model
-unavailability. It does not substitute a Python-generated banking answer.
+## Confirming Model Generation
 
-## Authentication
+Open **Technical details** in Gradio or **Experiment diagnostics** in
+Streamlit. A model-authored turn records:
 
-The demo usernames are `alex.demo` and `maya.demo`. Passwords come from the
-Space's write-only `DEMO_AUTH_JSON` secret and are displayed on the login page
-for public testing. Authentication only selects isolated synthetic records.
+- one or more model-pass labels and raw outputs;
+- prompt and output SHA-256 values;
+- input token count;
+- runtime/CUDA device;
+- exact base, adapter-bundle, and router revisions;
+- action calls/results or policy source IDs;
+- response path and bounded dialogue state.
 
-## Local Streamlit on TITAN V
+If the turn records zero model passes, Granite did not generate it. Expected
+zero-pass paths are high-confidence OOD, classifier failure, and policy
+no-match.
 
-[`streamlit_app.py`](streamlit_app.py) is a separate local UI. It does not
-import or modify the Space's Gradio/ZeroGPU boundary. It reuses the same:
+## Static POC Authentication
 
-- pinned Granite 9B checkpoint and tokenizer;
-- history-aware CPU router;
-- `ConversationalBankingAgent` model-to-tool-to-model loop;
-- synthetic SQLite backend and two demo customers;
-- 8,192-token conversation budget and complete interaction groups.
+Both apps accept exactly two usernames:
 
-[`local_gpu_runtime.py`](local_gpu_runtime.py) quantizes linear weights during
-loading with bitsandbytes NF4, double quantization, and FP16 compute. It does
-not create or save a second quantized model artifact. The published checkpoint
-remains unchanged in the Hugging Face cache.
+```text
+alex.demo
+maya.demo
+```
 
-Launch from the repository root:
+Set `DEMO_AUTH_JSON` to a JSON object with different passwords of at least 12
+characters:
+
+```bash
+export DEMO_AUTH_JSON='{"alex.demo":"replace-with-strong-value-1","maya.demo":"replace-with-strong-value-2"}'
+```
+
+Authentication only selects a fictional profile and isolates session state. It
+is not a production security design.
+
+## Local Streamlit on a 12GB CUDA GPU
+
+From the development repository root:
 
 ```bash
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
-Then open <http://127.0.0.1:8501>. The launcher pins a CUDA 12.6 PyTorch wheel
-that contains `sm_70` kernels for the TITAN V. It also pins Streamlit,
-Transformers, bitsandbytes, and Accelerate independently of the Space
-requirements.
-
-The local-only default credentials are:
+Open <http://127.0.0.1:8501>. If `DEMO_AUTH_JSON` is unset, the local login page
+shows these local-only defaults:
 
 ```text
 alex.demo / alex-local-demo
 maya.demo / maya-local-demo
 ```
 
-Override both with the same authenticated POC contract when needed:
+The local runtime quantizes the pinned base with bitsandbytes NF4 double
+quantization, then attaches the pinned adapter. It prefers:
 
-```bash
-export DEMO_AUTH_JSON='{"alex.demo":"replace-with-12-chars","maya.demo":"replace-with-12-more"}'
-uv run scripts/retail_bank/run_local_streamlit.py
+```text
+artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5
 ```
 
-Optional launch settings:
+and downloads the final published V5 router only when the
+local artifact is absent.
+Streamlit caches the runtime, router, and controller across normal reruns.
 
-```bash
-export LOCAL_STREAMLIT_PORT=8502
-export POC_SESSION_DB_DIR=/tmp/retail-bank-local-streamlit
+Useful overrides:
+
+```text
+LOCAL_STREAMLIT_PORT
+LOCAL_ROUTER_ARTIFACT_DIR
+RETAIL_BANK_MODEL_ID
+RETAIL_BANK_MODEL_REVISION
+RETAIL_BANK_BASE_MODEL_ID
+RETAIL_BANK_BASE_MODEL_REVISION
+RETAIL_BANK_ADAPTER_ID
+RETAIL_BANK_ADAPTER_REVISION
+RETAIL_BANK_ROUTER_ID
+RETAIL_BANK_ROUTER_REVISION
+HF_TOKEN
 ```
 
-The first run may download roughly 16GB of pinned model files. With a warm
-cache, loading NF4 weights on the TITAN V can still take several minutes.
-Streamlit `cache_resource` factories retain one router, runtime, and controller
-across page reruns; browser identity and conversation remain session-local.
-Generation is serialized because the local machine has one GPU.
+The launcher refuses `LOCAL_POC_SKIP_MODEL_LOAD=1` or
+`LOCAL_POC_SKIP_ROUTER_LOAD=1` during an ordinary start. Those flags are for
+tests only.
 
-The local app prefers the verified release router at
-`artifacts/banking-conversation-router-v4-release`. If it is absent, it
-downloads the same immutable Hub revision. Set `LOCAL_ROUTER_ARTIFACT_DIR` to
-use another verified local copy.
+## Hugging Face Gradio/ZeroGPU
 
-Successful model inference is proven by diagnostics showing:
+The Space loads the Stage-2 base in BF16, attaches the BF16 LoRA adapter, and
+executes each chat turn inside:
 
-- model `spkc83/retail-bank-servicing-agent-9b`;
-- revision `1d56824995aa1adecfe20f62ca42fb1c0c443817`;
-- runtime `cuda:0` and `NVIDIA TITAN V`;
-- weight quantization `bitsandbytes-nf4-double`;
-- at least one model pass with prompt/output hashes and raw output;
-- generated tool calls and correlated results when a tool was used;
-- execution boundary `Local CUDA / NF4`.
-
-`LOCAL_POC_SKIP_MODEL_LOAD=1` and `LOCAL_POC_SKIP_ROUTER_LOAD=1` exist only for
-automated tests. The launcher refuses to start with either flag unless
-`--allow-test-skip` is explicitly supplied, preventing a test environment from
-silently masquerading as real local inference.
-
-Troubleshooting:
-
-- `CUDA is unavailable`: verify `nvidia-smi` and the active NVIDIA driver.
-- missing `sm_70`: launch through the provided UV script instead of an
-  unrelated CUDA 13 PyTorch environment.
-- slow first page: wait for the pinned model download and NF4 packing; do not
-  repeatedly refresh during the initial load.
-- port already in use: set `LOCAL_STREAMLIT_PORT` to another local port.
-
-## Local verification
-
-```bash
-python -m pip install -r requirements.txt
-export DEMO_AUTH_JSON='{"alex.demo":"replace-with-12-chars","maya.demo":"replace-with-12-chars"}'
-export POC_SKIP_MODEL_LOAD=1
-export POC_SKIP_ROUTER_LOAD=1
-pytest -q
-ruff check .
+```python
+@spaces.GPU(size="large", duration=90)
 ```
 
-Local Streamlit tests do not load the 9B checkpoint:
+The hidden `zero_gpu_probe` event uses a 30-second GPU allocation to prove user
+code entered the worker and to report model/device metadata. The Gradio queue
+uses a concurrency limit of one because the full packed model and mutable
+session loop are intentionally low-throughput POC infrastructure.
+
+The deploy helper requires exact base, adapter, and router revisions and uploads only an
+allowlist of application files:
 
 ```bash
-python -m pytest -q tests/test_local_gpu_runtime.py \
-  tests/test_local_app_service.py tests/test_streamlit_app.py
+ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
+ROUTER_REVISION=c8f154266612e79afe20af8abef25761fa56d589
+
+PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
+  --space-id spkc83/retail-bank-servicing-poc \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-revision "$ADAPTER_REVISION" \
+  --base-model-id spkc83/retail-bank-servicing-agent-9b \
+  --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-revision "$ADAPTER_REVISION" \
+  --model-dtype bf16 \
+  --router-id spkc83/retail-bank-conversation-router \
+  --router-revision "$ROUTER_REVISION"
 ```
 
-Release verification additionally requires live ZeroGPU read, write,
-multi-tool, clarification, FAQ, OOD, and multi-turn cases with the exact model
-revision visible in diagnostics.
+The command prints a plan and proves the four PEFT identity fields are complete.
+Do not add `--execute --allow-publish` for `cc95e446...`: strict evaluation
+failed. Deployment remains pending a replacement artifact and passing result.
+
+## Reset and Session Isolation
+
+**Reset demo** or **Start over** clears:
+
+- visible and internal conversation;
+- pending servicing task;
+- policy-detour flag;
+- fictional bank changes for that session.
+
+Another authenticated browser session has a different session ID and does not
+share the mutable account state or bounded dialogue state.
+
+## Run Tests
+
+From the development repository root, without loading the 8.79B model or Hub
+router:
+
+```bash
+POC_SKIP_MODEL_LOAD=1 POC_SKIP_ROUTER_LOAD=1 \
+  uv run pytest -q poc/retail-bank-customer-service-poc/tests
+```
+
+The suite covers auth, router loading and thresholds, policy retrieval and
+citations, dialogue detours/resume/switch/reset, context pinning, action wire,
+grounding, internal-language repair, exact read tables, local controller,
+Gradio UI state, Streamlit helpers, and runtime metadata.
+
+## Source and Artifacts
+
+- Space: <https://huggingface.co/spaces/spkc83/retail-bank-servicing-poc>
+- POC source: <https://github.com/spkc83/retail-bank-servicing-poc>
+- Model-development source: <https://github.com/spkc83/retail-bank-servicing>
+- Granite model repo: <https://huggingface.co/spkc83/retail-bank-servicing-agent-9b>
+- Router: <https://huggingface.co/spkc83/retail-bank-conversation-router>
+- Granite V5 data: <https://huggingface.co/datasets/spkc83/retail-bank-servicing-alignment-sft>
+- Router V5 data: <https://huggingface.co/datasets/spkc83/retail-bank-conversation-router-data>

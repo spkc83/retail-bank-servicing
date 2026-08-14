@@ -1,6 +1,6 @@
 ---
 license: apache-2.0
-base_model: ibm-granite/granite-4.1-8b
+base_model: spkc83/retail-bank-servicing-agent-9b
 datasets:
 - spkc83/retail-bank-agent-sft
 - spkc83/retail-bank-servicing-alignment-sft
@@ -12,11 +12,12 @@ tags:
 - peft
 ---
 
-# Retail Bank Servicing Agent 9B
+# Retail Bank Servicing Agent 9B — PEFT Candidate
 
 Retail Bank Servicing Agent 9B is an experimental customer-service and tool-use
-model for the linked synthetic retail-bank demonstration. It is a merged FP16
-LoRA adaptation of `ibm-granite/granite-4.1-8b`.
+model for the linked synthetic retail-bank demonstration. The active candidate
+is an unmerged BF16 LoRA adapter over immutable Stage-2 base revision
+`1d56824995aa1adecfe20f62ca42fb1c0c443817`.
 
 - Source: https://github.com/spkc83/retail-bank-servicing
 - Initial tool-use dataset:
@@ -28,25 +29,24 @@ LoRA adaptation of `ibm-granite/granite-4.1-8b`.
 
 ## Artifact Identity
 
-- Model repository: `spkc83/retail-bank-servicing-agent-9b`
-- Immutable weights revision:
+- Adapter repository: `spkc83/retail-bank-servicing-agent-9b-peft`
+- PEFT release revision: `cc95e446af2b5e1d8d9df2751a8192613ad386e3`
+- Adapter bundle commit: `b4269445ce7b2b943d2d9531102166bf8840a074`
+- Training job: `spkc83/6a7f79531f5885ae605b96cc` (`COMPLETED`)
+- Incremental SFT parent revision:
   `1d56824995aa1adecfe20f62ca42fb1c0c443817`
-- Published evaluation head:
-  `214fc0d9e143e4fa7b658de1993113562b90958a`
 - Base model revision:
   `1504002f650e656a0a3789d99574df12e3e94ed0`
-- Source revision:
-  `475dc2b563ef87fa0c9aa597b0b0465d56d2ee0f`
+- V5 training source revision:
+  `75b56ffff45e75ffbee11c0e0552dc35ae124d21`
 - Initial tool-use dataset revision:
   `183e7e1ed1aba9c3d7155e7b83b64dc854935055`
-- Corrected servicing-remediation dataset revision:
-  `0ce32f9c7a3edff227005e5b89b089947b87625a`
-- Prompt-identical training dataset revision:
-  `fea8aa1cda716954eb7322325e2be25c9f570ea3`
-- Servicing-remediation training job:
-  `spkc83/6a6ca6276b79c09949c1d6cb`
-- Exact frozen evaluation job:
-  `spkc83/6a6caac1a00abefd4b289b14`
+- V5 composite training dataset revision:
+  `40a0b68b9f746131ffff32a83e077fd7e4a344d1`
+- Canonical policy corpus revision:
+  `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a`
+- Strict evaluation job: `spkc83/6a7f89edc97db76cbdf31893` (`FAILED`)
+- Evaluation source: `42c89ae6d6b6792268b36e2162c4b19688e4e617`
 - Parameters: 8,791,592,960
 - Architecture: dense decoder-only causal transformer
 - Tool format: Granite native tagged JSON
@@ -65,6 +65,13 @@ anaphora, clarification answers, agent repair, and topic shifts. The composite
 corpus keeps the full initial SFT corpus and appends 427 targeted remediation
 records in split.
 
+Stage 3 continued incrementally from the Stage-2 revision with the governed V5
+composite corpus. It adds Harborlight Bank presentation, retrieval-grounded
+policy citations, policy-detour and servicing-resume trajectories, broader
+tool-use phrasing, response empathy, and Markdown table targets. Static policy
+facts are supplied by the runtime knowledge base rather than treated as model
+memory.
+
 ## Inference Example
 
 ```text
@@ -78,7 +85,38 @@ For “Replace the active one,” the model also needs retained visible history.
 The router may label the turn `in_domain` or `uncertain`; either route invokes
 this model. Router capability candidates do not enter the model prompt.
 
-## Servicing-Remediation Training Result
+## Corrected V5 Grounded-Dialogue Training
+
+- Training job: `spkc83/6a7f79531f5885ae605b96cc`
+- Status: `COMPLETED`
+- Adaptation: PEFT/LoRA continued from the immutable Stage-2 parent
+- Source: `75b56ffff45e75ffbee11c0e0552dc35ae124d21`
+- Dataset: `40a0b68b9f746131ffff32a83e077fd7e4a344d1`
+- Optimizer steps: `750`
+- Training loss: `0.13014758`
+- Evaluation loss: `0.3200804`
+- Token accuracy: `0.96240348`
+- Output: BF16 LoRA PEFT release `cc95e446...`, with adapter bundle committed
+  at `b4269445...`
+
+Merged FP16 and BF16 candidates were rejected by unchanged behavioral-parity
+gates. Inference and evaluation therefore load the exact base revision and
+attach the immutable adapter with PEFT; they do not use merged weights.
+
+## Current Strict-Evaluation Status
+
+Evaluation job `spkc83/6a7f89edc97db76cbdf31893` failed the strict gates.
+Five credential-request findings are evaluator false positives caused by the
+customer-safe phrase “do not share a password.” Two genuine behaviors remain:
+
+- after an action error, the final answer incorrectly claims success;
+- a history-resolved card-replacement request asks for information again.
+
+A corrected evaluator and generalized incremental SFT are underway. No new
+artifact identity or passing metric exists yet, so this candidate is not
+cleared for deployment.
+
+## Historical V4 Servicing-Remediation Result
 
 - Training job: `spkc83/6a6ca6276b79c09949c1d6cb`
 - Runtime: about 18 minutes 59 seconds
@@ -90,9 +128,9 @@ this model. Router capability candidates do not enter the model prompt.
 - Maximum training sequence: 2,048 tokens
 - Output: merged FP16 weights in `spkc83/retail-bank-servicing-agent-9b`
 
-## Frozen Evaluation
+## Historical V4 Frozen Evaluation
 
-Evaluation job `spkc83/6a6caac1a00abefd4b289b14` evaluated 1,374 frozen
+The prior evaluation job `spkc83/6a6caac1a00abefd4b289b14` evaluated 1,374 frozen
 records with deterministic FP16 generation and the exact tool/final-response
 scorer.
 
@@ -114,9 +152,34 @@ rows: the rendered prompts, target tool calls, and target final responses are
 equivalent for generation and scoring. This card does not claim that a second
 generation run was performed.
 
+## Superseded Pre-Canonical-Policy V5 Evidence
+
+Job `spkc83/6a7f6d01c97db76cbdf3170b` completed against the immutable V5 model and
+model revision `1799d068906c0da2a8739668857b096d20fed549` and dataset revision
+`f7784b34b41094b1e771323b2df046ed4664b9a4`. The enforced gate reported
+`eligible: true` with no failures, but this evidence predates canonical policy
+corpus revision `sha256:ec6e7500...` and is not the current release result.
+
+- tool names: `125/125`
+- tool arguments: `125/125`
+- executable tool trajectories: `113/113`
+- exact dependent multi-tool sequences: `12/12`
+- grounded factual responses: `175/175`
+- grounded policy responses: `44/44`
+- appropriate clarifications: `6/6`
+- OOD/small-talk response paths: `11/11`
+- malformed calls, unsupported private arguments, credential requests,
+  in-domain false refusals, and OOD false accepts: `0`
+
+The 216-record first-pass evaluation includes 113 grounded-final generations.
+Its immutable report and predictions are stored under
+`evaluation/1799d068906c-f7784b34b410/` at model-repository revision
+`9806174bacbe7bd268d0d72b2eaff6f98b668386`. The report SHA-256 is
+`4a90ea779a20de0c72c293d49cc69a8c44d9067c3e70408ac806988060651dac`.
+
 ### Evaluation-integrity limitation
 
-The frozen score is an in-generator protocol regression result, not a
+The historical V4 score is an in-generator protocol regression result, not a
 leakage-free generalization benchmark. A repository audit found shared POC
 facts, shared template families, repeated user turns, and repeated targets
 between training and test.

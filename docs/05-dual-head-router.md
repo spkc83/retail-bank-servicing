@@ -1,193 +1,219 @@
-# History-Aware Conversation Router
+# V5 Three-Head State-Aware Router
 
-This guide covers the released CPU router: governed v4 data preparation,
-DistilBERT cross-encoder training, threshold calibration, publication, and
-serving behavior. The router does not select tools and does not supply tool
-arguments to the Granite model.
+The filename is retained for stable links, but the active V5 router is not a
+dual-head classifier. It is a shared DistilBERT cross-encoder with three heads:
 
-The previous Banking77 intent router has been superseded for the POC runtime.
-This file keeps its historical filename so existing documentation links remain
-stable.
+1. two-class banking domain head;
+2. 12-class fine-intent head;
+3. five-label sigmoid conversation-relation head.
 
-## Active Artifact IDs
+The broad runtime lane is derived from the fine intent. It is not learned by a
+separate head.
 
-| Artifact | Value | Owner |
-| --- | --- | --- |
-| Router repo | `spkc83/retail-bank-conversation-router` | [`poc/retail-bank-customer-service-poc/router.py`](../poc/retail-bank-customer-service-poc/router.py) |
-| Router revision | `9e090c0fa21cebbaa03a431a7ce61e656c0739fe` | [`model card`](../model_cards/retail-bank-domain-intent-router.md) |
-| Router dataset repo | `spkc83/retail-bank-conversation-router-data` | [`scripts/retail_bank/prepare_conversation_router_data.py`](../scripts/retail_bank/prepare_conversation_router_data.py) |
-| Router dataset revision | `e9a64a2e7f2b622d5412c15eac4618ceca2150da` | [`data card`](../data_cards/retail-bank-router-training-data.md) |
-| Base encoder | `distilbert/distilbert-base-uncased` | [`scripts/retail_bank/train_conversation_router.py`](../scripts/retail_bank/train_conversation_router.py) |
-| Base encoder revision | `12040accade4e8a0f71eabdb258fecc2e7e948be` | [`scripts/retail_bank/train_conversation_router.py`](../scripts/retail_bank/train_conversation_router.py) |
+## Artifact Status
 
-The public dataset card is
-[`data_cards/retail-bank-router-training-data.md`](../data_cards/retail-bank-router-training-data.md).
-The public model card is
-[`model_cards/retail-bank-domain-intent-router.md`](../model_cards/retail-bank-domain-intent-router.md).
+| Item | Value |
+| --- | --- |
+| Router repo | `spkc83/retail-bank-conversation-router` |
+| Router revision | `c8f154266612e79afe20af8abef25761fa56d589` |
+| Router dataset repo | `spkc83/retail-bank-conversation-router-data` |
+| Dataset revision | `8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc` |
+| Local data | `data/banking-conversation-router-v5-social-policy-generalization-candidate5` |
+| Local artifact | `artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5` |
+| Base encoder | `distilbert/distilbert-base-uncased` |
+| Base revision | `12040accade4e8a0f71eabdb258fecc2e7e948be` |
+| Artifact format | 3 |
+| Maximum input length | 256 tokens |
+| Visible exchanges | at most 3 |
 
 ## Architecture
 
-[`scripts/retail_bank/train_conversation_router.py`](../scripts/retail_bank/train_conversation_router.py)
-trains one shared DistilBERT cross-encoder with three heads:
-
-- a binary domain head for supported retail banking vs out-of-domain;
-- an eight-way servicing-capability head for diagnostics;
-- a four-label sigmoid relation head for `context_dependent`, `agent_repair`,
-  `topic_shift`, and `clarification_answer`.
-
-The domain loss applies to every row. Capability loss applies to in-domain
-servicing rows. Relation loss is multi-label and uses capped positive-class
-weights so rare repair and clarification rows are not overwhelmed.
-
-The runtime input format is:
+[`ConversationRouterModel`](../src/hello_slm/banking_conversation_router.py)
+encodes the complete rendered sequence once. The `[CLS]` representation feeds
+three independent linear heads:
 
 ```text
+rendered current turn + history + prior state
+                |
+         DistilBERT encoder
+                |
+         pooled [CLS] vector
+          /        |        \
+     domain      intent    relations
+      2-way      12-way     5 sigmoid
+```
+
+Domain and intent use softmax. Relations use independent sigmoid probabilities
+because multiple relations can be active on one turn.
+
+## Labels and Derived Lanes
+
+| Fine intent | Derived lane | Expected servicing action, if applicable |
+| --- | --- | --- |
+| `view_accounts` | servicing | `list_accounts` |
+| `view_cards` | servicing | `list_cards` |
+| `freeze_card` | servicing | `freeze_card` |
+| `replace_card` | servicing | `replace_card` |
+| `view_transactions` | servicing | `list_transactions` |
+| `dispute_transaction` | servicing | `dispute_transaction` |
+| `view_transfers` | servicing | `list_transfers` |
+| `cancel_transfer` | servicing | `cancel_transfer` |
+| `view_service_cases` | servicing | `list_service_cases` |
+| `policy_knowledge` | policy | actions disabled |
+| `conversation` | conversation | none predetermined |
+| `other_banking` | other banking | none predetermined |
+
+The action column documents the state machine's completion expectation. It
+does not authorize that action. Granite still chooses the action and public
+arguments.
+
+The relation labels are:
+
+| Relation | Meaning |
+| --- | --- |
+| `context_dependent` | The current turn needs visible prior conversation or state. |
+| `agent_repair` | The customer corrects or challenges the previous answer. |
+| `topic_shift` | The customer changes topic, including a possible external shift. |
+| `clarification_answer` | The customer answers a clarification request. |
+| `resume_previous_service` | The customer returns from a policy detour to the pending servicing task. |
+
+## State-Aware Input
+
+The serving renderer in
+[`router.py`](../poc/retail-bank-customer-service-poc/router.py) and the training
+renderer use the same order:
+
+```text
+[PRIOR_DIALOGUE_STATE]
+{canonical JSON}
 [CURRENT_USER]
-{current user turn}
+{current text}
 [PREVIOUS_ASSISTANT]
-{most recent visible assistant response}
+{most recent assistant text}
 [PREVIOUS_USER]
-{most recent visible user turn}
+{most recent user text}
+...
 ```
 
-Up to three complete visible exchanges are included newest-first after the
-current user turn. Tool payloads and hidden tool-call messages are excluded.
+State is trusted application state from before the current turn. It includes
+only the bounded pending-service anchor and detour flag. The router never sees
+the current expected action or answer.
 
-## Data Preparation
+## Calibration and Route Policy
 
-The preparation script is
-[`scripts/retail_bank/prepare_conversation_router_data.py`](../scripts/retail_bank/prepare_conversation_router_data.py).
-It builds split-isolated rows from:
+The published V5 artifact uses:
 
-- the governed synthetic SFT conversations for POC-aligned in-domain examples;
-- checksum-pinned UCI CLINC150 data for external OOD language;
-- deterministic synthetic contextual follow-ups, typo variants,
-  clarification answers, corrections, agent-repair turns, and topic shifts.
+| Threshold | Value |
+| --- | ---: |
+| in-domain banking | 0.50 |
+| OOD banking boundary | 0.45 |
+| relation rescue | 0.40 |
+| `context_dependent` active | 0.15 |
+| `agent_repair` active | 0.75 |
+| `topic_shift` active | 0.85 |
+| `clarification_answer` active | 0.90 |
+| `resume_previous_service` active | 0.20 |
 
-Prepare and reproduce the released split digests:
+Routing uses the maximum probability of `context_dependent`, `agent_repair`,
+`clarification_answer`, and `resume_previous_service` as the rescue score:
 
-```bash
-PYTHONPATH=src python scripts/retail_bank/prepare_conversation_router_data.py
+```text
+banking >= 0.50
+  -> in_domain
+
+banking < 0.45 and rescue < 0.40
+  -> out_of_domain
+
+otherwise
+  -> uncertain
 ```
 
-Outputs:
+`topic_shift` is diagnostic and does not rescue an otherwise OOD turn. This is
+important for sequences such as a banking conversation followed by “What is
+the weather?”
 
-- `data/banking-conversation-router-v4/train.jsonl`;
-- `data/banking-conversation-router-v4/validation.jsonl`;
-- `data/banking-conversation-router-v4/test.jsonl`;
-- `data/banking-conversation-router-v4/manifest.json`;
-- `data/banking-conversation-router-v4/README.md`.
+## How Runtime Uses the Outputs
 
-The prepared public dataset contains 61,759 train rows, 13,173 validation rows,
-and 15,466 test rows. Exact captured POC failure utterances are held out in the
-test split and are not copied into training.
+- `out_of_domain` returns the fixed banking-scope response without Granite.
+- `classifier_error` returns the model-failure response without Granite.
+- `in_domain` exposes the top intent and relations to the bounded dialogue
+  state machine.
+- `uncertain` still reaches Granite, but it does not mutate pending dialogue
+  state because the fine intent is not accepted.
+- a confident `policy_knowledge` intent chooses the retrieval-grounded policy
+  lane;
+- a confident servicing intent starts, continues, or replaces one pending
+  servicing task;
+- `resume_previous_service` can restore the pending servicing lane after a
+  policy detour and pin the original exchange.
 
-## Training and Calibration
+Intent labels remain outside the Granite prompt. The router cannot provide an
+action name or arguments to Granite, and the state machine does not treat a
+classification as authorization.
 
-Train locally without publishing:
+## Held-Out Results
 
-```bash
-PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py
-```
-
-The script pins a CUDA 12.6 PyTorch build that supports TITAN V (`sm_70`) when
-run through its inline `uv` environment. It calibrates:
-
-- OOD banking boundary: `0.10`;
-- in-domain boundary: `0.50`;
-- relation rescue boundary: `0.40`;
-- per-relation activation thresholds from validation probabilities.
-
-Publication requires `--publish`, an immutable `--data-revision`, and
-`HF_TOKEN`. Do not publish over an existing release without fresh frozen
-evaluation evidence.
-
-## Release Gates
-
-The released router passed these held-out gates:
+The generalized router passed its release gates on 6,171 test rows:
 
 | Metric | Result |
 | --- | ---: |
-| Test rows | `15,466` |
-| Capability macro F1 | `0.997838` |
-| Relation macro F1 | `0.998628` |
-| In-domain false-refusal rate | `0.000167` |
-| OOD false-accept rate | `0.012735` |
-| Contextual false-refusal rate | `0.000105` |
-| Repair false-refusal rate | `0.000000` |
-| External topic-shift false-accept rate | `0.000778` |
-| Captured-regression route/capability/relation errors | `0 / 0 / 0` |
+| Intent macro F1 | 0.990312 |
+| Relation macro F1 | 0.996474 |
+| OOD false-accept rate | 0.007899 |
+| In-domain false-refusal rate | 0 |
+| Resume-trajectory intent error | 0 |
+| Resume-trajectory relation error | 0 |
+| State-conditioned route error | 0 |
+| State-conditioned intent error | 0 |
+| Runtime transition error | 0 |
+| State-conditioned non-resume false-positive rate | 0 |
+| Held-out route error | 0 |
+| Held-out intent error | 0 |
+| Held-out relation error | 0 |
+| Held-out social-generalization error | 0 |
+| Held-out policy-follow-up-generalization error | 0 |
 
-## Serving Boundaries
+These are governed synthetic and CLINC-based test results, not a claim about
+production banking traffic.
 
-[`LearnedBankingRouter.from_hub`](../poc/retail-bank-customer-service-poc/router.py)
-loads the pinned router revision from Hub, verifies the artifact manifest, and
-serves without `trust_remote_code`.
-
-Serving routes:
-
-- banking probability `< 0.10` and no relation rescue: `out_of_domain`
-- banking probability `>= 0.50`: `in_domain`
-- middle range or relation rescue: `uncertain`
-
-The classifier's capability and relation outputs are diagnostics only. They do
-not enter the Granite prompt, select tools, or provide tool arguments. If the
-router fails during normal serving, the POC reports `classifier_error` and does
-not invoke the model for that turn.
-
-### Worked threshold examples
-
-The values below illustrate the released policy. They are not captured model
-outputs for the example text.
-
-| Banking | Highest rescue relation | Decision | What the application does |
-| ---: | ---: | --- | --- |
-| `0.91` | `0.05` | `in_domain` | Invoke Granite 9B. |
-| `0.32` | `0.15` | `uncertain` | Invoke Granite 9B. |
-| `0.08` | `0.72` | `uncertain` | Rescue the likely conversational follow-up and invoke Granite. |
-| `0.04` | `0.11` | `out_of_domain` | Return the stock scope response; do not invoke Granite. |
-
-The entire `0.10 <= banking < 0.50` band is uncertain. It does not require a
-relation rescue. Rescue prevents a likely follow-up below `0.10` from being
-rejected as OOD.
-
-Example contextual input:
-
-```text
-[CURRENT_USER]
-When was that created?
-[PREVIOUS_ASSISTANT]
-You have a closed mailing-address update case.
-[PREVIOUS_USER]
-Show my service cases.
-```
-
-The shared encoder lets “that” interact with “mailing-address update case.” The
-relation head can mark the turn `context_dependent`, while the domain head
-estimates whether the combined conversation is supported banking.
-
-For background, see
-[decision-threshold tuning](https://scikit-learn.org/stable/modules/classification_threshold.html)
-and [selective classification](https://arxiv.org/abs/1705.08500).
-
-## Stop Conditions
-
-Stop before publication if:
-
-- source digests do not match;
-- generated split digests drift from
-  [`data/sources/banking-conversation-router-v4.lock.json`](../data/sources/banking-conversation-router-v4.lock.json);
-- cross-split duplicates or PII-like matches are nonzero;
-- `HF_TOKEN` is unavailable for publish training;
-- any release gate fails;
-- the artifact manifest cannot verify every file;
-- serving requires `trust_remote_code`.
-
-Run the focused tests after any router change:
+## Generate and Train
 
 ```bash
-python -m pytest -q tests/test_banking_conversation_router.py \
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
+  --sft-dir data/banking-servicing-alignment-v5 \
+  --output-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --source-lock data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json
+
+PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
+  --dataset-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --output-dir artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5
+```
+
+The final publication used the exact dataset revision:
+
+```bash
+ROUTER_DATA_REVISION=8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc
+
+PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
+  --dataset-dir data/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --output-dir artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5 \
+  --publish \
+  --data-revision "$ROUTER_DATA_REVISION" \
+  --destination-id spkc83/retail-bank-conversation-router
+```
+
+The publication command changes external state and should be run only for an
+artifact that has passed the local gates.
+
+## Verify
+
+```bash
+PYTHONPATH=src uv run pytest -q \
+  tests/test_banking_conversation_router.py \
   tests/test_banking_conversation_router_data.py \
   tests/test_banking_conversation_router_preparation.py \
-  tests/test_banking_conversation_router_training.py
+  tests/test_banking_conversation_router_training.py \
+  poc/retail-bank-customer-service-poc/tests/test_router.py \
+  poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py
 ```

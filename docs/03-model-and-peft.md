@@ -1,279 +1,218 @@
-# Model And PEFT
+# Granite V5 Model and PEFT
 
-The active generative model is `spkc83/retail-bank-servicing-agent-9b`, a
-merged FP16 LoRA adaptation of IBM Granite for a synthetic retail-bank
-customer-service POC.
+The generative component is an IBM Granite 8.79B causal language model adapted
+for Harborlight Bank customer service with supervised fine-tuning and LoRA.
+The V5 work is incremental: it starts from the released servicing model
+`spkc83/retail-bank-servicing-agent-9b` at revision
+`1d56824995aa1adecfe20f62ca42fb1c0c443817` and trains on the V5 composite
+dataset.
 
-The source of truth for released identity and metrics is
-[../model_cards/retail-bank-agent-9b.md](../model_cards/retail-bank-agent-9b.md).
-The source of truth for local training defaults is
-[../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py)
-and [../configs/banking-tool-sft-granite.toml](../configs/banking-tool-sft-granite.toml).
+Granite V5 training job `6a7f79531f5885ae605b96cc` completed on canonical-
+policy dataset revision `40a0b68...`. The published candidate is an unmerged BF16
+LoRA adapter at `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446...`
+composed with immutable Stage-2 base revision `1d568249...`. The adapter files
+were committed at `b4269445...`; the final release revision is `cc95e446...`.
+Frozen evaluation job
+`6a7f89edc97db76cbdf31893` failed strict gates. Five credential findings were
+evaluator false positives; two genuine behavioral failures remain. A corrected
+evaluator and generalized incremental SFT are underway, so this candidate is
+not cleared for deployment.
 
-For a detailed, example-driven explanation of instruction SFT, assistant-only
-loss, LoRA matrices, the two training stages, and the merged inference model,
-read [12-instruction-fine-tuning-and-peft.md](12-instruction-fine-tuning-and-peft.md).
+## Why PEFT Instead of Training 9B From Scratch
 
-## Base Model Identity
+The base checkpoint already contains general language, instruction following,
+and broad reasoning. The V5 corpus teaches a narrow behavioral contract:
 
-| Field | Value |
-| --- | --- |
-| Base model | `ibm-granite/granite-4.1-8b` |
-| Base revision | `1504002f650e656a0a3789d99574df12e3e94ed0` |
-| Architecture | Dense decoder-only causal transformer |
-| Parameter count | 8,791,592,960 |
-| Tool format | Granite native tagged JSON |
-| Released model repo | `spkc83/retail-bank-servicing-agent-9b` |
-| Immutable weights revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` |
+- Harborlight/Harbor tone and customer-facing language;
+- Granite tagged-JSON banking actions;
+- grounded answers from action results;
+- Markdown table presentation;
+- policy answers from supplied passages with `[Policy: id]` citations;
+- policy detours and return to a prior servicing task;
+- repair, clarification, topic-shift, and OOD behavior.
 
-The live POC loads that model repo and revision by default in
-[../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py](../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py).
+A few thousand domain records can reinforce those behaviors. They cannot teach
+a 9B model language from scratch. LoRA keeps the base weights frozen and learns
+small low-rank updates for selected projections, reducing optimizer memory and
+training cost.
 
-## Two-Stage PEFT Strategy
+## LoRA Configuration
 
-Training uses LoRA through PEFT and TRL SFTTrainer. Stage 1 adapts the pinned
-IBM Granite base to the synthetic-bank tool wire. Stage 2 continues from the
-tool-trained checkpoint with the v4 servicing-remediation corpus because live
-POC testing exposed multi-turn conversation and tool-use failures.
-
-Defaults in [../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py):
+[`cloud_train_tool_sft.py`](../scripts/retail_bank/cloud_train_tool_sft.py)
+uses these defaults:
 
 | Setting | Value |
 | --- | --- |
-| Precision | `bf16-lora` |
-| Optional precision | `qlora` |
-| LoRA rank | `32` |
-| LoRA alpha | `64` |
-| LoRA dropout | `0.05` |
-| Learning rate | `1e-4` |
-| Max sequence length | `2048` |
-| Training seed | `7303` |
-| Default max steps | `1000` locally, `3000` in the HF job wrapper |
-| Checkpoint interval | `250` locally, `500` in the HF job wrapper |
+| Rank `r` | 32 |
+| Alpha | 64 |
+| Dropout | 0.05 |
+| Bias | none |
+| Task type | causal language modeling |
+| Target modules | `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj` |
+| Primary precision | BF16 LoRA |
+| Optional precision | NF4 QLoRA with BF16 compute |
+| Maximum sequence length | 2,048 tokens |
+| Gradient checkpointing | enabled |
+| Packing | disabled |
 
-LoRA target modules:
-
-- `q_proj`
-- `k_proj`
-- `v_proj`
-- `o_proj`
-- `gate_proj`
-- `up_proj`
-- `down_proj`
-
-These names are declared in `LORA_TARGET_MODULES` in
-[../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py)
-and mirrored by the local TOML configuration.
-
-## Training Record Rendering
-
-Training examples are rendered by `ToolWireAdapter.render_training()` in
-[../src/hello_slm/banking_tool_wire.py](../src/hello_slm/banking_tool_wire.py).
-That adapter is responsible for:
-
-- accepting only the Granite family;
-- rendering tokenizer chat-template messages with tool schemas;
-- preserving whole user-to-final-assistant tool chains inside the sequence
-  budget;
-- applying assistant-only labels;
-- masking context, user messages, and tool results with `-100`;
-- returning `input_ids`, `attention_mask`, `labels`, a span map, and the chat
-  template hash.
-
-The training worker pre-tokenizes records through `tokenize_records()` in
-[../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py).
-
-## Granite Tool Wire
-
-The active tool wire is Granite-only. `_normalize_family()` in
-[../src/hello_slm/banking_tool_wire.py](../src/hello_slm/banking_tool_wire.py)
-raises an error for any non-Granite family.
-
-Tool calls use tagged JSON blocks:
+Conceptually, a frozen weight matrix `W` receives a learned update:
 
 ```text
-<tool_call>
-{"name":"freeze_card","arguments":{"last4":"4821"}}
-</tool_call>
+effective_weight = W + scale * (B @ A)
+scale = lora_alpha / rank
 ```
 
-The parser validates:
+Only `A` and `B` are trained. Although the worker can merge them into the base,
+merged FP16 and BF16 candidates both failed the unchanged behavioral-parity
+gates for this candidate. The only valid candidate representation therefore keeps
+the base and adapter separate.
 
-- parseable JSON;
-- object payloads;
-- known public tool names;
-- object arguments;
-- allowed argument names;
-- required arguments when a schema declares them;
-- JSON value types and numeric bounds;
-- unique and ordered call IDs/indexes.
-
-The adapter intentionally does not infer intent, repair malformed output,
-rename tools, or fill missing arguments. Invalid model output is a model
-protocol error.
-
-## Worked Example: What LoRA Learns
-
-Suppose a training row contains:
+At inference, PEFT applies the learned update without rewriting base weights:
 
 ```text
-user context: Replace card 4821.
-assistant target: <tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>
-tool context: card.status=replacement_pending
-assistant target: A replacement for card 4821 is pending.
+load base @ 1d568249...
+attach adapter @ cc95e446... with autocast_adapter_dtype=False
+run the resulting PeftModel in BF16 (or quantize the base locally)
 ```
 
-The pretrained Granite weights already encode English and general instruction
-behavior. LoRA adds trainable low-rank updates to selected attention and MLP
-projections so the model can learn this repo's tool protocol and response style.
+## What the Model Receives
 
-Conceptually, a frozen weight matrix `W` is used with a learned update:
+The JSON `messages` array is a storage format, not a literal JSON string shown
+to the model. [`ToolWireAdapter`](../src/hello_slm/banking_tool_wire.py) passes
+the structured messages and action schemas through Granite's pinned chat
+template. The tokenizer produces:
 
 ```text
-effective weight = W + scale * (B @ A)
+input_ids       complete rendered conversation
+attention_mask  non-padding token positions
+labels          token targets; -100 outside trainable assistant spans
 ```
 
-`A` and `B` are much smaller than `W` when the LoRA rank is small. The released
-rank is `32`; the base matrix is not replaced by a 32-parameter model.
+For this record:
 
-During assistant-only SFT, user and tool-result tokens receive label `-100`.
-Only the assistant tool call and final answer contribute to cross-entropy loss.
+```json
+[
+  {"role":"system","content":"You are Harbor ...","loss":false},
+  {"role":"user","content":"Freeze my card ending 4821.","loss":false},
+  {
+    "role":"assistant",
+    "content":null,
+    "loss":true,
+    "tool_calls":[{
+      "function":{"name":"freeze_card","arguments":{"last4":"4821"}}
+    }]
+  }
+]
+```
 
-After training, the adapter is merged into the base weights for the published
-FP16 checkpoint. The unmerged adapter is also retained for provenance and
-recovery.
+the system and user tokens supply context but have label `-100`. The assistant
+action tokens receive causal-language-model loss. A later action result also
+supplies context, and the final assistant answer receives loss when marked
+`loss: true`.
 
-See [PEFT's LoRA guide](https://huggingface.co/docs/peft/main/conceptual_guides/lora)
-and the [original LoRA paper](https://arxiv.org/abs/2106.09685) for the general
-method.
+The TRL setting `assistant_only_loss=False` is intentional because the worker
+pre-tokenizes records and constructs the exact assistant-only label mask
+itself. TRL must not apply a second mask.
 
-## Local Planning And Smoke Checks
+## Granite Action Wire
 
-The training worker is safe by default. Running it without remote execution
-flags prints a dry-run plan and does not download the 8.79B base model, start a
-paid job, merge weights, or push to Hugging Face:
+The runtime supports Granite tagged JSON:
+
+```text
+<tool_call>{"name":"freeze_card","arguments":{"last4":"4821"}}</tool_call>
+```
+
+The harness, not the model, assigns or validates correlated call metadata,
+checks schemas, executes the action, and supplies the result. Granite then
+writes the final answer. Nine public actions are available in normal servicing
+turns; policy turns receive no action schemas.
+
+## Retrieval-Grounded Policy Generation
+
+Policy retrieval is not embedded in the model weights. The runtime retrieves
+current versioned chunks and builds a policy system message such as:
+
+```text
+Authoritative Harborlight Bank policy context.
+[Policy: mortgage.opening.us.v1] Customers may begin a mortgage application ...
+```
+
+Granite must answer only from those chunks and cite at least one allowed ID.
+The validator rejects missing or invented citations. This separates two
+concerns:
+
+- SFT teaches the model how to use supplied policy evidence;
+- the versioned knowledge base supplies the current facts at inference time.
+
+Updating a policy therefore does not require retraining if the behavior and
+schema remain stable.
+
+## V5 Incremental Training Inputs
+
+The active job uses:
+
+| Input | Value |
+| --- | --- |
+| Base model | `spkc83/retail-bank-servicing-agent-9b` |
+| Base revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` |
+| Dataset | `spkc83/retail-bank-servicing-alignment-sft` |
+| Dataset revision | `40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| Policy corpus revision | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
+| Training source commit | `75b56ffff45e75ffbee11c0e0552dc35ae124d21` |
+| Hardware | `rtx-pro-6000` |
+| Job cap | five hours; optimizer cap four hours |
+| Job | `6a7f79531f5885ae605b96cc` (completed) |
+| Maximum steps | 750 |
+| Learning rate | `2e-5` |
+| Gradient accumulation | 2 |
+| Checkpoint interval | 250 steps |
+| Final training loss | `0.13014758` |
+| Final evaluation loss | `0.3200804` |
+| Final token accuracy | `0.96240348` |
+| Adapter repository | `spkc83/retail-bank-servicing-agent-9b-peft` |
+| PEFT release revision | `cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| Adapter bundle commit | `b4269445ce7b2b943d2d9531102166bf8840a074` |
+| BF16 adapter SHA-256 | begins `043b22c5`; the full digest remains in the release metadata |
+
+The final PEFT release revision `cc95e446...` is the inference identity. The
+bundle commit `b4269445...` proves which adapter files it contains; neither
+rejected merged checkpoint is an inference substitute.
+
+## Rebuilding on New Infrastructure
+
+For independent reproduction, keep the same logical sequence:
+
+1. Generate `data/banking-v5-tool-sft`.
+2. Generate the composite `data/banking-servicing-alignment-v5`.
+3. Choose an immutable Granite base revision.
+4. Run the guarded worker with the composite manifest and record its complete
+   configuration fingerprint.
+5. Save the adapter, optimizer/checkpoint state, tokenizer, template hash, and
+   Trackio metrics.
+6. Run the unchanged behavioral-parity gates. A merged candidate is usable
+   only if every gate passes.
+7. If merging fails parity, validate and publish the unmerged adapter with
+   [`hf_job_finalize_tool_sft_peft.py`](../scripts/retail_bank/hf_job_finalize_tool_sft_peft.py).
+8. Record the immutable base and adapter revisions as one composition.
+9. Evaluate that exact composition before deployment.
+
+The current V5 job is a continuation from the released domain model because
+that is the cheapest safe update. The data generators and worker remain usable
+with another explicitly pinned Granite-family base; changing the base requires
+a fresh full evaluation and is not equivalent to resuming the current job.
+
+## Tiny Local Pipeline Check
+
+This command exercises record tokenization, assistant label masking,
+checkpoint metadata, and action parsing without downloading Granite, using a
+GPU, or publishing:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_train_tool_sft.py \
-  --manifest data/banking-servicing-alignment-v4/manifest.json \
-  --base-model spkc83/retail-bank-agent-9b \
-  --base-revision 085df3d089cfadd77424b548542da0390a54a23e
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --output-dir /tmp/harbor-granite-v5-smoke \
+  --run-tiny-smoke
 ```
 
-The local tiny smoke path uses small offline stand-ins:
-
-```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_train_tool_sft.py \
-  --run-tiny-smoke \
-  --family granite \
-  --max-steps 1 \
-  --output-dir /tmp/banking-v3-tool-sft-smoke
-```
-
-Use the smoke path to prove tokenizer rendering, assistant-label masking,
-checkpoint metadata, and tagged-JSON parsing without downloading the base
-model.
-
-## Remote Training Guard
-
-Full remote execution requires all of these safeguards:
-
-- `--execute-remote`
-- `--allow-remote-execution`
-- `RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT=banking-v3-tool-sft`
-
-The guarded wrapper is
-[../scripts/retail_bank/run_remote_training_job.sh](../scripts/retail_bank/run_remote_training_job.sh).
-It submits [../scripts/retail_bank/hf_job_tool_sft.py](../scripts/retail_bank/hf_job_tool_sft.py)
-to Hugging Face Jobs with:
-
-- exact source commit;
-- exact dataset revision;
-- `rtx-pro-6000` flavor;
-- five-hour outer timeout;
-- mounted artifact volume;
-- `HF_TOKEN` as a secret;
-- BF16 LoRA settings.
-
-The job script downloads the pinned source archive, downloads the dataset
-snapshot, then calls the guarded local worker with push-to-Hub enabled.
-
-## Checkpoints And Fingerprints
-
-`training_fingerprint()` in
-[../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py)
-captures:
-
-- base model and revision;
-- Granite family;
-- tokenizer chat-template hash;
-- dataset repository, revision, and manifest hash;
-- training seed;
-- precision;
-- LoRA rank, alpha, dropout, and target modules.
-
-`validate_resume_fingerprint()` rejects resume checkpoints whose metadata does
-not match the current training inputs. This prevents accidental continuation
-from a different base, dataset, template, precision, or adapter shape.
-
-## Merge And Release Layout
-
-The release keeps two forms:
-
-- root checkpoint: merged FP16 weights;
-- `adapter/`: retained unmerged LoRA adapter.
-
-`merge_adapter_with_reload_parity()` in
-[../scripts/retail_bank/cloud_train_tool_sft.py](../scripts/retail_bank/cloud_train_tool_sft.py)
-merges the adapter, reloads the merged model, and compares adapter-vs-merged
-outputs. The release helper
-[../scripts/retail_bank/hf_job_finalize_tool_sft.py](../scripts/retail_bank/hf_job_finalize_tool_sft.py)
-checks parity reports before publication.
-
-The public model card reports the active servicing-remediation release metrics:
-
-| Metric | Value |
-| --- | ---: |
-| Training job | `spkc83/6a6ca6276b79c09949c1d6cb` |
-| Runtime | about 18 minutes 59 seconds |
-| Estimated cost | about `$0.87` |
-| Training loss | `0.0069123295` |
-| Evaluation loss | `0.0002181597` |
-| Token accuracy | `0.999976121` |
-
-Merge parity is a release gate, not a replacement for frozen evaluation.
-
-## Frozen Evaluation Summary
-
-The model card records that the released checkpoint passed the frozen
-1,374-record evaluation split with:
-
-- `796/796` tool names and arguments;
-- `700/700` executable tool trajectories;
-- `96/96` exact dependent multi-tool sequences;
-- `63/63` appropriate clarifications;
-- `258/258` banking FAQ answers;
-- `35/35` OOD response paths;
-- `1,141/1,141` grounded factual responses;
-- zero malformed calls, private arguments, credential requests, in-domain
-  false refusals, or OOD false accepts.
-
-The evaluator code is [../src/hello_slm/banking_tool_eval.py](../src/hello_slm/banking_tool_eval.py).
-The prompt-equivalent rescore helper is
-[../scripts/retail_bank/rescore_tool_eval.py](../scripts/retail_bank/rescore_tool_eval.py).
-The remote evaluator entry points live under [../scripts/retail_bank](../scripts/retail_bank).
-
-## Related Tests
-
-Run the focused model/tool-wire tests from the repository root:
-
-```bash
-python -m pytest -q \
-  tests/test_banking_tool_wire.py \
-  tests/test_banking_tool_sft_worker.py \
-  tests/test_banking_tool_sft_job.py \
-  tests/test_banking_tool_sft_continuation.py \
-  tests/test_banking_tool_sft_export_recovery.py \
-  tests/test_banking_tool_eval.py \
-  tests/test_banking_tool_eval_runner.py
-```
+The tiny smoke is a pipeline test, not evidence that the 8.79B model learned
+the V5 behavior.

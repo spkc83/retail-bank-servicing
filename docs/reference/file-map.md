@@ -1,145 +1,139 @@
-# File Map
+# V5 Code and File Map
 
-This map links the current active retail-bank agent workflow to repo files.
+This map covers the active V5 path. The V4 design documents remain available
+only as superseded history.
 
-## Root
+## Documentation
 
-| Path | Purpose |
+| File | Purpose |
 | --- | --- |
-| [`../../README.md`](../../README.md) | Project overview, active public artifacts, runtime summary, verification commands. |
-| [`../../pyproject.toml`](../../pyproject.toml) | Top-level package metadata, dev and scale dependencies, pytest, mypy, and ruff settings. |
-| [`../../uv.lock`](../../uv.lock) | Locked top-level Python environment. |
-| [`../../Makefile`](../../Makefile) | Repo command shortcuts, when used. |
+| [`../01-system-overview.md`](../01-system-overview.md) | Component boundaries and complete request flow. |
+| [`../02-data-generation.md`](../02-data-generation.md) | V5 SFT and router data, examples, split isolation, and revisions. |
+| [`../03-model-and-peft.md`](../03-model-and-peft.md) | Granite assistant-only SFT, LoRA, action wire, and published V5 model. |
+| [`../04-training-and-recovery.md`](../04-training-and-recovery.md) | Guarded RTX PRO 6000 training, checkpoints, resume, merge, and publication. |
+| [`../05-dual-head-router.md`](../05-dual-head-router.md) | Active three-head state-aware router. The filename is retained for stable links. |
+| [`../06-evaluation.md`](../06-evaluation.md) | Data, router, Granite, orchestration, and human release gates. |
+| [`../07-inference-and-poc.md`](../07-inference-and-poc.md) | Local and ZeroGPU inference, state, retrieval, actions, and diagnostics. |
+| [`../08-end-to-end-runbook.md`](../08-end-to-end-runbook.md) | Reproducible active V5 sequence. |
+| [`../09-conversation-router-v4.md`](../09-conversation-router-v4.md) | Superseded V4 router history; not active instructions. |
+| [`../10-servicing-alignment-v4.md`](../10-servicing-alignment-v4.md) | Superseded V4 alignment history; not active instructions. |
+| [`../12-instruction-fine-tuning-and-peft.md`](../12-instruction-fine-tuning-and-peft.md) | Background explanation of instruction SFT and PEFT. |
+| [`../13-counterfactual-evaluation.md`](../13-counterfactual-evaluation.md) | Evaluation-only counterfactual design retained as supporting methodology. |
+| [`../14-questions-and-answers.md`](../14-questions-and-answers.md) | Focused implementation questions and answers. |
+| [`../15-asr-to-sft-pipeline.md`](../15-asr-to-sft-pipeline.md) | ASR transcript conversion into reviewed SFT overlays. |
 
-## Active Docs
+## V5 Data
 
-| Path | Purpose |
+| File or directory | Purpose |
 | --- | --- |
-| [`../01-system-overview.md`](../01-system-overview.md) | Component boundaries plus a worked routed tool turn. |
-| [`../02-data-generation.md`](../02-data-generation.md) | Scenario design, full record examples, split isolation, validation, stage-2 remediation, and router rows. |
-| [`../03-model-and-peft.md`](../03-model-and-peft.md) | Granite identity, assistant-only targets, LoRA intuition, and release layout. |
-| [`../04-training-and-recovery.md`](../04-training-and-recovery.md) | Two-stage training, resume/recovery choices, paid jobs, and stop conditions. |
-| [`../05-dual-head-router.md`](../05-dual-head-router.md) | Current three-head history-aware router, worked thresholds, and serving boundaries. |
-| [`../06-evaluation.md`](../06-evaluation.md) | Two-phase frozen evaluation with a worked tool-call example. |
-| [`../07-inference-and-poc.md`](../07-inference-and-poc.md) | Detailed POC inference, routing, auth, tool loop, diagnostics, and deployment guide. |
-| [`../08-end-to-end-runbook.md`](../08-end-to-end-runbook.md) | Install-to-data-to-training-to-eval-to-POC runbook. |
-| [`../09-conversation-router-v4.md`](../09-conversation-router-v4.md) | Released history-aware cross-encoder, leakage-safe data, local training, release gates, and POC integration. |
-| [`../10-servicing-alignment-v4.md`](../10-servicing-alignment-v4.md) | Composite Granite continuation-SFT design, use-case coverage, safe training plan, and release stop condition. |
-| [`../11-end-to-end-flow-by-example.md`](../11-end-to-end-flow-by-example.md) | One example traced from behavior contract to live inference. |
-| [`../12-instruction-fine-tuning-and-peft.md`](../12-instruction-fine-tuning-and-peft.md) | Example-driven instruction SFT, assistant masking, LoRA, two-stage adaptation, merging, and inference design. |
-| [`../13-counterfactual-evaluation.md`](../13-counterfactual-evaluation.md) | Leakage-controlled paired benchmark, local 4-bit execution, evidence, and interpretation. |
-| [`../15-asr-to-sft-pipeline.md`](../15-asr-to-sft-pipeline.md) | Reviewed ASR normalization, semantic overlays, validation gates, split inheritance, and training handoff. |
-| [`artifacts.md`](artifacts.md) | Immutable model, dataset, job, and split identity ledger. |
-| [`data-leakage-audit.md`](data-leakage-audit.md) | Granite train/test/POC contamination audit, interpretation limits, and clean benchmark requirements. |
-| [`learning-resources.md`](learning-resources.md) | Annotated official documentation and primary-paper references. |
+| [`../../data/banking-v5-tool-sft`](../../data/banking-v5-tool-sft) | Generated base Granite tool-use, policy, conversation, and OOD SFT. |
+| [`../../data/banking-v5-tool-sft/manifest.json`](../../data/banking-v5-tool-sft/manifest.json) | Base split counts, digests, schema, and action-manifest identity. |
+| [`../../data/banking-servicing-alignment-v5`](../../data/banking-servicing-alignment-v5) | Composite base plus V5 servicing-alignment corpus. |
+| [`../../data/banking-servicing-alignment-v5/manifest.json`](../../data/banking-servicing-alignment-v5/manifest.json) | Composite counts, base-manifest digest, path counts, and split digests. |
+| [`../../data/banking-conversation-router-v5-social-policy-generalization-candidate5`](../../data/banking-conversation-router-v5-social-policy-generalization-candidate5) | Exact generalized router train, validation, and test rows. |
+| [`../../data/banking-conversation-router-v5-social-policy-generalization-candidate5/manifest.json`](../../data/banking-conversation-router-v5-social-policy-generalization-candidate5/manifest.json) | Router labels, source pins, counts, leakage report, and split digests. |
+| [`../../data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json`](../../data/sources/banking-conversation-router-v5-social-policy-generalization-candidate5.lock.json) | CLINC archive/member hashes and prepared generalized split hashes. |
+| [`../../data/banking-counterfactual-eval-v1`](../../data/banking-counterfactual-eval-v1) | Separate evaluation-only counterfactual corpus. |
+| [`../../examples/asr`](../../examples/asr) | Reviewed ASR examples for the optional overlay pipeline. |
 
-## Published Cards
+Published V5 data identities:
 
-| Path | Purpose |
+```text
+spkc83/retail-bank-servicing-alignment-sft
+  40a0b68b9f746131ffff32a83e077fd7e4a344d1
+
+spkc83/retail-bank-conversation-router-data
+  8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc
+```
+
+## Reusable Source Modules
+
+| File | Purpose |
 | --- | --- |
-| [`../../data_cards/retail-bank-agent-sft.md`](../../data_cards/retail-bank-agent-sft.md) | Published tool-use SFT dataset card. |
-| [`../../data_cards/retail-bank-router-training-data.md`](../../data_cards/retail-bank-router-training-data.md) | Published router-training dataset card. |
-| [`../../data_cards/retail-bank-servicing-alignment-sft.md`](../../data_cards/retail-bank-servicing-alignment-sft.md) | Released composite Granite servicing-alignment dataset card. |
-| [`../../model_cards/retail-bank-agent-9b.md`](../../model_cards/retail-bank-agent-9b.md) | Published Granite agent model card and released evaluation results. |
-| [`../../model_cards/retail-bank-domain-intent-router.md`](../../model_cards/retail-bank-domain-intent-router.md) | Published three-head conversation-router card and serving thresholds. |
+| [`../../src/hello_slm/banking_tool_sft_data.py`](../../src/hello_slm/banking_tool_sft_data.py) | V5 base SFT generation, schema validation, split controls, policy targets, and fixtures. |
+| [`../../src/hello_slm/banking_servicing_alignment_data.py`](../../src/hello_slm/banking_servicing_alignment_data.py) | Composite V5 alignment generation, policy detours/resumes, held-out regressions, and leakage checks. |
+| [`../../src/hello_slm/banking_tool_wire.py`](../../src/hello_slm/banking_tool_wire.py) | Granite chat-template rendering, tagged-JSON actions, and assistant-only label masks. |
+| [`../../src/hello_slm/banking_tool_eval.py`](../../src/hello_slm/banking_tool_eval.py) | Frozen action/final-response metrics and release gates. |
+| [`../../src/hello_slm/banking_conversation_router.py`](../../src/hello_slm/banking_conversation_router.py) | Shared-encoder three-head router model. |
+| [`../../src/hello_slm/banking_conversation_router_data.py`](../../src/hello_slm/banking_conversation_router_data.py) | State/history rendering, fine-intent and relation labels, and deterministic router examples. |
+| [`../../src/hello_slm/banking_asr_sft_data.py`](../../src/hello_slm/banking_asr_sft_data.py) | Optional reviewed-ASR overlay conversion. |
+| [`../../src/hello_slm/banking_counterfactual_eval_data.py`](../../src/hello_slm/banking_counterfactual_eval_data.py) | Evaluation-only counterfactual generation. |
+| [`../../src/hello_slm/config.py`](../../src/hello_slm/config.py) | Canonical JSON and SHA-256 helpers. |
 
-## Configuration
+## Data and Training Scripts
 
-| Path | Purpose |
+| File | Purpose |
 | --- | --- |
-| [`../../configs/banking-tool-sft-granite.toml`](../../configs/banking-tool-sft-granite.toml) | Active Granite BF16 LoRA training configuration. |
-| [`../../configs/retail-bank-release.toml`](../../configs/retail-bank-release.toml) | Immutable identities and destinations consumed by the canonical release pipeline. |
+| [`../../scripts/retail_bank/prepare_tool_sft_data.py`](../../scripts/retail_bank/prepare_tool_sft_data.py) | CLI for `data/banking-v5-tool-sft`. |
+| [`../../scripts/retail_bank/prepare_servicing_alignment_data.py`](../../scripts/retail_bank/prepare_servicing_alignment_data.py) | CLI for composite `data/banking-servicing-alignment-v5` and optional publication. |
+| [`../../scripts/retail_bank/prepare_conversation_router_data.py`](../../scripts/retail_bank/prepare_conversation_router_data.py) | CLI used to produce the governed generalized candidate-5 router corpus. |
+| [`../../scripts/retail_bank/train_conversation_router.py`](../../scripts/retail_bank/train_conversation_router.py) | Local three-head router training, calibration, gates, artifact save, and optional publication. |
+| [`../../scripts/retail_bank/cloud_train_tool_sft.py`](../../scripts/retail_bank/cloud_train_tool_sft.py) | Guarded Granite V5 BF16 LoRA/QLoRA worker, checkpointing, merge parity, and upload. |
+| [`../../scripts/retail_bank/hf_job_tool_sft.py`](../../scripts/retail_bank/hf_job_tool_sft.py) | Hugging Face Job bootstrap for exact source and dataset revisions. |
+| [`../../scripts/retail_bank/hf_job_finalize_tool_sft_peft.py`](../../scripts/retail_bank/hf_job_finalize_tool_sft_peft.py) | Validates and atomically publishes an unmerged BF16 LoRA adapter when merged candidates fail parity. |
+| [`../../scripts/retail_bank/run_remote_training_job.sh`](../../scripts/retail_bank/run_remote_training_job.sh) | RTX PRO 6000, five-hour, persistent-bucket job launcher. |
+| [`../../scripts/retail_bank/cloud_generate_tool_eval.py`](../../scripts/retail_bank/cloud_generate_tool_eval.py) | Frozen Granite prediction generation and release-gate enforcement. |
+| [`../../scripts/retail_bank/hf_job_tool_eval.py`](../../scripts/retail_bank/hf_job_tool_eval.py) | Hugging Face Job bootstrap for frozen evaluation. |
+| [`../../scripts/retail_bank/run_remote_tool_eval_job.sh`](../../scripts/retail_bank/run_remote_tool_eval_job.sh) | Paid frozen-evaluation launcher. |
+| [`../../scripts/retail_bank/evaluate_tool_model.py`](../../scripts/retail_bank/evaluate_tool_model.py) | Static prediction rescore CLI. |
+| [`../../scripts/retail_bank/rescore_tool_eval.py`](../../scripts/retail_bank/rescore_tool_eval.py) | Prompt-equivalence and persisted-prediction rescore helper. |
+| [`../../scripts/retail_bank/prepare_asr_sft_data.py`](../../scripts/retail_bank/prepare_asr_sft_data.py) | Reviewed ASR overlay CLI. |
+| [`../../scripts/retail_bank/deploy_zero_gpu_space.py`](../../scripts/retail_bank/deploy_zero_gpu_space.py) | Allowlisted Space upload, immutable runtime variables, and readiness wait. |
+| [`../../scripts/retail_bank/run_local_streamlit.py`](../../scripts/retail_bank/run_local_streamlit.py) | Pinned local Streamlit launcher. |
 
-## Local Data
+[`../../scripts/retail_bank/run_release_pipeline.py`](../../scripts/retail_bank/run_release_pipeline.py)
+is retained but its current configuration describes the superseded V4
+sequence. The active V5 runbook uses the individual scripts above.
 
-| Path | Purpose |
+## Router Artifact
+
+| File | Purpose |
 | --- | --- |
-| [`../../data/banking-v3-tool-sft/manifest.json`](../../data/banking-v3-tool-sft/manifest.json) | Local tool-use SFT split manifest. |
-| [`../../data/banking-v3-tool-sft/train.jsonl`](../../data/banking-v3-tool-sft/train.jsonl) | Local SFT training split. |
-| [`../../data/banking-v3-tool-sft/validation.jsonl`](../../data/banking-v3-tool-sft/validation.jsonl) | Local SFT validation split. |
-| [`../../data/banking-v3-tool-sft/test.jsonl`](../../data/banking-v3-tool-sft/test.jsonl) | Local frozen SFT test split. |
-| [`../../data/banking-v3-tool-sft/README.md`](../../data/banking-v3-tool-sft/README.md) | Local SFT dataset README/card. |
-| [`../../data/banking-conversation-router-v4/manifest.json`](../../data/banking-conversation-router-v4/manifest.json) | Active local history-aware router dataset manifest. |
-| [`../../data/sources/banking-conversation-router-v4.lock.json`](../../data/sources/banking-conversation-router-v4.lock.json) | Released cross-encoder source and deterministic prepared-split lock. |
-| [`../../data/sources/banking-servicing-alignment-v4.lock.json`](../../data/sources/banking-servicing-alignment-v4.lock.json) | Released composite Granite data base-manifest and split-digest lock. |
+| [`../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/manifest.json`](../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/manifest.json) | Release eligibility and per-file digests. |
+| [`../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/router_config.json`](../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/router_config.json) | Format 3 labels, input format, calibrated thresholds, and base identity. |
+| [`../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/metrics.json`](../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/metrics.json) | Calibration, generalized social/policy gates, held-out metrics, and regression predictions. |
+| [`../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/model.safetensors`](../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/model.safetensors) | DistilBERT encoder weights. |
+| [`../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/classifier_heads.safetensors`](../../artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5/classifier_heads.safetensors) | Domain, fine-intent, and relation head weights. |
 
-## Source Package
+Published V5 router revision:
 
-| Path | Purpose |
+```text
+spkc83/retail-bank-conversation-router
+c8f154266612e79afe20af8abef25761fa56d589
+```
+
+## POC Runtime
+
+| File | Purpose |
 | --- | --- |
-| [`../../src/hello_slm/banking_tool_sft_data.py`](../../src/hello_slm/banking_tool_sft_data.py) | Tool-use SFT data generator, public tool manifest, validators. |
-| [`../../src/hello_slm/banking_tool_wire.py`](../../src/hello_slm/banking_tool_wire.py) | Tool-wire adapter used by training and evaluation. |
-| [`../../src/hello_slm/banking_tool_eval.py`](../../src/hello_slm/banking_tool_eval.py) | Frozen tool/final-response evaluator. |
-| [`../../src/hello_slm/banking_conversation_router.py`](../../src/hello_slm/banking_conversation_router.py) | Released shared-encoder, three-head classifier model. |
-| [`../../src/hello_slm/banking_conversation_router_data.py`](../../src/hello_slm/banking_conversation_router_data.py) | Leakage-safe history rendering and deterministic v4 classifier split builder. |
-| [`../../src/hello_slm/banking_servicing_alignment_data.py`](../../src/hello_slm/banking_servicing_alignment_data.py) | Composite Granite SFT alignment generator and validation policy. |
-| [`../../src/hello_slm/banking_asr_sft_data.py`](../../src/hello_slm/banking_asr_sft_data.py) | Reviewed ASR-to-SFT overlay builder, provenance checks, and manifest writer. |
-| [`../../src/hello_slm/config.py`](../../src/hello_slm/config.py) | Canonical JSON and config helpers. |
+| [`../../poc/retail-bank-customer-service-poc/app.py`](../../poc/retail-bank-customer-service-poc/app.py) | Gradio UI, ZeroGPU event, state payload, routing, policy lane, reset, and diagnostics. |
+| [`../../poc/retail-bank-customer-service-poc/streamlit_app.py`](../../poc/retail-bank-customer-service-poc/streamlit_app.py) | Local CUDA UI, authentication, presets, sidebar, and diagnostics popover. |
+| [`../../poc/retail-bank-customer-service-poc/local_app_service.py`](../../poc/retail-bank-customer-service-poc/local_app_service.py) | UI-independent local orchestration controller. |
+| [`../../poc/retail-bank-customer-service-poc/router.py`](../../poc/retail-bank-customer-service-poc/router.py) | V5 artifact verification, state-aware input rendering, inference, thresholds, and derived lane. |
+| [`../../poc/retail-bank-customer-service-poc/dialogue_state.py`](../../poc/retail-bank-customer-service-poc/dialogue_state.py) | One-pending-task state machine, policy detour, resume anchor, completion, registry, and reset. |
+| [`../../poc/retail-bank-customer-service-poc/policy_retrieval.py`](../../poc/retail-bank-customer-service-poc/policy_retrieval.py) | Corpus validation, digest verification, deterministic retrieval, and citation metadata. |
+| [`../../poc/retail-bank-customer-service-poc/policy_knowledge.json`](../../poc/retail-bank-customer-service-poc/policy_knowledge.json) | Versioned policy chunks used at inference. |
+| [`../../poc/retail-bank-customer-service-poc/model_service.py`](../../poc/retail-bank-customer-service-poc/model_service.py) | Granite prompt, token budgeting, pinned resume context, action loop, policy generation, and traces. |
+| [`../../poc/retail-bank-customer-service-poc/response_policy.py`](../../poc/retail-bank-customer-service-poc/response_policy.py) | Exact read tables, action grounding, policy citations/numbers, internal-language checks, and repair prompts. |
+| [`../../poc/retail-bank-customer-service-poc/branding.py`](../../poc/retail-bank-customer-service-poc/branding.py) | Harborlight/Harbor names, CSS, account labels, and response provenance. |
+| [`../../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py`](../../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py) | Pinned BF16 base-plus-adapter PEFT loading, chat-template tokenization, generation, and composition metadata. |
+| [`../../poc/retail-bank-customer-service-poc/local_gpu_runtime.py`](../../poc/retail-bank-customer-service-poc/local_gpu_runtime.py) | NF4 base loading plus pinned adapter attachment, CUDA validation, generation, locking, and metadata. |
+| [`../../poc/retail-bank-customer-service-poc/mock_bank.py`](../../poc/retail-bank-customer-service-poc/mock_bank.py) | Session-isolated fictional SQLite records and action execution. |
+| [`../../poc/retail-bank-customer-service-poc/synthetic_bank.json`](../../poc/retail-bank-customer-service-poc/synthetic_bank.json) | Fictional seed profiles and account state. |
+| [`../../poc/retail-bank-customer-service-poc/auth.py`](../../poc/retail-bank-customer-service-poc/auth.py) | Two-profile static POC authentication validation. |
+| [`../../poc/retail-bank-customer-service-poc/responses.py`](../../poc/retail-bank-customer-service-poc/responses.py) | OOD, policy-no-match, and model-failure responses. |
 
-## Scripts
+## Active Tests
 
-| Path | Purpose |
+| Test group | Main evidence |
 | --- | --- |
-| [`../../scripts/retail_bank/prepare_tool_sft_data.py`](../../scripts/retail_bank/prepare_tool_sft_data.py) | CLI wrapper for tool-use SFT data preparation. |
-| [`../../scripts/retail_bank/prepare_conversation_router_data.py`](../../scripts/retail_bank/prepare_conversation_router_data.py) | Released history-aware router data preparation and digest verification. |
-| [`../../scripts/retail_bank/train_conversation_router.py`](../../scripts/retail_bank/train_conversation_router.py) | Local cross-encoder training, calibration, test gates, artifact writing, and optional publication. |
-| [`../../scripts/retail_bank/prepare_servicing_alignment_data.py`](../../scripts/retail_bank/prepare_servicing_alignment_data.py) | Released composite Granite data preparation, lock verification, and optional explicit publication. |
-| [`../../scripts/retail_bank/prepare_asr_sft_data.py`](../../scripts/retail_bank/prepare_asr_sft_data.py) | Convert reviewed ASR utterances into trainer-compatible SFT overlays. |
-| [`../../scripts/retail_bank/cloud_train_tool_sft.py`](../../scripts/retail_bank/cloud_train_tool_sft.py) | Guarded local/remote Granite tool-SFT worker. |
-| [`../../scripts/retail_bank/hf_job_tool_sft.py`](../../scripts/retail_bank/hf_job_tool_sft.py) | Hugging Face Jobs bootstrap for paid Granite SFT. |
-| [`../../scripts/retail_bank/run_remote_training_job.sh`](../../scripts/retail_bank/run_remote_training_job.sh) | Paid Granite training job launcher. |
-| [`../../scripts/retail_bank/cloud_generate_tool_eval.py`](../../scripts/retail_bank/cloud_generate_tool_eval.py) | Frozen prediction generation and scoring worker. |
-| [`../../scripts/retail_bank/hf_job_tool_eval.py`](../../scripts/retail_bank/hf_job_tool_eval.py) | Hugging Face Jobs bootstrap for paid frozen eval. |
-| [`../../scripts/retail_bank/run_remote_tool_eval_job.sh`](../../scripts/retail_bank/run_remote_tool_eval_job.sh) | Paid frozen eval job launcher. |
-| [`../../scripts/retail_bank/rescore_tool_eval.py`](../../scripts/retail_bank/rescore_tool_eval.py) | Reproducible prompt-equivalence proof and persisted-prediction rescore. |
-| [`../../scripts/retail_bank/run_release_pipeline.py`](../../scripts/retail_bank/run_release_pipeline.py) | Canonical data, two-stage SFT, router, evaluation, and deployment orchestrator. |
-| [`../../scripts/retail_bank/deploy_zero_gpu_space.py`](../../scripts/retail_bank/deploy_zero_gpu_space.py) | Guarded allowlist upload, exact runtime-pin persistence, and Space readiness helper. |
-| [`../../scripts/retail_bank/hf_job_remerge_tool_sft.py`](../../scripts/retail_bank/hf_job_remerge_tool_sft.py) | Merge recovery helper used by release validation. |
-| [`../../scripts/retail_bank/hf_job_merge_parity.py`](../../scripts/retail_bank/hf_job_merge_parity.py) | Merge parity helper. |
-
-## POC
-
-| Path | Purpose |
-| --- | --- |
-| [`../../poc/retail-bank-customer-service-poc/README.md`](../../poc/retail-bank-customer-service-poc/README.md) | Hugging Face Space card and public POC docs. |
-| [`../../poc/retail-bank-customer-service-poc/app.py`](../../poc/retail-bank-customer-service-poc/app.py) | Gradio app, routing, ZeroGPU event, diagnostics, UI. |
-| [`../../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py`](../../poc/retail-bank-customer-service-poc/zero_gpu_runtime.py) | Granite model/tokenizer loading, token counting, deterministic generation. |
-| [`../../poc/retail-bank-customer-service-poc/model_service.py`](../../poc/retail-bank-customer-service-poc/model_service.py) | Model-owned tool loop, prompt budgeting, tool parsing, validation, execution trace. |
-| [`../../poc/retail-bank-customer-service-poc/response_policy.py`](../../poc/retail-bank-customer-service-poc/response_policy.py) | Deterministic read-table rendering and bounded grounded-answer validation/repair input. |
-| [`../../poc/retail-bank-customer-service-poc/router.py`](../../poc/retail-bank-customer-service-poc/router.py) | Released CPU cross-encoder loading, artifact verification, history rendering, three heads, and calibrated routing. |
-| [`../../poc/retail-bank-customer-service-poc/auth.py`](../../poc/retail-bank-customer-service-poc/auth.py) | Static demo auth loader. |
-| [`../../poc/retail-bank-customer-service-poc/mock_bank.py`](../../poc/retail-bank-customer-service-poc/mock_bank.py) | Session-isolated SQLite synthetic bank backend and tool implementation. |
-| [`../../poc/retail-bank-customer-service-poc/state.py`](../../poc/retail-bank-customer-service-poc/state.py) | Session registry initialization. |
-| [`../../poc/retail-bank-customer-service-poc/responses.py`](../../poc/retail-bank-customer-service-poc/responses.py) | Stock OOD and model-failure responses. |
-| [`../../poc/retail-bank-customer-service-poc/synthetic_bank.json`](../../poc/retail-bank-customer-service-poc/synthetic_bank.json) | Synthetic customer seed records. |
-| [`../../poc/retail-bank-customer-service-poc/requirements.txt`](../../poc/retail-bank-customer-service-poc/requirements.txt) | Space dependency list. |
-| [`../../poc/retail-bank-customer-service-poc/pyproject.toml`](../../poc/retail-bank-customer-service-poc/pyproject.toml) | POC package metadata and local test settings. |
-
-## Tests
-
-| Path | Purpose |
-| --- | --- |
-| [`../../tests/test_banking_tool_sft_data.py`](../../tests/test_banking_tool_sft_data.py) | SFT data-generation tests. |
-| [`../../tests/test_banking_tool_wire.py`](../../tests/test_banking_tool_wire.py) | Tool-wire adapter tests. |
-| [`../../tests/test_banking_tool_eval.py`](../../tests/test_banking_tool_eval.py) | Evaluator tests. |
-| [`../../tests/test_banking_tool_eval_runner.py`](../../tests/test_banking_tool_eval_runner.py) | Frozen eval runner and launcher tests. |
-| [`../../tests/test_banking_counterfactual_eval_data.py`](../../tests/test_banking_counterfactual_eval_data.py) | Counterfactual determinism, contamination, pair, manifest, and benchmark-gate tests. |
-| [`../../tests/test_banking_router_preparation.py`](../../tests/test_banking_router_preparation.py) | Router data preparation tests. |
-| [`../../tests/test_banking_router_training.py`](../../tests/test_banking_router_training.py) | Router training and release-gate tests. |
-| [`../../tests/test_banking_dual_head_router.py`](../../tests/test_banking_dual_head_router.py) | Shared router behavior tests. |
-| [`../../tests/test_banking_conversation_router.py`](../../tests/test_banking_conversation_router.py) | Released three-head model tests. |
-| [`../../tests/test_banking_conversation_router_data.py`](../../tests/test_banking_conversation_router_data.py) | History rendering, split isolation, leakage, and held-out data tests. |
-| [`../../tests/test_banking_conversation_router_preparation.py`](../../tests/test_banking_conversation_router_preparation.py) | Source-lock and deterministic preparation tests. |
-| [`../../tests/test_banking_conversation_router_training.py`](../../tests/test_banking_conversation_router_training.py) | Routing policy, metric, calibration, and release-gate tests. |
-| [`../../tests/test_banking_servicing_alignment_data.py`](../../tests/test_banking_servicing_alignment_data.py) | Granite alignment coverage, composite counts, held-out isolation, and lock-drift tests. |
-| [`../../tests/test_banking_asr_sft_data.py`](../../tests/test_banking_asr_sft_data.py) | ASR overlay semantics, provenance, split, digest, and fail-closed validation tests. |
-| [`../../tests/test_banking_tool_sft_worker.py`](../../tests/test_banking_tool_sft_worker.py) | Tool SFT worker tests. |
-| [`../../tests/test_banking_tool_eval_rescore.py`](../../tests/test_banking_tool_eval_rescore.py) | Prompt equivalence, coverage, and rescore release-gate tests. |
-| [`../../tests/test_release_pipeline.py`](../../tests/test_release_pipeline.py) | Canonical stage order, immutable input, and execution-guard tests. |
-| [`../../tests/test_deploy_zero_gpu_space.py`](../../tests/test_deploy_zero_gpu_space.py) | Space upload allowlist, exact pin persistence, and destructive-operation exclusion tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_auth.py`](../../poc/retail-bank-customer-service-poc/tests/test_auth.py) | POC auth tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_router.py`](../../poc/retail-bank-customer-service-poc/tests/test_router.py) | POC router tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_model_service.py`](../../poc/retail-bank-customer-service-poc/tests/test_model_service.py) | POC model-service and tool-loop tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_mock_bank.py`](../../poc/retail-bank-customer-service-poc/tests/test_mock_bank.py) | SQLite synthetic backend tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_app.py`](../../poc/retail-bank-customer-service-poc/tests/test_app.py) | Gradio app behavior tests. |
-| [`../../poc/retail-bank-customer-service-poc/tests/test_zero_gpu_runtime.py`](../../poc/retail-bank-customer-service-poc/tests/test_zero_gpu_runtime.py) | ZeroGPU skip/runtime helper tests. |
+| [`../../tests/test_banking_tool_sft_data.py`](../../tests/test_banking_tool_sft_data.py) | V5 SFT schema, records, leakage, tables, policy, and branding. |
+| [`../../tests/test_banking_servicing_alignment_data.py`](../../tests/test_banking_servicing_alignment_data.py) | Composite V5 counts, scenarios, and held-out isolation. |
+| [`../../tests/test_banking_conversation_router_data.py`](../../tests/test_banking_conversation_router_data.py) | State-aware rows, labels, split/trajectory isolation. |
+| [`../../tests/test_banking_conversation_router_training.py`](../../tests/test_banking_conversation_router_training.py) | Three-head training, calibration, gates, artifact, and publication guards. |
+| [`../../tests/test_banking_tool_sft_peft_release.py`](../../tests/test_banking_tool_sft_peft_release.py) | Adapter fingerprint validation, atomic publication, bundle identity, and metadata commit separation. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py`](../../poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py) | Detour, resume, switch, completion, reset, and state serialization. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_policy_retrieval.py`](../../poc/retail-bank-customer-service-poc/tests/test_policy_retrieval.py) | Corpus digest, dates, ranking, no-match, and citations. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_model_service.py`](../../poc/retail-bank-customer-service-poc/tests/test_model_service.py) | Action loop, policy generation, repairs, pinned context, and traces. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_local_app_service.py`](../../poc/retail-bank-customer-service-poc/tests/test_local_app_service.py) | End-to-end local routing, policy detour/resume, reset, and diagnostics. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_app.py`](../../poc/retail-bank-customer-service-poc/tests/test_app.py) | Gradio/ZeroGPU orchestration and UI-state behavior. |

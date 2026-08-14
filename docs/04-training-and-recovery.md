@@ -1,253 +1,221 @@
-# Granite PEFT Training and Recovery
+# Granite V5 Training and Recovery
 
-This runbook covers the active IBM Granite 8.79B PEFT lane: local checks,
-stage-1 base-tool SFT, stage-2 servicing-remediation SFT, exact evaluation,
-rescore, recovery boundaries, and final publication. The training configuration
-is [`configs/banking-tool-sft-granite.toml`](../configs/banking-tool-sft-granite.toml).
-The published model card is
-[`model_cards/retail-bank-agent-9b.md`](../model_cards/retail-bank-agent-9b.md).
+This runbook covers the guarded V5 Granite continuation job. The CPU router is
+trained separately and is documented in [05-dual-head-router.md](05-dual-head-router.md).
 
-## Active Artifact IDs
+## Current Job
 
-Use immutable 40-character revisions for every paid or published run. Branch
-names such as `main` are rejected by the job entry points.
-
-| Artifact | Value | Owner |
-| --- | --- | --- |
-| IBM base model | `ibm-granite/granite-4.1-8b` | [`configs/banking-tool-sft-granite.toml`](../configs/banking-tool-sft-granite.toml) |
-| IBM base revision | `1504002f650e656a0a3789d99574df12e3e94ed0` | [`configs/banking-tool-sft-granite.toml`](../configs/banking-tool-sft-granite.toml) |
-| Stage-1 tool-use checkpoint | `spkc83/retail-bank-agent-9b` at `085df3d089cfadd77424b548542da0390a54a23e` | [`release config`](../configs/retail-bank-release.toml) |
-| Released model repo | `spkc83/retail-bank-servicing-agent-9b` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-| Released weights revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-| Initial tool-use dataset | `spkc83/retail-bank-agent-sft` at `183e7e1ed1aba9c3d7155e7b83b64dc854935055` | [`data card`](../data_cards/retail-bank-agent-sft.md) |
-| Corrected servicing dataset | `spkc83/retail-bank-servicing-alignment-sft` at `0ce32f9c7a3edff227005e5b89b089947b87625a` | [`data card`](../data_cards/retail-bank-servicing-alignment-sft.md) |
-| Prompt-identical training dataset | `spkc83/retail-bank-servicing-alignment-sft` at `fea8aa1cda716954eb7322325e2be25c9f570ea3` | [`data card`](../data_cards/retail-bank-servicing-alignment-sft.md) |
-| Source revision used for release | `475dc2b563ef87fa0c9aa597b0b0465d56d2ee0f` | [`artifact ledger`](reference/artifacts.md) |
-| Remote-job bootstrap source | `1da0bdc1cdcc5a0e1c5ce137c32384d927c1948b` | [`release config`](../configs/retail-bank-release.toml) |
-| Servicing-remediation training job | `spkc83/6a6ca6276b79c09949c1d6cb` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-| Exact evaluation job | `spkc83/6a6caac1a00abefd4b289b14` | [`model card`](../model_cards/retail-bank-agent-9b.md) |
-
-## Bucket Retention Policy
-
-The private `spkc83/jobs-artifacts` bucket is durable working storage for active
-jobs, but it is not the release source of truth. Published Hub repositories are
-authoritative for the model, router, datasets, and evaluation reports.
-
-On 2026-07-31, obsolete job files were reduced from 290 files
-(`449,461,595,301` bytes) to 58 files (`1,252,559,272` bytes). The retained set
-preserves selected recovery adapters, trainer state, and provenance JSON. Failed
-runs, superseded checkpoints, duplicate merged weights, temporary merge files,
-optimizer state from non-selected runs, and bucket copies of already-published
-evaluation outputs were removed.
-
-New training and evaluation runs must use a new output prefix. Intermediate
-files may be removed after publication and verification, but the selected
-recovery adapter, trainer state, and run metadata must remain until that release
-is formally retired.
-
-## What Trains
-
-The worker
-[`scripts/retail_bank/cloud_train_tool_sft.py`](../scripts/retail_bank/cloud_train_tool_sft.py)
-loads a pinned Granite-family model and trains a BF16 LoRA adapter with TRL
-`SFTTrainer`.
-
-| Setting | Value |
+| Field | Value |
 | --- | --- |
-| PEFT stack | BF16 LoRA over Granite attention and MLP projections |
-| Target modules | `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj` |
-| LoRA rank / alpha / dropout | `32` / `64` / `0.05` |
-| Maximum sequence length | `2048` |
-| Outer HF Jobs timeout | `5h` |
-| Remote GPU flavor | `rtx-pro-6000` |
+| Job | `6a7f79531f5885ae605b96cc` |
+| Status represented by these docs | completed |
+| Hardware | `rtx-pro-6000` |
+| Job timeout | five hours |
+| Optimizer wall-clock limit | 14,400 seconds |
+| Source commit | `75b56ffff45e75ffbee11c0e0552dc35ae124d21` |
+| Dataset revision | `40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| Policy corpus revision | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
+| Base model revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` |
+| Maximum steps | 750 |
+| Learning rate | `2e-5` |
+| Gradient accumulation | 2 |
+| Checkpoint interval | 250 |
+| Trackio project | `retail-bank-agent-v5` |
+| Training steps | 750 |
+| Training loss | `0.13014758` |
+| Evaluation loss | `0.3200804` |
+| Token accuracy | `0.96240348` |
+| Published PEFT candidate | release revision `cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| Adapter bundle commit | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 
-The release has two Granite SFT stages:
+The release composes base `1d568249...` with the BF16 LoRA adapter at
+`cc95e446...`. Both merged candidates were rejected by the unchanged
+behavioral-parity gates, so neither merged FP16 nor merged BF16 weights are an
+active artifact. Evaluation job `6a7f89edc97db76cbdf31893` ran against the
+exact base-plus-adapter composition and failed strict gates. A corrected
+evaluator and generalized incremental SFT are underway.
 
-1. Stage 1 starts from `ibm-granite/granite-4.1-8b` revision
-   `1504002f650e656a0a3789d99574df12e3e94ed0` and trains the initial 9,000-row
-   synthetic tool-use corpus. It teaches the tagged-JSON tool wire, tool-result
-   grounding, clarification, FAQ, OOD refusal, and multi-tool ordering.
-2. Stage 2 continues from the stage-1 tool-trained checkpoint and trains the
-   composite v4 servicing-remediation corpus. It exists because POC testing
-   exposed failures in service-case follow-ups, card anaphora, clarification
-   answers, agent repair, and topic shifts.
+## Prerequisites
 
-### Choose the correct execution path
+Before launching a new job:
 
-| Situation | Start point | Operation | Example |
-| --- | --- | --- | --- |
-| Rebuild the full release | Pinned IBM Granite base | Run stage 1, then stage 2 | New infrastructure or independent reproduction. |
-| Improve a released behavior | Pinned stage-1 or released checkpoint | Continue SFT with base plus remediation data | Add robust service-case follow-ups. |
-| Export failed after training | Retained completed adapter | Export-only recovery | Merge/upload failed after the trainer completed. |
-| Training stopped mid-run | Matching checkpoint and fingerprint | Resume training | Worker interruption after checkpoint 500. |
+1. Run the local data and worker tests.
+2. Publish the exact V5 dataset and capture its immutable revision.
+3. Push the source commit referenced by the bootstrap URL.
+4. Confirm the base model and revision are immutable and downloadable.
+5. Confirm `hf auth whoami` returns the intended account.
+6. Make `HF_TOKEN` available as a Hugging Face Job secret, never a command-line
+   literal.
+7. Use a persistent Hub bucket so checkpoints survive job termination.
 
-If adapter state proves step 500 completed, resume may continue training. If
-training completed but only Hub upload failed, export recovery must not call
-`trainer.train` again.
-
-The fingerprint prevents an invalid recovery, such as resuming a stage-2
-adapter with a different chat template or dataset revision.
-
-## Local Preflight
-
-Run these before any paid job:
+Verify local inputs:
 
 ```bash
-python -m pytest -q tests/test_banking_tool_sft_data.py \
-  tests/test_banking_tool_wire.py \
-  tests/test_banking_tool_sft_job.py \
+hf auth whoami
+
+PYTHONPATH=src uv run pytest -q \
   tests/test_banking_tool_sft_worker.py \
-  tests/test_banking_tool_eval.py \
-  tests/test_banking_tool_eval_runner.py
+  tests/test_banking_tool_sft_job.py \
+  tests/test_banking_tool_sft_continuation.py \
+  tests/test_banking_tool_sft_release.py \
+  tests/test_banking_tool_sft_peft_release.py \
+  tests/test_banking_servicing_alignment_data.py
 ```
 
-Check the stage-2 training plan without downloading 9B weights, launching a
-job, merging, or pushing:
+## Inspect the Plan Without Training
+
+The worker defaults to dry-run mode:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_train_tool_sft.py \
-  --manifest data/banking-servicing-alignment-v4/manifest.json \
-  --base-model spkc83/retail-bank-agent-9b \
-  --base-revision 085df3d089cfadd77424b548542da0390a54a23e \
-  --hub-dest spkc83/retail-bank-servicing-agent-9b \
-  --family granite \
-  --learning-rate 2e-5 \
-  --max-steps 500 \
-  --checkpoint-every 100 \
-  --dry-run
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --base-model spkc83/retail-bank-servicing-agent-9b \
+  --base-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+  --output-dir artifacts/banking-servicing-agent-v5
 ```
 
-Run the local one-step smoke:
+The printed plan includes precision, LoRA target modules, record counts,
+assistant-only masking, checkpoint cadence, merge behavior, and the remote
+execution guard. It does not load the 8.79B model or publish anything.
+
+Use the offline tiny smoke to validate tokenization and checkpoint metadata:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/cloud_train_tool_sft.py \
-  --run-tiny-smoke \
-  --dry-run
+PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
+  --manifest data/banking-servicing-alignment-v5/manifest.json \
+  --output-dir /tmp/harbor-granite-v5-smoke \
+  --run-tiny-smoke
 ```
 
-The tiny smoke uses small offline stand-ins. It writes local smoke artifacts and
-verifies assistant-label tokens, checkpoint metadata, adapter output paths,
-final output paths, and merge/reload parity. It does not prove the 8.79B model
-can train on GPU.
+## Submit a Guarded Hugging Face Job
 
-## Paid HF Jobs
+[`run_remote_training_job.sh`](../scripts/retail_bank/run_remote_training_job.sh)
+validates exact source, dataset, and base revisions, checks that the bootstrap
+URL resolves, requests an RTX PRO 6000, applies a five-hour timeout, mounts the
+persistent artifact bucket, and forwards `HF_TOKEN` as a secret.
 
-Paid execution is launched through
-[`scripts/retail_bank/run_remote_training_job.sh`](../scripts/retail_bank/run_remote_training_job.sh),
-which submits
-[`scripts/retail_bank/hf_job_tool_sft.py`](../scripts/retail_bank/hf_job_tool_sft.py)
-with:
-
-- `--flavor rtx-pro-6000`;
-- `--timeout 5h`;
-- `--secrets HF_TOKEN`;
-- `--volume hf://buckets/spkc83/jobs-artifacts:/data`;
-- exact source and dataset revisions.
-
-The `HF_TOKEN` secret must have read access to the dataset and base, and write
-access to the destination model repository. Do not put tokens on the command
-line.
-
-The released stage-2 training job was `spkc83/6a6ca6276b79c09949c1d6cb`. It ran
-for about 18 minutes 59 seconds and cost about `$0.87`. Final reported metrics:
-
-| Metric | Value |
-| --- | ---: |
-| Training loss | `0.0069123295` |
-| Evaluation loss | `0.0002181597` |
-| Token accuracy | `0.999976121` |
-
-## Rescore and Evaluation
-
-The exact evaluation job was `spkc83/6a6caac1a00abefd4b289b14`. It evaluated
-1,374 frozen records and passed every hard gate.
-
-The corrected dataset revision
-`0ce32f9c7a3edff227005e5b89b089947b87625a` is prompt-identical to the training
-revision `fea8aa1cda716954eb7322325e2be25c9f570ea3` for generation and scoring.
-The helper `scripts/retail_bank/rescore_tool_eval.py` rescored equivalent rows
-against the existing predictions. This is not a second generation run.
-
-## Rebuild on Clean Infrastructure
-
-The repository retains two separate, reproducible training lanes. Do not
-confuse the servicing-remediation run with foundation pretraining:
-
-1. Stage 1 starts from the immutable pretrained IBM Granite checkpoint. English
-   and general language ability come from this base model, not from random
-   initialization in this repository.
-2. Stage 2 starts from the stage-1 tool-trained checkpoint and uses the
-   composite servicing-remediation dataset.
-
-On a new machine or cloud account, reproduce into a new destination repository
-unless the goal is an explicitly authorized replacement release. Every
-downstream evaluation and deployment command must consume captured
-40-character revisions, never `main`.
-
-[`scripts/retail_bank/run_release_pipeline.py`](../scripts/retail_bank/run_release_pipeline.py)
-is the canonical orchestration entry point. It contains data preparation,
-stage-1 Granite tool-use SFT from the pinned IBM checkpoint, stage-2 remediation
-SFT from the captured stage-1 revision, router training, exact evaluation, and
-ZeroGPU deployment:
+For the currently submitted V5 configuration, the equivalent launcher inputs
+are:
 
 ```bash
-PYTHONPATH=src python scripts/retail_bank/run_release_pipeline.py --stage all
+SOURCE_COMMIT=75b56ffff45e75ffbee11c0e0552dc35ae124d21
+DATASET_REVISION=40a0b68b9f746131ffff32a83e077fd7e4a344d1
+
+BASE_MODEL=spkc83/retail-bank-servicing-agent-9b \
+BASE_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817 \
+DATASET_REPO=spkc83/retail-bank-servicing-alignment-sft \
+HF_HUB_DEST=spkc83/retail-bank-servicing-agent-9b \
+MAX_STEPS=750 \
+LEARNING_RATE=2e-5 \
+GRADIENT_ACCUMULATION_STEPS=2 \
+CHECKPOINT_EVERY=250 \
+TRACKIO_PROJECT=retail-bank-agent-v5 \
+TRACKIO_RUN_NAME=granite-v5-grounded-dialogue-75b56ff \
+bash scripts/retail_bank/run_remote_training_job.sh \
+  "$SOURCE_COMMIT" "$DATASET_REVISION"
 ```
 
-The command above prints the complete plan without executing it. Execute one
-stage at a time with `--execute` and the applicable `--allow-paid` and
-`--allow-publish` guards. After a publishing stage, record the new immutable
-revision in `configs/retail-bank-release.toml` before executing its downstream
-consumer.
+This command creates a paid external job. The documentation records it for
+reproduction; it was not re-submitted while editing these files.
 
-## Recovery Boundaries
+The bootstrap script
+[`hf_job_tool_sft.py`](../scripts/retail_bank/hf_job_tool_sft.py) downloads the
+exact GitHub source and Hub dataset revisions into an isolated job directory,
+then invokes the worker with all three execution guards:
 
-Use export recovery only when a training job completed and wrote a retained
-adapter to the bucket, but publication or final export failed. Recovery is
-export-only: it does not call `trainer.train`.
+```text
+--execute-remote
+--allow-remote-execution
+RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT=banking-v5-grounded-dialogue-sft
+```
 
-Recovery cross-checks persisted metadata against the inspected training job:
+## Monitor and Capture Evidence
 
-- parent model revision;
-- dataset revision;
-- base model and base revision;
-- training source commit;
-- output root;
-- completed step count;
-- training-job artifact time window.
+```bash
+hf jobs inspect 6a7f79531f5885ae605b96cc
+hf jobs logs 6a7f79531f5885ae605b96cc --tail 200
+```
 
-It tries FP16-native merged output before any fallback and publishes only after
-unchanged parity gates pass. This is covered by
-[`tests/test_banking_tool_sft_export_recovery.py`](../tests/test_banking_tool_sft_export_recovery.py).
+Record:
 
-## Stop Conditions
+- job state and duration;
+- source, dataset, and base revisions;
+- Trackio run name and final train/eval metrics;
+- actual step and wall-clock stop reason;
+- checkpoint paths;
+- adapter and merged artifact paths;
+- merge/reload parity result;
+- published adapter-bundle and metadata revisions.
 
-Stop before paid training if any local preflight fails, if the dry-run guard
-says remote execution is not intentionally enabled, or if the source, dataset,
-or base revision is not exact. Stop during or after remote work if:
+A successful optimizer exit is not a release. Merge, reload parity, upload,
+and frozen evaluation must also succeed.
 
-- checkpoint metadata is missing or mismatched;
-- validation loss or token accuracy is unavailable;
-- merge/reload parity fails;
-- the job cannot write to `/data`;
-- Hub upload cannot record exact published revisions;
-- frozen evaluation in [`docs/06-evaluation.md`](06-evaluation.md) fails a
-  release gate.
+## Checkpoints and Resume
 
-Do not use output repair, deterministic tool planning, or branch-name revisions
-to make a checkpoint appear releasable.
+The worker saves trainer checkpoints and a project fingerprint. The fingerprint
+binds the base model/revision, dataset manifest, tokenizer template, precision,
+LoRA configuration, sequence length, and optimization settings. Resume rejects
+an incompatible fingerprint.
 
-## Expected Outputs
+Pass a checkpoint path as the optional third launcher argument:
 
-Training writes under the mounted `/data` output root:
+```bash
+bash scripts/retail_bank/run_remote_training_job.sh \
+  75b56ffff45e75ffbee11c0e0552dc35ae124d21 \
+  40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  /data/retail-bank-agent-9b-75b56fff/checkpoint-000250
+```
 
-- adapter files under `adapter/`;
-- merged root checkpoint under the selected merged subdirectory;
-- checkpoint metadata under `checkpoint-*` or `checkpoints/step-*`;
-- `training_result.json`;
-- merge parity report files;
-- Hub evidence files including exact revision records.
+Use the same environment overrides as the original job. Changing the dataset,
+base revision, template, or LoRA shape is a new run, not a resume.
 
-The published model repository root contains merged FP16 weights. The unmerged
-adapter remains under `adapter/`, as documented in
-[`model_cards/retail-bank-agent-9b.md`](../model_cards/retail-bank-agent-9b.md).
+## Finalization and Publication
+
+After SFT, the worker produced an adapter and attempted merged exports:
+
+1. saves the adapter and tokenizer;
+2. merges the adapter into the base with `safe_merge=True`;
+3. saves merged FP16 weights;
+4. reloads the merged checkpoint;
+5. compares generation behavior with the adapter-backed model using unchanged
+   behavioral-parity gates.
+
+For this run, steps 2-5 rejected both FP16 and BF16 merged candidates. The
+adapter itself remained valid. The dedicated finalizer
+[`hf_job_finalize_tool_sft_peft.py`](../scripts/retail_bank/hf_job_finalize_tool_sft_peft.py):
+
+1. verifies the selected step and training fingerprint;
+2. verifies LoRA rank, alpha, dropout, target modules, base revision, dataset
+   revision, template hash, and BF16 precision;
+3. hashes the adapter and tokenizer bundle;
+4. publishes the adapter files atomically;
+5. records the immutable adapter-bundle commit separately from the final PEFT
+   release revision.
+
+The resulting identities are:
+
+```text
+base:             spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
+PEFT release:     spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3
+adapter bundle:   b4269445ce7b2b943d2d9531102166bf8840a074
+adapter SHA-256:  043b22c5... (full digest in release metadata)
+```
+
+The final PEFT release revision is passed to PEFT. Evaluation and deployment
+must pin all four composition fields: base ID/revision and adapter ID/revision.
+
+## Failure Recovery Table
+
+| Failure | Evidence to inspect | Recovery |
+| --- | --- | --- |
+| Source bootstrap fails | job log before dependency install | Verify the exact GitHub commit and raw bootstrap URL; submit a new job after source is reachable. |
+| Dataset download or digest fails | dataset repo/revision and manifest path | Verify `40a0b68...` and the manifest; do not bypass digest checks. |
+| CUDA OOM | final allocation and batch settings | Resume from the latest compatible checkpoint with a smaller batch or QLoRA; treat the configuration change as a new fingerprint when required. |
+| Wall-clock stop | last step and saved checkpoint | Resume from the persistent checkpoint using the original fingerprint. |
+| Merge fails | adapter path and merge traceback | Preserve the adapter; rerun the explicit merge/recovery helper against the same base revision. |
+| Merged behavioral parity fails | parity inputs and outputs | Reject the merged checkpoint; publish the validated unmerged adapter only if its independent release checks pass. |
+| Adapter upload fails | complete validated adapter directory and Hub error | Retry publication from the preserved adapter; do not retrain solely for an upload failure. |
+| Frozen evaluation fails | per-record prediction report | Keep the existing POC model pin; fix data/model behavior and produce a new immutable revision. |
+
+No cleanup command is required for any recovery path. Preserve checkpoints and
+logs until the release is complete.
