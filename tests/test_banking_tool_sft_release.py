@@ -41,6 +41,8 @@ def test_finalizer_accepts_versioned_step_and_artifact_subdirectories(
             "merged",
             "--adapter-subdir",
             "adapter",
+            "--release-dtype",
+            "bfloat16",
         ],
     )
 
@@ -49,6 +51,7 @@ def test_finalizer_accepts_versioned_step_and_artifact_subdirectories(
     assert args.selected_step == 750
     assert args.merged_subdir == "merged"
     assert args.adapter_subdir == "adapter"
+    assert args.release_dtype == "bfloat16"
 
 
 def parity_report(**overrides: object) -> dict[str, object]:
@@ -63,6 +66,7 @@ def parity_report(**overrides: object) -> dict[str, object]:
     metrics.update(overrides)
     return {
         "contract": "banking-v3-bf16-merge-parity/v1",
+        "dtype": "float16",
         "metrics": metrics,
     }
 
@@ -70,6 +74,7 @@ def parity_report(**overrides: object) -> dict[str, object]:
 def test_fp16_merge_parity_accepts_behaviorally_identical_generation() -> None:
     metrics = FINALIZER.validate_parity(
         parity_report(),
+        release_dtype="float16",
         minimum_argmax_agreement=0.999,
         maximum_logit_difference=0.3,
         maximum_p999_difference=0.07,
@@ -97,6 +102,21 @@ def test_fp16_merge_parity_rejects_failed_release_gate(
     with pytest.raises(RuntimeError, match=match):
         FINALIZER.validate_parity(
             parity_report(**override),
+            release_dtype="float16",
+            minimum_argmax_agreement=0.999,
+            maximum_logit_difference=0.3,
+            maximum_p999_difference=0.07,
+        )
+
+
+def test_finalizer_rejects_parity_from_different_release_dtype() -> None:
+    report = parity_report()
+    report["dtype"] = "bfloat16"
+
+    with pytest.raises(RuntimeError, match="does not match release dtype"):
+        FINALIZER.validate_parity(
+            report,
+            release_dtype="float16",
             minimum_argmax_agreement=0.999,
             maximum_logit_difference=0.3,
             maximum_p999_difference=0.07,

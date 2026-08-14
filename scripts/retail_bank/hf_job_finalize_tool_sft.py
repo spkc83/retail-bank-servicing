@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter-subdir", default="adapter")
     parser.add_argument("--selected-step", type=int, default=3_000)
     parser.add_argument(
+        "--release-dtype",
+        choices=("float16", "bfloat16"),
+        default="float16",
+    )
+    parser.add_argument(
         "--parity-report",
         default="merge_parity_diagnostics_merged-fp16_float16.json",
     )
@@ -88,12 +93,18 @@ def require_files(root: Path, names: tuple[str, ...]) -> None:
 def validate_parity(
     report: dict[str, Any],
     *,
+    release_dtype: str,
     minimum_argmax_agreement: float,
     maximum_logit_difference: float,
     maximum_p999_difference: float,
 ) -> dict[str, Any]:
     if report.get("contract") != "banking-v3-bf16-merge-parity/v1":
         raise RuntimeError("unexpected merge parity report contract")
+    if report.get("dtype") != release_dtype:
+        raise RuntimeError(
+            "merge parity dtype does not match release dtype: "
+            f"{report.get('dtype')} != {release_dtype}"
+        )
     metrics = report.get("metrics")
     if not isinstance(metrics, dict):
         raise RuntimeError("merge parity report has no metrics object")
@@ -107,19 +118,13 @@ def validate_parity(
         failures.append(f"only {prompt_count} prompts were compared")
     argmax_agreement = float(metrics.get("argmax_token_agreement", 0.0))
     if argmax_agreement < minimum_argmax_agreement:
-        failures.append(
-            f"argmax agreement {argmax_agreement} < {minimum_argmax_agreement}"
-        )
+        failures.append(f"argmax agreement {argmax_agreement} < {minimum_argmax_agreement}")
     max_difference = float(metrics.get("max_abs_logit_diff", float("inf")))
     if max_difference > maximum_logit_difference:
-        failures.append(
-            f"maximum logit difference {max_difference} > {maximum_logit_difference}"
-        )
+        failures.append(f"maximum logit difference {max_difference} > {maximum_logit_difference}")
     p999_difference = float(metrics.get("p999_abs_logit_diff", float("inf")))
     if p999_difference > maximum_p999_difference:
-        failures.append(
-            f"p999 logit difference {p999_difference} > {maximum_p999_difference}"
-        )
+        failures.append(f"p999 logit difference {p999_difference} > {maximum_p999_difference}")
     if failures:
         raise RuntimeError("merge parity release gate failed: " + "; ".join(failures))
     return metrics
@@ -143,6 +148,7 @@ def write_model_card(
     remerge_job: str,
     parity_job: str,
     weights_revision: str,
+    release_dtype: str,
 ) -> None:
     fingerprint = metadata["fingerprint"]
     dataset = fingerprint["dataset_identity"]
@@ -163,14 +169,14 @@ tags:
 
 # Retail Bank Servicing Agent 9B
 
-Merged FP16 LoRA adaptation for the synthetic retail-bank customer-service POC.
+Merged {release_dtype.upper()} LoRA adaptation for the synthetic retail-bank customer-service POC.
 
 - Weights revision: `{weights_revision}`
 - Base revision: `{fingerprint["base_revision"]}`
 - Dataset revision: `{dataset["revision"]}`
 - Source revision: `{source_commit}`
 - Training job: `{training_job}`
-- FP32-to-FP16 remerge job: `{remerge_job}`
+- Precision-aligned remerge job: `{remerge_job}`
 - Merge parity job: `{parity_job}`
 - Optimizer steps: `{metadata["step"]}`
 - Training loss: `{metrics["train_metrics"]["train_loss"]}`
@@ -196,10 +202,7 @@ def main() -> int:
     merged_dir = args.output_root / args.merged_subdir
     adapter_dir = args.output_root / args.adapter_subdir
     metadata_path = (
-        args.output_root
-        / "checkpoints"
-        / f"step-{args.selected_step:06d}"
-        / "metadata.json"
+        args.output_root / "checkpoints" / f"step-{args.selected_step:06d}" / "metadata.json"
     )
     parity_path = args.output_root / args.parity_report
     require_files(merged_dir, MERGED_ALLOWLIST)
@@ -208,14 +211,14 @@ def main() -> int:
     parity = read_json(parity_path)
     parity_metrics = validate_parity(
         parity,
+        release_dtype=args.release_dtype,
         minimum_argmax_agreement=args.minimum_argmax_agreement,
         maximum_logit_difference=args.maximum_logit_difference,
         maximum_p999_difference=args.maximum_p999_difference,
     )
     if metadata.get("step") != args.selected_step:
         raise RuntimeError(
-            "training metadata does not represent selected step "
-            f"{args.selected_step}"
+            f"training metadata does not represent selected step {args.selected_step}"
         )
 
     model_sha256 = sha256(merged_dir / "model.safetensors")
@@ -267,7 +270,7 @@ def main() -> int:
             "all_greedy_generations_equal": True,
             "all_logit_differences_finite": True,
         },
-        "release_weight_dtype": "float16",
+        "release_weight_dtype": args.release_dtype,
         "pushed_to_hub": args.model_repo,
     }
     release_path = args.output_root / "training_result.json"
@@ -281,6 +284,7 @@ def main() -> int:
         remerge_job=args.remerge_job,
         parity_job=args.parity_job,
         weights_revision=weights_revision,
+        release_dtype=args.release_dtype,
     )
     api.upload_file(
         repo_id=args.model_repo,
