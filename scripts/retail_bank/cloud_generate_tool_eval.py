@@ -17,7 +17,7 @@
 # url = "https://download.pytorch.org/whl/cu126"
 # explicit = true
 # ///
-"""Generate read-only banking-v3 frozen tool-eval predictions from a merged Hub model."""
+"""Generate read-only banking V5 frozen tool-eval predictions from a merged Hub model."""
 
 from __future__ import annotations
 
@@ -52,9 +52,9 @@ from hello_slm.banking_tool_sft_data import public_tool_manifest
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.config import canonical_json_bytes
 
-DEFAULT_MODEL_REPO = "spkc83/retail-bank-agent-9b"
-DEFAULT_DATASET_REPO = "spkc83/retail-bank-agent-sft"
-DEFAULT_OUTPUT_DIR = "artifacts/banking-v3-tool-eval"
+DEFAULT_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
+DEFAULT_OUTPUT_DIR = "artifacts/banking-v5-tool-eval"
 DEFAULT_FAMILY = "granite"
 REVISION_HEX_LENGTH = 40
 
@@ -172,9 +172,7 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
     validate_config(config)
     manifest_path = resolve_manifest(config)
     manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    is_counterfactual = (
-        manifest_payload.get("contract") == COUNTERFACTUAL_MANIFEST_CONTRACT
-    )
+    is_counterfactual = manifest_payload.get("contract") == COUNTERFACTUAL_MANIFEST_CONTRACT
     if is_counterfactual:
         validate_counterfactual_manifest(manifest_path)
     records = load_manifest_records(manifest_path, config.split)
@@ -259,9 +257,7 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
     if config.push_to_hub:
         publish_eval_artifacts(config, output_paths)
     if config.enforce_release_gates and gate_failures:
-        raise ToolEvalGenerationError(
-            f"{gate_contract} failed: " + "; ".join(gate_failures)
-        )
+        raise ToolEvalGenerationError(f"{gate_contract} failed: " + "; ".join(gate_failures))
     return metadata
 
 

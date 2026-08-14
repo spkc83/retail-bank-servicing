@@ -1,6 +1,6 @@
 {
   "contract": "banking-conversation-router-data",
-  "created_at": "2026-08-14T18:19:47.486077+00:00",
+  "created_at": "2026-08-14T19:14:36.150869+00:00",
   "format_version": 2,
   "intent_labels": [
     "view_accounts",
@@ -29,63 +29,63 @@
     "cross_split_duplicates_removed": 4479,
     "domain_counts": {
       "test": {
-        "0": 2354,
-        "1": 1926
+        "0": 2408,
+        "1": 2064
       },
       "train": {
-        "0": 5268,
-        "1": 9890
+        "0": 5322,
+        "1": 10271
       },
       "validation": {
-        "0": 1134,
-        "1": 2018
+        "0": 1188,
+        "1": 2156
       }
     },
     "intent_counts": {
       "test": {
-        "None": 2354,
-        "cancel_transfer": 126,
-        "conversation": 160,
-        "dispute_transaction": 156,
-        "freeze_card": 274,
+        "None": 2408,
+        "cancel_transfer": 135,
+        "conversation": 190,
+        "dispute_transaction": 165,
+        "freeze_card": 283,
         "other_banking": 126,
-        "policy_knowledge": 416,
-        "replace_card": 93,
-        "view_accounts": 66,
-        "view_cards": 120,
-        "view_service_cases": 317,
-        "view_transactions": 66,
-        "view_transfers": 6
+        "policy_knowledge": 443,
+        "replace_card": 102,
+        "view_accounts": 75,
+        "view_cards": 129,
+        "view_service_cases": 326,
+        "view_transactions": 75,
+        "view_transfers": 15
       },
       "train": {
-        "None": 5268,
-        "cancel_transfer": 644,
-        "conversation": 646,
-        "dispute_transaction": 862,
-        "freeze_card": 1054,
+        "None": 5322,
+        "cancel_transfer": 670,
+        "conversation": 676,
+        "dispute_transaction": 888,
+        "freeze_card": 1080,
         "other_banking": 714,
-        "policy_knowledge": 1642,
-        "replace_card": 1020,
-        "view_accounts": 294,
-        "view_cards": 404,
-        "view_service_cases": 1872,
-        "view_transactions": 414,
-        "view_transfers": 324
+        "policy_knowledge": 1759,
+        "replace_card": 1046,
+        "view_accounts": 320,
+        "view_cards": 430,
+        "view_service_cases": 1898,
+        "view_transactions": 440,
+        "view_transfers": 350
       },
       "validation": {
-        "None": 1134,
-        "cancel_transfer": 156,
-        "conversation": 182,
-        "dispute_transaction": 228,
-        "freeze_card": 210,
+        "None": 1188,
+        "cancel_transfer": 165,
+        "conversation": 212,
+        "dispute_transaction": 237,
+        "freeze_card": 219,
         "other_banking": 138,
-        "policy_knowledge": 254,
-        "replace_card": 174,
-        "view_accounts": 126,
-        "view_cards": 102,
-        "view_service_cases": 286,
-        "view_transactions": 6,
-        "view_transfers": 156
+        "policy_knowledge": 281,
+        "replace_card": 183,
+        "view_accounts": 135,
+        "view_cards": 111,
+        "view_service_cases": 295,
+        "view_transactions": 15,
+        "view_transfers": 165
       }
     },
     "intent_labels": [
@@ -116,8 +116,13 @@
         "heldout_screenshot_regression": 7,
         "multi_turn": 12,
         "ood": 6,
-        "resume_previous_service": 54,
+        "resume_previous_service": 63,
         "retrieval_grounded_policy": 40,
+        "state_intent_switch": 72,
+        "state_ood_detour": 54,
+        "state_orphan_resume": 3,
+        "state_policy_followup": 27,
+        "state_social_detour": 27,
         "targeted_agent_repair": 40,
         "targeted_clarification_answer": 24,
         "targeted_contextual_followup": 24,
@@ -140,8 +145,13 @@
         "hard_negative": 35,
         "multi_turn": 60,
         "ood": 29,
-        "resume_previous_service": 216,
+        "resume_previous_service": 234,
         "retrieval_grounded_policy": 157,
+        "state_intent_switch": 216,
+        "state_ood_detour": 54,
+        "state_orphan_resume": 3,
+        "state_policy_followup": 117,
+        "state_social_detour": 27,
         "targeted_agent_repair": 512,
         "targeted_clarification_answer": 192,
         "targeted_contextual_followup": 192,
@@ -163,8 +173,13 @@
         "hard_negative": 6,
         "multi_turn": 18,
         "ood": 9,
-        "resume_previous_service": 54,
+        "resume_previous_service": 63,
         "retrieval_grounded_policy": 23,
+        "state_intent_switch": 72,
+        "state_ood_detour": 54,
+        "state_orphan_resume": 3,
+        "state_policy_followup": 27,
+        "state_social_detour": 27,
         "targeted_agent_repair": 40,
         "targeted_clarification_answer": 24,
         "targeted_contextual_followup": 24,
@@ -192,9 +207,9 @@
     ],
     "seed": 7404,
     "split_counts": {
-      "test": 4280,
-      "train": 15158,
-      "validation": 3152
+      "test": 4472,
+      "train": 15593,
+      "validation": 3344
     }
   },
   "review_status": "automated-policy-pass",
@@ -279,31 +294,31 @@
       "allowed_use": [
         "conversation-router-training"
       ],
-      "bytes": 12940919,
+      "bytes": 13492052,
       "name": "train",
       "path": "train.jsonl",
-      "rows": 15158,
-      "sha256": "7713e973c3ba3a732bcb8ed9ca3c4e8837b025273ab9dc53e3f3770d83327605"
+      "rows": 15593,
+      "sha256": "3b003aeb80cd1547216c3964dc87d8d15808916f76a10e45a6cfc2d14fa646c7"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 2739553,
+      "bytes": 2979522,
       "name": "validation",
       "path": "validation.jsonl",
-      "rows": 3152,
-      "sha256": "4b16196780449c304727af803f04e50b53132d33e0a53dca4b6f28173320ef25"
+      "rows": 3344,
+      "sha256": "8741662312af4884e73ca8ddd994f83ba333222e7ce2527315f07b2beff14be5"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 3087343,
+      "bytes": 3324750,
       "name": "test",
       "path": "test.jsonl",
-      "rows": 4280,
-      "sha256": "48f33ab780e86795e9135ef14515be4b053ce8bf05c2c76e3b3f1d750828e81f"
+      "rows": 4472,
+      "sha256": "dffeb9712b97486770a59197b690cda05fa2cedbc6bb302174407dac4ae5bfb8"
     }
   ]
 }

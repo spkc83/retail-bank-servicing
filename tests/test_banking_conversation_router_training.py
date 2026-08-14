@@ -86,6 +86,9 @@ def test_metrics_cover_intent_and_each_relation_slice() -> None:
     assert metrics["topic_shift_ood_false_accept_rate"] == 0.0
     assert metrics["trajectory_resume_intent_error_rate"] == 0.0
     assert metrics["trajectory_resume_relation_error_rate"] == 0.0
+    assert metrics["trajectory_state_route_error_rate"] == 0.0
+    assert metrics["trajectory_state_intent_error_rate"] == 0.0
+    assert metrics["trajectory_non_resume_false_positive_rate"] == 0.0
     assert metrics["heldout_regression_route_error_rate"] == 0.0
     assert metrics["heldout_regression_intent_error_rate"] == 0.0
     assert metrics["heldout_regression_relation_error_rate"] == 0.0
@@ -109,13 +112,49 @@ def test_release_gate_reports_use_case_regressions() -> None:
             "topic_shift_ood_false_accept_rate": 0.10,
             "trajectory_resume_intent_error_rate": 0.10,
             "trajectory_resume_relation_error_rate": 0.10,
+            "trajectory_state_route_error_rate": 0.10,
+            "trajectory_state_intent_error_rate": 0.10,
+            "trajectory_non_resume_false_positive_rate": 0.10,
             "heldout_regression_route_error_rate": 0.10,
             "heldout_regression_intent_error_rate": 0.10,
             "heldout_regression_relation_error_rate": 0.10,
         }
     )
 
-    assert len(failures) == 12
+    assert len(failures) == 15
+
+
+def test_state_negative_metrics_reject_prior_state_override() -> None:
+    training = load_training_module()
+    metrics = training.evaluate_predictions(
+        domain_probabilities=[0.95, 0.95, 0.95],
+        domain_labels=[1, 0, 1],
+        intent_predictions=[0, 0, 1],
+        intent_labels=[1, -100, 1],
+        relation_probabilities=[
+            [0.1, 0.1, 0.1, 0.1, 0.9],
+            [0.1, 0.1, 0.1, 0.1, 0.9],
+            [0.1, 0.1, 0.1, 0.1, 0.1],
+        ],
+        relation_labels=[
+            [0, 0, 1, 0, 0],
+            [0, 0, 1, 0, 0],
+            [1, 0, 0, 0, 0],
+        ],
+        example_kinds=[
+            "state_intent_switch",
+            "state_ood_detour",
+            "state_policy_followup",
+        ],
+        ood_banking_threshold=0.2,
+        in_domain_threshold=0.5,
+        relation_rescue_threshold=0.5,
+        num_intents=2,
+    )
+
+    assert metrics["trajectory_state_route_error_rate"] == 1 / 3
+    assert metrics["trajectory_state_intent_error_rate"] == 0.5
+    assert metrics["trajectory_non_resume_false_positive_rate"] == 2 / 3
 
 
 def test_resume_trajectory_metrics_require_exact_intent_and_relation() -> None:
@@ -168,6 +207,35 @@ def test_weighted_mean_prioritizes_targeted_rows() -> None:
     assert math.isclose(float(value), 8.0 / 3.0, rel_tol=1e-6)
 
 
+def test_state_negative_rows_receive_targeted_training_weight() -> None:
+    training = load_training_module()
+
+    class TokenizerStub:
+        def __call__(self, texts: list[str], **_kwargs: object) -> dict[str, torch.Tensor]:
+            return {
+                "input_ids": torch.ones((len(texts), 2), dtype=torch.long),
+                "attention_mask": torch.ones((len(texts), 2), dtype=torch.long),
+            }
+
+    collate = training.make_collate(TokenizerStub(), max_length=256)
+    common = {
+        "text": "input",
+        "domain_label": 1,
+        "intent_label": 0,
+        "relation_labels": [0, 0, 0, 0, 0],
+        "example_kind": "state_intent_switch",
+        "current_text": "switch",
+    }
+    batch = collate(
+        [
+            {**common, "source": "self-authored-router-v5-state-negatives"},
+            {**common, "source": "unweighted-source"},
+        ]
+    )
+
+    assert batch["row_weights"].tolist() == [training.TARGETED_ROW_WEIGHT, 1.0]
+
+
 def test_relation_calibration_uses_lowest_exact_optimum_for_other_labels() -> None:
     training = load_training_module()
     probabilities = [
@@ -191,3 +259,19 @@ def test_relation_calibration_uses_lowest_exact_optimum_for_other_labels() -> No
         "clarification_answer": 0.05,
         "resume_previous_service": 0.05,
     }
+
+
+def test_relation_calibration_caps_agent_repair_threshold_for_recall() -> None:
+    training = load_training_module()
+    probabilities = [
+        [0.1, 0.96, 0.1, 0.1, 0.1],
+        [0.1, 0.90, 0.1, 0.1, 0.1],
+    ]
+    labels = [
+        [0, 1, 0, 0, 0],
+        [0, 0, 0, 0, 0],
+    ]
+
+    thresholds = training.calibrate_relation_thresholds(probabilities, labels)
+
+    assert thresholds["agent_repair"] == 0.85

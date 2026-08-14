@@ -10,7 +10,7 @@ MODEL_ID = os.environ.get(
 )
 MODEL_REVISION = os.environ.get(
     "RETAIL_BANK_MODEL_REVISION",
-    "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+    "1799d068906c0da2a8739668857b096d20fed549",
 )
 
 
@@ -128,9 +128,7 @@ class LocalGraniteRuntime:
         encoded = tokenizer(rendered, return_tensors="pt")
         device = _model_device(model)
         inputs = {
-            name: tensor.to(device)
-            for name, tensor in encoded.items()
-            if hasattr(tensor, "to")
+            name: tensor.to(device) for name, tensor in encoded.items() if hasattr(tensor, "to")
         }
         if "attention_mask" not in inputs:
             inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])

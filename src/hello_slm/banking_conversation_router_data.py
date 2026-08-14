@@ -208,6 +208,7 @@ def build_conversation_router_splits(
         splits[split].extend(_synthetic_generalization_rows(splits[split], split, seed))
         splits[split].extend(_targeted_use_case_rows(split))
         splits[split].extend(_resume_trajectory_rows(split))
+        splits[split].extend(_state_conditioned_negative_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
@@ -681,6 +682,25 @@ def _resume_trajectory_rows(split: str) -> list[dict[str, Any]]:
     modifiers = (
         (".", " please.", " now.", " from where we left off.") if split == "train" else (".",)
     )
+    intent_subjects = {
+        "view_accounts": "account-balance",
+        "view_cards": "card-list",
+        "freeze_card": "card-freeze",
+        "replace_card": "card-replacement",
+        "view_transactions": "transaction-history",
+        "dispute_transaction": "purchase-dispute",
+        "view_transfers": "transfer-history",
+        "cancel_transfer": "transfer-cancellation",
+        "view_service_cases": "service-case",
+    }
+    explicit_resume_templates = {
+        "train": (
+            "Let's resume the {subject} request.",
+            "Return to working on my {subject} task.",
+        ),
+        "validation": ("Continue handling the {subject} matter.",),
+        "test": ("Go back to the {subject} issue that we paused.",),
+    }[split]
     rows = []
     for intent, (anchor_user, anchor_assistant, policy_question) in intent_frames.items():
         prior_state = {
@@ -721,6 +741,305 @@ def _resume_trajectory_rows(split: str) -> list[dict[str, Any]]:
                         trajectory_id=trajectory_id,
                     )
                 )
+        for prompt_index, template in enumerate(explicit_resume_templates):
+            trajectory_id = f"v5-resume-explicit|{split}|{intent}|{prompt_index}"
+            rows.append(
+                _make_row(
+                    current=template.format(subject=intent_subjects[intent]),
+                    history=history,
+                    prior_dialogue_state=prior_state,
+                    domain_label=1,
+                    intent=intent,
+                    relation_names=[
+                        "context_dependent",
+                        "resume_previous_service",
+                    ],
+                    example_kind="resume_previous_service",
+                    source="self-authored-router-v5-resume-trajectory",
+                    source_split=split,
+                    group_id=trajectory_id,
+                    trajectory_id=trajectory_id,
+                )
+            )
+    return rows
+
+
+def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
+    """Prevent prior state from overriding an explicit current-turn meaning."""
+
+    frames = {
+        "view_accounts": "Show my account balances.",
+        "view_cards": "Show my debit cards.",
+        "freeze_card": "Freeze my debit card.",
+        "replace_card": "Replace my debit card.",
+        "view_transactions": "Show my recent purchases.",
+        "dispute_transaction": "Dispute a purchase I did not make.",
+        "view_transfers": "Show my recent transfers.",
+        "cancel_transfer": "Cancel my pending transfer.",
+        "view_service_cases": "Show my support requests.",
+    }
+    detour_questions = {
+        "view_accounts": "What are the rules for interest on these accounts?",
+        "view_cards": "What protections apply to debit cards?",
+        "freeze_card": "What happens to pending payments after a card is frozen?",
+        "replace_card": "Is there a fee for a replacement card?",
+        "view_transactions": "How long do pending card purchases take to post?",
+        "dispute_transaction": "What is the policy for reviewing a purchase dispute?",
+        "view_transfers": "When does a scheduled transfer become final?",
+        "cancel_transfer": "When can a scheduled transfer still be cancelled?",
+        "view_service_cases": "How long are closed service cases retained?",
+    }
+    switch_prompts = {
+        "train": {
+            "view_accounts": (
+                "Actually, show my account balances instead.",
+                "Change direction and bring up my accounts.",
+                "I want to check my balances now, not continue that.",
+            ),
+            "view_cards": (
+                "Change of plan: list my debit cards.",
+                "Switch over and show the cards on my profile.",
+                "Put that aside because I need my card list.",
+            ),
+            "freeze_card": (
+                "Never mind that—freeze my card instead.",
+                "Stop the old task and lock my debit card.",
+                "This is a new request: block my card now.",
+            ),
+            "replace_card": (
+                "Switch tasks and replace my debit card.",
+                "Forget the earlier request and order me a new card.",
+                "I need a replacement debit card instead of that.",
+            ),
+            "view_transactions": (
+                "Instead, show my recent purchases.",
+                "Move to a different task and list my transactions.",
+                "Pause that; I want to review recent charges.",
+            ),
+            "dispute_transaction": (
+                "Actually, I need to dispute a purchase.",
+                "Change tasks because I want to challenge a charge.",
+                "Leave that and open a dispute for an unfamiliar purchase.",
+            ),
+            "view_transfers": (
+                "Leave that for now and show my transfers.",
+                "Switch topics and list my recent money transfers.",
+                "Pause the old request; bring up my transfer history.",
+            ),
+            "cancel_transfer": (
+                "Switch to cancelling my pending transfer.",
+                "Stop that task and cancel the transfer instead.",
+                "I changed my request: revoke my pending transfer.",
+            ),
+            "view_service_cases": (
+                "Instead, show my open support requests.",
+                "Move away from that and list my service cases.",
+                "Change tasks; I want to see my customer-service requests.",
+            ),
+        },
+        "validation": {
+            "view_accounts": ("Pause that and display my balances.",),
+            "view_cards": ("I want to see my cards now instead.",),
+            "freeze_card": ("Change tasks: lock my debit card now.",),
+            "replace_card": ("Leave this and order a replacement card.",),
+            "view_transactions": ("Move over to my latest transactions.",),
+            "dispute_transaction": ("Stop here; I need to challenge a purchase.",),
+            "view_transfers": ("Put this aside and list my transfers.",),
+            "cancel_transfer": ("Forget that for now and cancel my transfer.",),
+            "view_service_cases": ("Switch over to my customer-service cases.",),
+        },
+        "test": {
+            "view_accounts": ("Let's do something else: check my balances.",),
+            "view_cards": ("Actually take me to my card list.",),
+            "freeze_card": ("Drop the prior task and freeze my card.",),
+            "replace_card": ("I changed my mind; replace the debit card.",),
+            "view_transactions": ("Leave the old request and show my purchases.",),
+            "dispute_transaction": ("New request: dispute an unfamiliar charge.",),
+            "view_transfers": ("Set that aside and bring up my transfers.",),
+            "cancel_transfer": ("Do not continue that; cancel my pending transfer.",),
+            "view_service_cases": ("Put that on hold and show my support cases.",),
+        },
+    }[split]
+    ood_prompts = {
+        "train": (
+            "What is the weather tomorrow?",
+            "Write a Python sorting function.",
+            "Give me a pasta recipe.",
+            "Play some jazz music.",
+            "Set a timer for ten minutes.",
+            "Translate hello into Japanese.",
+        ),
+        "validation": (
+            "Will it rain near me this weekend?",
+            "Draft a JavaScript web scraper.",
+            "How long should I roast potatoes?",
+            "Queue my workout playlist.",
+            "Remind me to call the dentist.",
+            "Translate good evening into Italian.",
+        ),
+        "test": (
+            "Do I need an umbrella on Tuesday?",
+            "Explain how to write a Rust macro.",
+            "What ingredients go in vegetable soup?",
+            "Start the next song in my playlist.",
+            "Add milk to my shopping list.",
+            "How do you say thank you in Korean?",
+        ),
+    }[split]
+    policy_prompts = {
+        "train": (
+            "Also, what is the policy on replacement-card fees?",
+            "One more policy question: how are overdrafts handled?",
+            "Before we continue, how does savings interest work?",
+            "While that is paused, explain general mortgage eligibility rules.",
+            "What requirements usually apply when opening a checking account?",
+            "Before returning to my request, how does a card dispute review work?",
+            "What is the bank policy for reporting a stolen debit card?",
+            "Explain how replacement-card delivery estimates are determined.",
+            "I have a policy question about cancelling an electronic transfer.",
+            "What general protections apply to an unauthorized transaction?",
+            "First tell me how the bank handles suspected card fraud.",
+            "Can you explain the rules for mortgage applications?",
+            "What policy governs fees for account services?",
+        ),
+        "validation": (
+            "I have another policy question about card disputes.",
+            "First explain the account-opening requirements.",
+            "What does the bank say about suspected card fraud?",
+        ),
+        "test": (
+            "Can you answer another policy question about mortgages?",
+            "Before returning, explain replacement delivery policy.",
+            "What is the current overdraft policy?",
+        ),
+    }[split]
+    social_prompts = {
+        "train": ("Thanks for explaining that.", "That makes sense.", "Hello again."),
+        "validation": ("Appreciate the explanation.", "Understood, thanks.", "Good morning."),
+        "test": ("Got it, thank you.", "Okay, that is clear.", "Hope you are doing well."),
+    }[split]
+    orphan_resume_prompts = {
+        "train": (
+            "Let's continue the request from before.",
+            "Go back to the task we paused.",
+            "Resume the original issue.",
+        ),
+        "validation": (
+            "Pick up where we stopped earlier.",
+            "Return to my unfinished request.",
+            "Carry on with the prior task.",
+        ),
+        "test": (
+            "Continue the matter that was on hold.",
+            "Take me back to what we were doing.",
+            "Finish the earlier request now.",
+        ),
+    }[split]
+
+    rows = []
+    for active_intent, anchor_user in frames.items():
+        prior_state = {
+            "version": 1,
+            "pending_servicing": {
+                "intent": active_intent,
+                "anchor_user_message": anchor_user,
+                "anchor_assistant_message": "Which record should I use?",
+                "phase": "awaiting_user",
+            },
+            "knowledge_detour_active": True,
+        }
+        history = [
+            {"role": "user", "content": detour_questions[active_intent]},
+            {"role": "assistant", "content": "I can explain the applicable policy."},
+        ]
+        for target_intent, prompts in switch_prompts.items():
+            if target_intent == active_intent:
+                continue
+            for prompt_index, current in enumerate(prompts):
+                key = f"state-switch|{split}|{active_intent}|{target_intent}|{prompt_index}"
+                rows.append(
+                    _make_row(
+                        current=current,
+                        history=history,
+                        prior_dialogue_state=prior_state,
+                        domain_label=1,
+                        intent=target_intent,
+                        relation_names=["topic_shift"],
+                        example_kind="state_intent_switch",
+                        source="self-authored-router-v5-state-negatives",
+                        source_split=split,
+                        group_id=key,
+                        trajectory_id=key,
+                    )
+                )
+        for prompt_index, current in enumerate(ood_prompts):
+            key = f"state-ood|{split}|{active_intent}|{prompt_index}"
+            rows.append(
+                _make_row(
+                    current=current,
+                    history=history,
+                    prior_dialogue_state=prior_state,
+                    domain_label=0,
+                    intent=None,
+                    relation_names=["topic_shift"],
+                    example_kind="state_ood_detour",
+                    source="self-authored-router-v5-state-negatives",
+                    source_split=split,
+                    group_id=key,
+                    trajectory_id=key,
+                )
+            )
+        for prompt_index, current in enumerate(policy_prompts):
+            key = f"state-policy|{split}|{active_intent}|{prompt_index}"
+            rows.append(
+                _make_row(
+                    current=current,
+                    history=history,
+                    prior_dialogue_state=prior_state,
+                    domain_label=1,
+                    intent="policy_knowledge",
+                    relation_names=["context_dependent"],
+                    example_kind="state_policy_followup",
+                    source="self-authored-router-v5-state-negatives",
+                    source_split=split,
+                    group_id=key,
+                    trajectory_id=key,
+                )
+            )
+        for prompt_index, current in enumerate(social_prompts):
+            key = f"state-social|{split}|{active_intent}|{prompt_index}"
+            rows.append(
+                _make_row(
+                    current=current,
+                    history=history,
+                    prior_dialogue_state=prior_state,
+                    domain_label=1,
+                    intent="conversation",
+                    relation_names=[],
+                    example_kind="state_social_detour",
+                    source="self-authored-router-v5-state-negatives",
+                    source_split=split,
+                    group_id=key,
+                    trajectory_id=key,
+                )
+            )
+    for prompt_index, current in enumerate(orphan_resume_prompts):
+        key = f"orphan-resume|{split}|{prompt_index}"
+        rows.append(
+            _make_row(
+                current=current,
+                history=[],
+                prior_dialogue_state=None,
+                domain_label=1,
+                intent="conversation",
+                relation_names=[],
+                example_kind="state_orphan_resume",
+                source="self-authored-router-v5-state-negatives",
+                source_split=split,
+                group_id=key,
+                trajectory_id=key,
+            )
+        )
     return rows
 
 

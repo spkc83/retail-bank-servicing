@@ -9,7 +9,7 @@ MODEL_ID = os.environ.get(
 )
 MODEL_REVISION = os.environ.get(
     "RETAIL_BANK_MODEL_REVISION",
-    "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+    "1799d068906c0da2a8739668857b096d20fed549",
 )
 SKIP_MODEL_LOAD = os.environ.get("POC_SKIP_MODEL_LOAD") == "1"
 

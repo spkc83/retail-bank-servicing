@@ -27,6 +27,7 @@ INTERNAL_LANGUAGE_PATTERNS = {
     "tool": re.compile(r"\btool(?: call| result|ing|s)?\b", re.IGNORECASE),
 }
 POLICY_CITATION = re.compile(r"\[Policy:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+FACTUAL_NUMBER = re.compile(r"(?<![\w.])\$?\d[\d,]*(?:\.\d+)?%?(?![\w.])")
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,21 @@ def validate_policy_answer(
         errors.append(f"policy answer cites unreturned chunks: {sorted(invented)}")
     if citations and not citations & allowed:
         errors.append("policy answer does not cite a returned chunk")
+    evidence_text = " ".join(
+        str(match.get(field, ""))
+        for match in matches
+        for field in ("title", "text", "effective_from", "effective_to")
+    ).casefold()
+    answer_without_citations = POLICY_CITATION.sub("", answer)
+    unsupported_numbers = {
+        value
+        for value in FACTUAL_NUMBER.findall(answer_without_citations)
+        if value.casefold() not in evidence_text
+    }
+    if unsupported_numbers:
+        errors.append(
+            f"policy answer contains unsupported numeric claims: {sorted(unsupported_numbers)}"
+        )
     return GroundingValidation(not errors, tuple(errors))
 
 

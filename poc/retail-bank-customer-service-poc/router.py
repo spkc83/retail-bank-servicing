@@ -19,7 +19,7 @@ ROUTER_REPO_ID = os.environ.get(
 )
 ROUTER_REVISION = os.environ.get(
     "RETAIL_BANK_ROUTER_REVISION",
-    "bf6abca1c3982e35b23239de13ba9fcfed3f7920",
+    "4c5bc613409e49a38bb29463adbd0755e9382ec9",
 )
 
 

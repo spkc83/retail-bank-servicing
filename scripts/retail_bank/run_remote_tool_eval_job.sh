@@ -9,8 +9,8 @@ fi
 source_commit="$1"
 model_revision="$2"
 dataset_revision="$3"
-model_repo="${MODEL_REPO:-spkc83/retail-bank-agent-9b}"
-dataset_repo="${DATASET_REPO:-spkc83/retail-bank-agent-sft}"
+model_repo="${MODEL_REPO:-spkc83/retail-bank-servicing-agent-9b}"
+dataset_repo="${DATASET_REPO:-spkc83/retail-bank-servicing-alignment-sft}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_tool_eval.py"
 
 for revision_name in source_commit model_revision dataset_revision; do
@@ -31,7 +31,7 @@ hf jobs uv run \
   --timeout 2h \
   --secrets HF_TOKEN \
   --volume hf://buckets/spkc83/jobs-artifacts:/data \
-  --label project=retail-bank-agent-v3-eval \
+  --label project=retail-bank-agent-v5-eval \
   --label model="${model_revision:0:8}" \
   "$script_url" \
   --source-commit "$source_commit" \

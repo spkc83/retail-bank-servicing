@@ -166,6 +166,37 @@ def test_policy_answer_requires_returned_citation_and_rejects_invented_citations
     assert valid.valid
 
 
+def test_policy_answer_rejects_unsupported_numeric_claim() -> None:
+    validation = validate_policy_answer(
+        "A replacement always arrives within 3 days. [Policy: card.replace]",
+        (
+            {
+                "chunk_id": "card.replace",
+                "title": "Replacement cards",
+                "text": "Delivery estimates are provided when the request is submitted.",
+            },
+        ),
+    )
+
+    assert not validation.valid
+    assert "unsupported numeric claims" in " ".join(validation.errors)
+
+
+def test_policy_answer_accepts_number_present_in_evidence() -> None:
+    validation = validate_policy_answer(
+        "You must generally be at least 18 to apply. [Policy: mortgage.age]",
+        (
+            {
+                "chunk_id": "mortgage.age",
+                "title": "Mortgage eligibility",
+                "text": "Applicants must generally be at least 18 years old.",
+            },
+        ),
+    )
+
+    assert validation.valid
+
+
 def test_customer_experience_repair_receives_authoritative_evidence() -> None:
     repair = build_customer_experience_repair_messages(
         user_message="Can I apply for a mortgage?",

@@ -198,6 +198,33 @@ def test_resume_examples_use_pre_turn_state_and_remain_in_one_split() -> None:
     assert report["leakage"]["trajectory_split_leak_count"] == 0
 
 
+def test_state_conditioned_negatives_cover_switch_ood_policy_social_and_orphan() -> None:
+    splits, _report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    resume_index = RELATION_LABELS.index("resume_previous_service")
+    required_kinds = {
+        "state_intent_switch",
+        "state_ood_detour",
+        "state_policy_followup",
+        "state_social_detour",
+        "state_orphan_resume",
+    }
+
+    for rows in splits.values():
+        selected = [row for row in rows if row["example_kind"] in required_kinds]
+        assert {row["example_kind"] for row in selected} == required_kinds
+        assert all(row["relation_labels"][resume_index] == 0 for row in selected)
+        assert any(
+            row["example_kind"] == "state_intent_switch" and row["intent"] == "freeze_card"
+            for row in selected
+        )
+        assert any(
+            row["example_kind"] == "state_ood_detour" and row["domain_label"] == 0
+            for row in selected
+        )
+
+
 def test_explicit_trajectory_cannot_cross_splits() -> None:
     records = sft_records_by_split()
     records["train"][0]["metadata"]["trajectory_id"] = "shared-trajectory"

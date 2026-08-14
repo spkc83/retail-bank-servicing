@@ -9,7 +9,7 @@
 #   "transformers==5.13.0",
 # ]
 # ///
-"""Bootstrap pinned banking-v3 frozen tool evaluation inside a Hugging Face GPU Job."""
+"""Bootstrap pinned banking V5 frozen tool evaluation inside a Hugging Face GPU Job."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ import urllib.request
 from pathlib import Path
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
-MODEL_REPO = "spkc83/retail-bank-agent-9b"
-DATASET_REPO = "spkc83/retail-bank-agent-sft"
+MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 
 
 def parse_args() -> argparse.Namespace:

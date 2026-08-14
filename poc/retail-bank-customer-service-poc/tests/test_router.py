@@ -8,7 +8,7 @@ from router import ROUTER_REPO_ID, ROUTER_REVISION, LearnedBankingRouter
 
 def test_router_defaults_pin_the_published_v5_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "bf6abca1c3982e35b23239de13ba9fcfed3f7920"
+    assert ROUTER_REVISION == "4c5bc613409e49a38bb29463adbd0755e9382ec9"
 
 
 class FakeTokenizer:
@@ -101,9 +101,7 @@ def test_router_combines_domain_and_relation_heads(
     result = router.classify("hello", [])
 
     assert result["route"] == expected_route
-    assert result["ood_probability"] == pytest.approx(
-        1 - result["banking_probability"]
-    )
+    assert result["ood_probability"] == pytest.approx(1 - result["banking_probability"])
     assert result["relation_probabilities"]
     if expected_route == "in_domain":
         assert result["capability"] == "service_cases"
@@ -130,9 +128,7 @@ def test_router_always_cross_encodes_recent_visible_history() -> None:
 
     assert result["route"] == "in_domain"
     assert result["context_applied"] is True
-    assert tokenizer.rendered.startswith(
-        "[CURRENT_USER]\nWhen was that created?"
-    )
+    assert tokenizer.rendered.startswith("[CURRENT_USER]\nWhen was that created?")
     assert "[PREVIOUS_ASSISTANT]\nYou have a closed mailing-address" in tokenizer.rendered
     assert "[PREVIOUS_USER]\nShow my service cases." in tokenizer.rendered
 
@@ -157,6 +153,4 @@ def test_only_three_recent_complete_exchanges_are_rendered() -> None:
     assert "user-1" not in tokenizer.rendered
     assert "user-2" in tokenizer.rendered
     assert "user-4" in tokenizer.rendered
-    assert tokenizer.rendered.index("assistant-4") < tokenizer.rendered.index(
-        "assistant-3"
-    )
+    assert tokenizer.rendered.index("assistant-4") < tokenizer.rendered.index("assistant-3")

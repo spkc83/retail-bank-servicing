@@ -59,7 +59,14 @@ INTENT_LOSS_WEIGHT = 0.7
 RELATION_LOSS_WEIGHT = 0.6
 MAX_RELATION_POSITIVE_WEIGHT = 12.0
 TARGETED_ROW_WEIGHT = 6.0
+TARGETED_SOURCES = frozenset(
+    {
+        "self-authored-router-v5-use-case-alignment",
+        "self-authored-router-v5-state-negatives",
+    }
+)
 RELATION_F1_CALIBRATION_TOLERANCE = 0.005
+RELATION_THRESHOLD_CEILINGS = {"agent_repair": 0.85}
 IN_DOMAIN_THRESHOLD = 0.50
 
 
@@ -253,6 +260,11 @@ def calibrate_relation_thresholds(
                 )
             ]
             thresholds[relation_name] = min(candidate[2] for candidate in optimal)
+        if relation_name in RELATION_THRESHOLD_CEILINGS:
+            thresholds[relation_name] = min(
+                thresholds[relation_name],
+                RELATION_THRESHOLD_CEILINGS[relation_name],
+            )
     return thresholds
 
 
@@ -382,6 +394,70 @@ def evaluate_predictions(
         len(resume_indices),
     )
     metrics["trajectory_resume_rows"] = len(resume_indices)
+    state_negative_kinds = {
+        "state_intent_switch",
+        "state_ood_detour",
+        "state_policy_followup",
+        "state_social_detour",
+        "state_orphan_resume",
+    }
+    state_negative_indices = [
+        index for index, kind in enumerate(example_kinds) if kind in state_negative_kinds
+    ]
+    state_negative_intent_indices = [
+        index for index in state_negative_indices if intent_labels[index] >= 0
+    ]
+    metrics["trajectory_state_route_error_rate"] = _safe_ratio(
+        sum(accepted[index] != bool(domain_labels[index]) for index in state_negative_indices),
+        len(state_negative_indices),
+    )
+    metrics["trajectory_state_intent_error_rate"] = _safe_ratio(
+        sum(
+            intent_predictions[index] != intent_labels[index]
+            for index in state_negative_intent_indices
+        ),
+        len(state_negative_intent_indices),
+    )
+    metrics["trajectory_non_resume_false_positive_rate"] = _safe_ratio(
+        sum(
+            relation_probabilities[index][resume_relation_index]
+            >= relation_thresholds["resume_previous_service"]
+            for index in state_negative_indices
+        ),
+        len(state_negative_indices),
+    )
+    metrics["trajectory_state_negative_rows"] = len(state_negative_indices)
+    metrics["trajectory_state_metrics_by_kind"] = {
+        kind: {
+            "rows": len(kind_indices),
+            "route_error_rate": _safe_ratio(
+                sum(accepted[index] != bool(domain_labels[index]) for index in kind_indices),
+                len(kind_indices),
+            ),
+            "intent_error_rate": _safe_ratio(
+                sum(
+                    intent_predictions[index] != intent_labels[index]
+                    for index in kind_indices
+                    if intent_labels[index] >= 0
+                ),
+                sum(intent_labels[index] >= 0 for index in kind_indices),
+            ),
+            "resume_false_positive_rate": _safe_ratio(
+                sum(
+                    relation_probabilities[index][resume_relation_index]
+                    >= relation_thresholds["resume_previous_service"]
+                    for index in kind_indices
+                ),
+                len(kind_indices),
+            ),
+        }
+        for kind in sorted(state_negative_kinds)
+        if (
+            kind_indices := [
+                index for index in state_negative_indices if example_kinds[index] == kind
+            ]
+        )
+    }
     heldout_indices = [
         index for index, kind in enumerate(example_kinds) if kind == "heldout_screenshot_regression"
     ]
@@ -460,6 +536,9 @@ def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
         ("topic_shift_ood_false_accept_rate", "<=", 0.05),
         ("trajectory_resume_intent_error_rate", "<=", 0.00),
         ("trajectory_resume_relation_error_rate", "<=", 0.00),
+        ("trajectory_state_route_error_rate", "<=", 0.01),
+        ("trajectory_state_intent_error_rate", "<=", 0.05),
+        ("trajectory_non_resume_false_positive_rate", "<=", 0.00),
         ("heldout_regression_route_error_rate", "<=", 0.00),
         ("heldout_regression_intent_error_rate", "<=", 0.00),
         ("heldout_regression_relation_error_rate", "<=", 0.00),
@@ -626,6 +705,12 @@ def main() -> int:
                 - float(validation_metrics["in_domain_false_refusal_rate"])
                 + 1.0
                 - float(validation_metrics["ood_false_accept_rate"])
+                + 1.0
+                - float(validation_metrics["trajectory_state_route_error_rate"])
+                + 1.0
+                - float(validation_metrics["trajectory_state_intent_error_rate"])
+                + 1.0
+                - float(validation_metrics["trajectory_non_resume_false_positive_rate"])
             )
             epoch_result = {
                 "epoch": epoch,
@@ -682,12 +767,6 @@ def main() -> int:
             "release_gate_failures": failures,
             "release_eligible": not failures,
         }
-        if failures:
-            print(
-                json.dumps({"stage": "release_gate_failed", **metrics}, indent=2),
-                flush=True,
-            )
-            return 2
         save_artifact(
             model=model,
             tokenizer=tokenizer,
@@ -697,6 +776,12 @@ def main() -> int:
             max_length=args.max_length,
             data_revision=args.data_revision,
         )
+        if failures:
+            print(
+                json.dumps({"stage": "release_gate_failed", **metrics}, indent=2),
+                flush=True,
+            )
+            return 2
         if args.publish:
             publish_artifact(
                 output=args.output_dir,
@@ -767,12 +852,7 @@ def make_collate(tokenizer: Any, *, max_length: int) -> Any:
                 dtype=torch.float32,
             ),
             "row_weights": torch.tensor(
-                [
-                    TARGETED_ROW_WEIGHT
-                    if row["source"] == "self-authored-router-v5-use-case-alignment"
-                    else 1.0
-                    for row in rows
-                ],
+                [TARGETED_ROW_WEIGHT if row["source"] in TARGETED_SOURCES else 1.0 for row in rows],
                 dtype=torch.float32,
             ),
             "example_kinds": [str(row["example_kind"]) for row in rows],

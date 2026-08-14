@@ -1,12 +1,12 @@
 {
   "clinc_member_sha256": "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f",
   "contract": "banking-conversation-router-v5-source-lock",
-  "created_at": "2026-08-14T18:19:47.486077+00:00",
+  "created_at": "2026-08-14T19:14:36.150869+00:00",
   "format_version": 2,
   "prepared_split_sha256": {
-    "test": "48f33ab780e86795e9135ef14515be4b053ce8bf05c2c76e3b3f1d750828e81f",
-    "train": "7713e973c3ba3a732bcb8ed9ca3c4e8837b025273ab9dc53e3f3770d83327605",
-    "validation": "4b16196780449c304727af803f04e50b53132d33e0a53dca4b6f28173320ef25"
+    "test": "dffeb9712b97486770a59197b690cda05fa2cedbc6bb302174407dac4ae5bfb8",
+    "train": "3b003aeb80cd1547216c3964dc87d8d15808916f76a10e45a6cfc2d14fa646c7",
+    "validation": "8741662312af4884e73ca8ddd994f83ba333222e7ce2527315f07b2beff14be5"
   },
   "sources": {
     "UCI/clinc150": {

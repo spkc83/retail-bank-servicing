@@ -5,8 +5,8 @@ Governed cross-encoder data for a history-aware OOD, fine-intent, and relation c
 Rows include only prior visible user/assistant messages and the current user message.
 They exclude current-turn tool plans, tool results, expected outputs, and final assistant responses.
 
-- Train rows: 15158
-- Validation rows: 3152
-- Test rows: 4280
+- Train rows: 15593
+- Validation rows: 3344
+- Test rows: 4472
 - Intent labels: view_accounts, view_cards, freeze_card, replace_card, view_transactions, dispute_transaction, view_transfers, cancel_transfer, view_service_cases, policy_knowledge, conversation, other_banking
 - Relation labels: context_dependent, agent_repair, topic_shift, clarification_answer, resume_previous_service

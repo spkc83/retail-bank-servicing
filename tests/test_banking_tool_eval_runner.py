@@ -608,8 +608,8 @@ def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:
 
     assert "# /// script" in source
     assert '"transformers==5.13.0"' in source
-    assert job.MODEL_REPO == "spkc83/retail-bank-agent-9b"
-    assert job.DATASET_REPO == "spkc83/retail-bank-agent-sft"
+    assert job.MODEL_REPO == "spkc83/retail-bank-servicing-agent-9b"
+    assert job.DATASET_REPO == "spkc83/retail-bank-servicing-alignment-sft"
     assert "cloud_generate_tool_eval.py" in source
     assert 'parser.add_argument("--model-repo", default=MODEL_REPO)' in source
     assert 'parser.add_argument("--dataset-repo", default=DATASET_REPO)' in source
@@ -632,7 +632,7 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert "hf_job_tool_eval.py" in source
     assert "--model-revision" in source
     assert "--dataset-revision" in source
-    assert 'model_repo="${MODEL_REPO:-spkc83/retail-bank-agent-9b}"' in source
-    assert 'dataset_repo="${DATASET_REPO:-spkc83/retail-bank-agent-sft}"' in source
+    assert 'model_repo="${MODEL_REPO:-spkc83/retail-bank-servicing-agent-9b}"' in source
+    assert 'dataset_repo="${DATASET_REPO:-spkc83/retail-bank-servicing-alignment-sft}"' in source
     assert '--model-repo "$model_repo"' in source
     assert '--dataset-repo "$dataset_repo"' in source

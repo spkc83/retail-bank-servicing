@@ -15,7 +15,7 @@ def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract
     runtime = importlib.import_module("zero_gpu_runtime")
 
     assert runtime.MODEL_ID == "spkc83/retail-bank-servicing-agent-9b"
-    assert runtime.MODEL_REVISION == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
+    assert runtime.MODEL_REVISION == "1799d068906c0da2a8739668857b096d20fed549"
     assert not hasattr(runtime, "BANK")
     assert not hasattr(runtime.generate_text, "_zero_gpu_config")
     assert runtime.runtime_metadata() == {
@@ -51,7 +51,10 @@ def test_token_count_uses_input_ids_from_batch_encoding_shape(
 
     cast(Any, runtime).tokenizer = FakeTokenizer()
 
-    assert runtime.count_tokens(
-        [{"role": "system", "content": "system"}],
-        [],
-    ) == 4
+    assert (
+        runtime.count_tokens(
+            [{"role": "system", "content": "system"}],
+            [],
+        )
+        == 4
+    )
