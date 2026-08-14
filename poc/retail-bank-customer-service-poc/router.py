@@ -19,7 +19,7 @@ ROUTER_REPO_ID = os.environ.get(
 )
 ROUTER_REVISION = os.environ.get(
     "RETAIL_BANK_ROUTER_REVISION",
-    "4c5bc613409e49a38bb29463adbd0755e9382ec9",
+    "c8f154266612e79afe20af8abef25761fa56d589",
 )
 
 
@@ -135,9 +135,7 @@ class LearnedBankingRouter:
             "router_manifest_sha256": manifest_sha256,
             "router_revision": f"local-sha256:{manifest_sha256}",
             "router_config_sha256": _sha256(root / "router_config.json"),
-            "router_data_manifest_sha256": str(
-                config.get("data_manifest_sha256", "unavailable")
-            ),
+            "router_data_manifest_sha256": str(config.get("data_manifest_sha256", "unavailable")),
             **dict(artifact_identity or {}),
         }
         tokenizer = AutoTokenizer.from_pretrained(
@@ -272,11 +270,7 @@ class LearnedBankingRouter:
                 strict=True,
             )
         ]
-        intent = (
-            cast(str, intent_candidates[0]["intent"])
-            if route == "in_domain"
-            else None
-        )
+        intent = cast(str, intent_candidates[0]["intent"]) if route == "in_domain" else None
         intent_confidence = float(candidate_probabilities[0])
         capability_candidates = [
             {"capability": item["intent"], "probability": item["probability"]}

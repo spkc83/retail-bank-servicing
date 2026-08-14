@@ -32,9 +32,7 @@ LOCAL_AUTH_DEFAULT_JSON = json.dumps(
     }
 )
 DEFAULT_LOCAL_ROUTER_ARTIFACT = (
-    Path(__file__).resolve().parents[2]
-    / "artifacts"
-    / "banking-conversation-router-v5-strict-gate-candidate2"
+    Path(__file__).resolve().parents[2] / "artifacts" / "banking-conversation-router-v5"
 )
 
 PRESETS = (
@@ -82,11 +80,7 @@ def local_auth_credentials() -> list[tuple[str, str]]:
 
 def resolve_local_router_artifact() -> Path | None:
     configured = os.environ.get("LOCAL_ROUTER_ARTIFACT_DIR")
-    candidate = (
-        Path(configured).expanduser()
-        if configured
-        else DEFAULT_LOCAL_ROUTER_ARTIFACT
-    )
+    candidate = Path(configured).expanduser() if configured else DEFAULT_LOCAL_ROUTER_ARTIFACT
     return candidate if (candidate / "manifest.json").is_file() else None
 
 

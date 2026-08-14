@@ -8,7 +8,7 @@ from router import ROUTER_REPO_ID, ROUTER_REVISION, LearnedBankingRouter
 
 def test_router_defaults_pin_the_published_v5_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "4c5bc613409e49a38bb29463adbd0755e9382ec9"
+    assert ROUTER_REVISION == "c8f154266612e79afe20af8abef25761fa56d589"
 
 
 class FakeTokenizer:
