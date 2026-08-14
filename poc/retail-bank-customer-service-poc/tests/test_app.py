@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +36,16 @@ def route(
     *,
     banking_probability: float = 0.99,
     capability: str = "transfers",
+    intent: str | None = None,
+    relations: tuple[str, ...] = (),
 ) -> dict[str, object]:
+    resolved_intent = intent or {
+        "accounts": "view_accounts",
+        "cards": "view_cards",
+        "transfers": "view_transfers",
+        "service_cases": "view_service_cases",
+        "conversation": "conversation",
+    }.get(capability, capability)
     return {
         "route": route_name,
         "banking_probability": banking_probability,
@@ -48,12 +58,26 @@ def route(
             {"capability": "accounts", "probability": 0.1},
             {"capability": "cards", "probability": 0.05},
         ],
+        "intent": resolved_intent,
+        "intent_confidence": 0.8,
+        "intent_candidates": [
+            {"intent": resolved_intent, "probability": 0.8},
+        ],
+        "lane": (
+            "policy"
+            if resolved_intent == "policy_knowledge"
+            else "conversation"
+            if resolved_intent == "conversation"
+            else "servicing"
+        ),
         "relation_probabilities": {
             "context_dependent": 0.1,
             "agent_repair": 0.1,
             "topic_shift": 0.1,
             "clarification_answer": 0.1,
+            "resume_previous_service": (0.9 if "resume_previous_service" in relations else 0.1),
         },
+        "active_relations": list(relations),
         "ood_banking_threshold": 0.2,
         "in_domain_threshold": 0.5,
         "relation_rescue_threshold": 0.5,
@@ -63,8 +87,7 @@ def route(
 
 def test_app_constructs_expected_authenticated_api_surface(app_module) -> None:
     api_names = {
-        dependency.get("api_name")
-        for dependency in app_module.demo.config["dependencies"]
+        dependency.get("api_name") for dependency in app_module.demo.config["dependencies"]
     }
 
     assert {
@@ -80,6 +103,47 @@ def test_app_constructs_expected_authenticated_api_surface(app_module) -> None:
     }
     assert "alex-test-password" in app_module.AUTH_MESSAGE
     assert "maya-test-password" in app_module.AUTH_MESSAGE
+
+
+def test_gradio_presentation_uses_shared_harborlight_brand(app_module) -> None:
+    source = (Path(app_module.__file__)).read_text(encoding="utf-8")
+
+    assert app_module.BANK_NAME == "Harborlight Bank"
+    assert app_module.ASSISTANT_NAME == "Harbor"
+    assert app_module.demo.title == "Harbor | Harborlight Bank"
+    assert "Retail Bank Customer Service POC" not in source
+    assert "Talk naturally to the 9B synthetic bank agent" not in source
+    assert "Ask the signed-in synthetic bank agent" not in source
+    assert "Synthetic backend state" not in source
+    assert 'gr.Accordion("Technical details", open=False)' in source
+    assert "#082f49" in app_module.CSS
+    assert "#0f766e" in app_module.CSS
+
+
+def test_snapshot_uses_customer_friendly_product_labels(app_module) -> None:
+    snapshot = app_module.BANK.snapshot("alex.demo", "brand-test")
+
+    rendered = app_module.render_snapshot(snapshot)
+
+    assert "Your products" in rendered
+    assert "Checking account" in rendered
+    assert "Savings account" in rendered
+    assert "Debit cards" in rendered
+    assert "Synthetic backend state" not in rendered
+
+
+def test_response_provenance_uses_only_recorded_path_and_model_passes(app_module) -> None:
+    passes = (
+        SimpleNamespace(label="base"),
+        SimpleNamespace(label="reflection"),
+    )
+
+    assert app_module.response_provenance("base_tool_repaired", passes) == (
+        "Response path: base tool repaired · Recorded model passes: 2 (base, reflection)"
+    )
+    assert app_module.response_provenance("OOD stock response", ()) == (
+        "Response path: OOD stock response · Recorded model passes: 0"
+    )
 
 
 def test_chat_turn_is_a_single_direct_zero_gpu_boundary(app_module) -> None:
@@ -137,7 +201,7 @@ def test_greeting_and_uncertain_turns_are_answered_by_9b(
         lambda *_args: "Hey! How can I help with your banking today?",
     )
 
-    result = app_module.run_model_turn("yo, sup ?", [], [], request())
+    result = app_module.run_model_turn("yo, sup ?", [], [], {}, request())
 
     assert result[1] == result[2]
     assert result[1][-1]["role"] == "assistant"
@@ -160,9 +224,10 @@ def test_high_confidence_ood_uses_stock_response_inside_registered_gpu_turn(
         ),
     )
 
-    result = app_module.run_model_turn("Write a Python web scraper.", [], [], request())
+    result = app_module.run_model_turn("Write a Python web scraper.", [], [], {}, request())
 
-    assert "synthetic retail-banking" in result[1][-1]["content"]
+    assert "Harborlight Bank" in result[1][-1]["content"]
+    assert "synthetic" not in result[1][-1]["content"].casefold()
     assert result[1] == result[2]
     assert "out_of_domain" in result[5]
 
@@ -180,7 +245,7 @@ def test_classifier_failure_is_visible_and_blocks_9b(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FailingRouter:
-        def classify(self, *_args):
+        def classify(self, *_args, **_kwargs):
             raise RuntimeError("classifier unavailable")
 
     monkeypatch.setattr(app_module, "router", FailingRouter())
@@ -194,6 +259,7 @@ def test_classifier_failure_is_visible_and_blocks_9b(
         "Show my balances.",
         [],
         [],
+        {},
         request(),
     )
 
@@ -225,6 +291,7 @@ def test_model_selects_transfer_tool_and_receives_full_tool_history(
         "What transfers are there on my account?",
         [],
         [],
+        {},
         request(),
     )
 
@@ -256,6 +323,7 @@ def test_direct_answer_is_labeled_with_per_pass_provenance(
         "How does savings interest work?",
         [],
         [],
+        {},
         request(),
     )
 
@@ -280,13 +348,14 @@ def test_gpu_failure_never_generates_cpu_servicing_answer(
     result = app_module.fail_model_turn(
         "What transfers are there on my account?",
         [],
+        {},
         request(),
     )
 
     response = result[1][-1]["content"]
     assert response == app_module.MODEL_FAILURE_RESPONSE
     assert "River Consulting" not in response
-    assert "No CPU-generated banking answer was substituted" in response
+    assert "try again" in response.casefold()
     assert result[1] == result[2]
     assert [item["role"] for item in result[2]] == ["user", "assistant"]
     assert "could not allocate" in result[4].lower()
@@ -310,7 +379,7 @@ def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics
         lambda *_args: route(capability="cards"),
     )
 
-    result = app_module.run_model_turn("Freeze card 4821.", [], [], request())
+    result = app_module.run_model_turn("Freeze card 4821.", [], [], {}, request())
 
     assert [item["role"] for item in result[2]] == [
         "user",
@@ -331,7 +400,7 @@ def test_credential_like_text_reaches_router_and_model(
     routed: list[str] = []
     generated: list[str] = []
 
-    def record_route(message, _history):
+    def record_route(message, _history, _dialogue_state):
         routed.append(message)
         return route()
 
@@ -351,7 +420,7 @@ def test_credential_like_text_reaches_router_and_model(
         record_generation,
     )
 
-    result = app_module.run_model_turn("My PIN is 1234", [], [], request())
+    result = app_module.run_model_turn("My PIN is 1234", [], [], {}, request())
 
     assert routed == ["My PIN is 1234"]
     assert generated == ["My PIN is 1234"]
@@ -366,4 +435,65 @@ def test_reset_clears_visible_and_canonical_history(
 
     assert result[0] == []
     assert result[1] == []
-    assert len(result) == 8
+    assert len(result) == 9
+    assert result[-1] == app_module.DialogueState().as_dict()
+
+
+def test_policy_detour_uses_grounded_granite_and_resumes_pending_service(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated: list[tuple[list[dict[str, object]], object]] = []
+    outputs = iter(
+        (
+            "Which transaction would you like to dispute?",
+            (
+                "Card disputes are reviewed after submission and may require "
+                "additional information. [Policy: card.dispute.us.v1]"
+            ),
+            "Certainly. Which purchase should we continue with?",
+        )
+    )
+
+    def classify(message, *_args):
+        if "policy" in message.casefold():
+            return route(intent="policy_knowledge")
+        if "continue" in message.casefold():
+            return route(
+                capability="conversation",
+                intent="conversation",
+                relations=("resume_previous_service",),
+            )
+        return route(intent="dispute_transaction")
+
+    def generate(messages, tools, _max_new_tokens):
+        generated.append((messages, tools))
+        return next(outputs)
+
+    monkeypatch.setattr(app_module, "route_query", classify)
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", generate)
+
+    first = app_module.run_model_turn("I need to dispute a purchase.", [], [], {}, request())
+    detour = app_module.run_model_turn(
+        "What is the card dispute policy?",
+        first[1],
+        first[2],
+        first[-1],
+        request(),
+    )
+    resumed = app_module.run_model_turn(
+        "Let's continue with that.",
+        detour[1],
+        detour[2],
+        detour[-1],
+        request(),
+    )
+
+    assert detour[1][-1]["content"].endswith("[Policy: card.dispute.us.v1]")
+    assert "card.dispute.us.v1" in detour[5]
+    assert generated[1][1] is None
+    assert detour[-1]["knowledge_detour_active"] is True
+    assert resumed[-1]["knowledge_detour_active"] is False
+    assert resumed[-1]["pending_servicing"]["intent"] == "dispute_transaction"
+    assert "I need to dispute a purchase." in str(generated[2][0])

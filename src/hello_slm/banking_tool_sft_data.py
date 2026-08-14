@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -17,8 +18,8 @@ from hello_slm.config import canonical_json_bytes, file_sha256
 BANKING_TOOL_SFT_CONTRACT = "banking-tool-sft/v1"
 BANKING_TOOL_SFT_MANIFEST_CONTRACT = "banking-tool-sft-manifest"
 CREATED_AT = "2026-07-29T00:00:00Z"
-GENERATOR_VERSION = "banking-tool-sft/v1.3-servicing-quality"
-DEFAULT_OUTPUT_DIR = Path("data/banking-v3-tool-sft")
+GENERATOR_VERSION = "banking-tool-sft/v1.4-customer-experience"
+DEFAULT_OUTPUT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
 SPLITS = ("train", "validation", "test")
 ALLOWED_ARGS = {
@@ -41,8 +42,8 @@ READ_TOOLS = {
 }
 WRITE_TOOLS = set(ALLOWED_ARGS) - READ_TOOLS
 SYSTEM_PROMPT = (
-    "You are the conversational customer-service agent for a fictional retail-bank "
-    "demonstration. The customer is already authenticated. Use the supplied tools for "
+    "You are Harbor, the conversational customer-service assistant for Harborlight "
+    "Bank. The customer is already authenticated. Use the supplied account services for "
     "customer-specific banking records or actions, use tool results for final answers, "
     "call dependent tools one at a time so each later call can use the earlier result, "
     "and never ask for account numbers, customer IDs, passwords, PINs, or private IDs."
@@ -192,14 +193,110 @@ RECIPIENT_TYPES = (
     "Utilities",
     "Catering",
 )
-REALIZER_FINAL_PREFIXES = ("",)
+REALIZER_FINAL_PREFIXES = (
+    "",
+    "Here’s the requested update:",
+    "I reviewed the relevant details.",
+    "For clarity,",
+    "The current information shows this:",
+    "Here is the concise result:",
+    "I checked the available information.",
+    "This is the current result:",
+    "I found the following details:",
+    "The account information supports this answer:",
+    "Here’s what applies to your request:",
+    "I can confirm the following:",
+    "The relevant banking details are:",
+    "Your requested summary is below:",
+    "I reviewed this carefully.",
+    "The available record shows this:",
+)
+REALIZER_FINAL_CLOSERS = (
+    "",
+    "I can help with the next banking step.",
+    "This reflects the information available in this session.",
+    "I’ve kept the result focused on your request.",
+    "You can use this summary to decide what to do next.",
+    "Let me know if you need another related detail.",
+    "That covers the banking request you made.",
+    "I can also explain any item in this result.",
+)
 FAQ_REQUIRED_MARKERS = {
     "faq-overdraft-v1": ("overdraft",),
-    "faq-mortgage-opening-v1": ("mortgage", "cannot open"),
-    "faq-mortgage-age-v1": ("mortgage", "18", "cannot determine"),
-    "faq-deposit-opening-v1": ("account", "cannot open"),
+    "faq-mortgage-opening-v1": ("mortgage", "approved mortgage channel"),
+    "faq-mortgage-age-v1": ("mortgage", "18", "eligibility"),
+    "faq-deposit-opening-v1": ("account", "identity verification"),
     "faq-savings-interest-v1": ("interest",),
 }
+POLICY_CHUNKS = {
+    "faq-overdraft-v1": {
+        "chunk_id": "deposit.overdraft.fees.us.v1",
+        "title": "Overdraft fee basics",
+        "text": (
+            "An overdraft may occur when a transaction exceeds the available balance. "
+            "Whether a fee applies depends on the account disclosures and settings."
+        ),
+    },
+    "faq-mortgage-opening-v1": {
+        "chunk_id": "mortgage.application.overview.us.v1",
+        "title": "Mortgage application overview",
+        "text": (
+            "Harborlight Bank can explain mortgage products and application steps in chat, "
+            "but a mortgage application must be started through an approved mortgage channel."
+        ),
+    },
+    "faq-mortgage-age-v1": {
+        "chunk_id": "mortgage.eligibility.age.us.v1",
+        "title": "Mortgage applicant age",
+        "text": (
+            "A mortgage applicant must be a legal adult, generally at least 18 in the "
+            "United States. Harborlight Bank cannot determine eligibility from age alone."
+        ),
+    },
+    "faq-deposit-opening-v1": {
+        "chunk_id": "deposit.account.opening.us.v1",
+        "title": "Deposit account opening",
+        "text": (
+            "Opening a checking or savings account requires selecting a product, reviewing "
+            "disclosures, completing identity verification, and providing opening funds "
+            "when required."
+        ),
+    },
+    "faq-savings-interest-v1": {
+        "chunk_id": "deposit.savings.interest.us.v1",
+        "title": "Savings interest",
+        "text": (
+            "Savings interest uses the account balance and disclosed annual percentage yield. "
+            "The account disclosure states the compounding method and crediting schedule."
+        ),
+    },
+}
+POC_PRESET_KEYS = frozenset(
+    normalized
+    for normalized in (
+        "hello how are you",
+        "yo sup",
+        "show my account balances",
+        "what happened with the money i sent recently",
+        "show my five most recent transactions",
+        "what is the status of my debit card",
+        "my card was stolen freeze it",
+        "please replace my debit card",
+        "i did not make the north harbor market purchase dispute it",
+        "cancel the pending transfer to river consulting",
+        "when was my mailing address changed",
+        "can you help me open a mortgage account",
+        "what is the weather tomorrow",
+    )
+)
+TRAINING_CONTRACT_FORBIDDEN = ("demo", "synthetic", "mock", "test")
+FINAL_RESPONSE_FORBIDDEN = (
+    *TRAINING_CONTRACT_FORBIDDEN,
+    "backend",
+    "gpu",
+    "router",
+    "tool call",
+)
 
 
 class BankingToolSftDataError(ValueError):
@@ -231,7 +328,7 @@ class Scenario:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Prepare banking-v3 tool-use SFT data.")
+    parser = argparse.ArgumentParser(description="Prepare banking-v5 tool-use SFT data.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--pilot-count", type=int, default=1200)
     parser.add_argument("--split-seed", type=int, default=711)
@@ -272,33 +369,33 @@ def main(argv: list[str] | None = None) -> int:
 
 def public_tool_manifest() -> list[dict[str, Any]]:
     return [
-        _tool("list_accounts", "List the signed-in synthetic customer's accounts and balances."),
-        _tool("list_cards", "List the signed-in synthetic customer's cards and statuses."),
-        _tool("list_service_cases", "List recent synthetic service cases."),
+        _tool("list_accounts", "List the signed-in customer's accounts and balances."),
+        _tool("list_cards", "List the signed-in customer's cards and statuses."),
+        _tool("list_service_cases", "List the signed-in customer's recent service cases."),
         _tool(
             "list_transactions",
-            "List recent synthetic account transactions.",
+            "List the signed-in customer's recent account transactions.",
             {"limit": {"type": "integer", "minimum": 1, "maximum": 20}},
         ),
-        _tool("list_transfers", "List the signed-in synthetic customer's transfers and statuses."),
+        _tool("list_transfers", "List the signed-in customer's transfers and statuses."),
         _tool(
             "freeze_card",
-            "Freeze a synthetic card, optionally selected by last four digits.",
+            "Freeze a card, optionally selected by last four digits.",
             {"last4": {"type": ["string", "null"]}},
         ),
         _tool(
             "replace_card",
-            "Request replacement of a synthetic card.",
+            "Request replacement of a card.",
             {"last4": {"type": ["string", "null"]}},
         ),
         _tool(
             "dispute_transaction",
-            "Dispute a synthetic transaction by description.",
+            "Dispute a transaction by description.",
             {"description": {"type": ["string", "null"]}},
         ),
         _tool(
             "cancel_transfer",
-            "Cancel a synthetic pending transfer by recipient.",
+            "Cancel a pending transfer by recipient.",
             {"recipient": {"type": ["string", "null"]}},
         ),
     ]
@@ -362,7 +459,7 @@ def prepare(
     entries = _write_split_files(output_dir, split_rows)
     manifest = {
         "format_version": 1,
-        "name": "retail-bank-servicing-v3-tool-sft",
+        "name": "retail-bank-servicing-v5-tool-sft",
         "created_at": CREATED_AT,
         "contract": BANKING_TOOL_SFT_MANIFEST_CONTRACT,
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
@@ -455,9 +552,21 @@ def validate_records(
     *,
     synthetic_bank_path: Path = DEFAULT_SYNTHETIC_BANK_PATH,
 ) -> None:
+    records = list(records)
     tool_names = set(ALLOWED_ARGS)
     seen_ids: set[str] = set()
     normalized_users: set[str] = set()
+    normalized_finals: set[str] = set()
+    leaking_tools = [
+        str(tool["function"]["name"])
+        for tool in public_tool_manifest()
+        if any(
+            term in str(tool["function"]["description"]).lower()
+            for term in TRAINING_CONTRACT_FORBIDDEN
+        )
+    ]
+    if leaking_tools:
+        raise BankingToolSftDataError(f"tool descriptions leak internal language: {leaking_tools}")
     for record in records:
         record_id = _required_str(record, "record_id")
         if record_id in seen_ids:
@@ -483,30 +592,50 @@ def validate_records(
         if not isinstance(expected_calls, list):
             raise BankingToolSftDataError(f"{record_id} missing expected tool_calls")
         user_key = normalized_user_text(_last_user_message(record)["content"])
+        if record.get("metadata", {}).get("split") == "train" and user_key in POC_PRESET_KEYS:
+            raise BankingToolSftDataError(f"{record_id} duplicates a POC preset")
         if user_key in normalized_users:
             raise BankingToolSftDataError(f"{record_id} duplicates normalized user text")
         normalized_users.add(user_key)
         final_response = _final_assistant_message(record).get("content")
-        if not isinstance(final_response, str) or len(
-            normalized_user_text(final_response).split()
-        ) < 7:
+        if (
+            not isinstance(final_response, str)
+            or len(normalized_user_text(final_response).split()) < 7
+        ):
             raise BankingToolSftDataError(
                 f"{record_id} final assistant response is missing semantic content"
             )
         if _final_assistant_message(record).get("loss") is not True:
-            raise BankingToolSftDataError(
-                f"{record_id} final assistant response must be trainable"
-            )
+            raise BankingToolSftDataError(f"{record_id} final assistant response must be trainable")
         normalized_final = normalized_user_text(final_response)
+        if normalized_final in normalized_finals:
+            raise BankingToolSftDataError(f"{record_id} duplicates a final answer")
+        normalized_finals.add(normalized_final)
+        leaked = [term for term in FINAL_RESPONSE_FORBIDDEN if term in normalized_final]
+        if leaked:
+            raise BankingToolSftDataError(
+                f"{record_id} final assistant response leaks internal language: {leaked}"
+            )
+        for message in record.get("messages", []):
+            if message.get("role") != "system":
+                continue
+            normalized_system = normalized_user_text(str(message.get("content", "")))
+            system_leaks = [
+                term for term in TRAINING_CONTRACT_FORBIDDEN if term in normalized_system
+            ]
+            if system_leaks:
+                raise BankingToolSftDataError(
+                    f"{record_id} system prompt leaks internal language: {system_leaks}"
+                )
         response_path = record.get("expected", {}).get("path")
         required_path_markers = {
             "clarification": ("last four digits",),
             "ood": ("retail banking",),
             "hard_negative": ("account numbers", "customer ids"),
         }
-        if response_path == "no_tool_banking_faq":
+        if response_path == "retrieval_grounded_policy":
             template_id = str(split_keys["template_id"])
-            required_path_markers["no_tool_banking_faq"] = FAQ_REQUIRED_MARKERS.get(
+            required_path_markers["retrieval_grounded_policy"] = FAQ_REQUIRED_MARKERS.get(
                 template_id,
                 (),
             )
@@ -517,9 +646,25 @@ def validate_records(
         ]
         if missing_markers:
             raise BankingToolSftDataError(
-                f"{record_id} final assistant response is missing path markers: "
-                f"{missing_markers}"
+                f"{record_id} final assistant response is missing path markers: {missing_markers}"
             )
+        if response_path == "retrieval_grounded_policy":
+            citations = record.get("expected", {}).get("policy_citations")
+            if not isinstance(citations, list) or not citations:
+                raise BankingToolSftDataError(f"{record_id} missing policy citations")
+            for chunk_id in citations:
+                if f"[Policy: {chunk_id}]" not in final_response:
+                    raise BankingToolSftDataError(
+                        f"{record_id} final assistant response is missing citation {chunk_id}"
+                    )
+                if not any(
+                    message.get("role") == "system"
+                    and str(chunk_id) in str(message.get("content", ""))
+                    for message in record.get("messages", [])[1:]
+                ):
+                    raise BankingToolSftDataError(
+                        f"{record_id} cites a chunk absent from policy context"
+                    )
         tool_call_ids: list[str] = []
         context_tool_call_ids: list[str] = []
         all_tool_call_ids: set[str] = set()
@@ -546,9 +691,7 @@ def validate_records(
                 for call in message["tool_calls"]:
                     call_id = _required_str(call, "id")
                     if call_id in all_tool_call_ids:
-                        raise BankingToolSftDataError(
-                            f"{record_id} has duplicate tool call id"
-                        )
+                        raise BankingToolSftDataError(f"{record_id} has duplicate tool call id")
                     all_tool_call_ids.add(call_id)
                     index = call.get("index")
                     if index != 0:
@@ -559,9 +702,7 @@ def validate_records(
                     if assistant_loss is True:
                         global_call_index = len(tool_call_ids)
                         if call_id != f"call_{record_id}_{global_call_index}":
-                            raise BankingToolSftDataError(
-                                f"{record_id} has unstable tool call id"
-                            )
+                            raise BankingToolSftDataError(f"{record_id} has unstable tool call id")
                     else:
                         context_call_index = len(context_tool_call_ids)
                         if call_id != f"context_{record_id}_{context_call_index}":
@@ -637,7 +778,29 @@ def validate_records(
             raise BankingToolSftDataError(f"{record_id} requires_tool mismatch")
         if record.get("validation", {}).get("tool_manifest_hash") != _tool_manifest_hash():
             raise BankingToolSftDataError(f"{record_id} manifest hash mismatch")
+    _assert_no_fuzzy_final_duplicates(records)
     _ = synthetic_bank_path
+
+
+def _assert_no_fuzzy_final_duplicates(records: Iterable[dict[str, Any]]) -> None:
+    by_family: dict[str, list[tuple[str, str]]] = {}
+    for record in records:
+        family = str(record.get("metadata", {}).get("scenario_family", ""))
+        by_family.setdefault(family, []).append(
+            (
+                str(record.get("record_id", "")),
+                normalized_user_text(str(_final_assistant_message(record).get("content", ""))),
+            )
+        )
+    for rows in by_family.values():
+        for index, (record_id, answer) in enumerate(rows):
+            for other_id, other in rows[:index]:
+                if abs(len(answer) - len(other)) > 1 or answer[:32] != other[:32]:
+                    continue
+                if difflib.SequenceMatcher(None, answer, other).ratio() >= 0.995:
+                    raise BankingToolSftDataError(
+                        f"{record_id} fuzzily duplicates final answer from {other_id}"
+                    )
 
 
 def validate_banking_tool_sft_manifest(path: Path) -> dict[str, Any]:
@@ -690,9 +853,9 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "What accounts do I have and what are their balances?",
-            "Everyday Checking ending in 1042 has USD 3,245.67 available and "
-            "USD 3,300.12 current. Goal Saver ending in 8831 has USD 12,500.00 "
-            "available and current.",
+            "| Account | Ending | Available | Current |\n|---|---:|---:|---:|\n"
+            "| Everyday Checking | 1042 | USD 3,245.67 | USD 3,300.12 |\n"
+            "| Goal Saver | 8831 | USD 12,500.00 | USD 12,500.00 |",
             "tool_success",
             (ToolPlan("list_accounts", {}),),
             grounding_facts=(
@@ -740,8 +903,9 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Show my three most recent transactions.",
-            "Your three most recent transactions include North Harbor Market, "
-            "CloudStream, and Harbor Labs Payroll.",
+            "| Date | Transaction | Status |\n|---|---|---|\n"
+            "| Recent | North Harbor Market | Posted |\n"
+            "| Recent | CloudStream | Posted |\n| Recent | Harbor Labs Payroll | Posted |",
             "tool_success",
             (ToolPlan("list_transactions", {"limit": 3}),),
             grounding_facts=("transaction.description=North Harbor Market", "transactions.limit=3"),
@@ -843,7 +1007,8 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "My card was stolen. Freeze it.",
-            "I found your active debit card ending in 4821 and froze it.",
+            "I’m sorry your card was stolen. I found the active debit card ending in "
+            "4821 and froze it to help protect your account.",
             "multi_turn",
             (ToolPlan("list_cards", {}), ToolPlan("freeze_card", {"last4": "4821"})),
             grounding_facts=("card.last4=4821", "card.status=frozen"),
@@ -882,8 +1047,7 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Replace my card.",
-            "Which card should I replace? Please share the last four digits shown in "
-            "the app.",
+            "Which card should I replace? Please share the last four digits shown in the app.",
             "clarification",
             grounding_facts=("missing_field=last4",),
         ),
@@ -897,9 +1061,10 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "state-alex-001",
             "How do overdraft fees usually work?",
             "Overdraft fees can apply when a transaction exceeds your available "
-            "balance; review your account disclosures or settings for exact terms.",
-            "no_tool_banking_faq",
-            grounding_facts=("faq=overdraft",),
+            "balance; your account disclosures and settings provide the exact terms "
+            "[Policy: deposit.overdraft.fees.us.v1].",
+            "retrieval_grounded_policy",
+            grounding_facts=("policy.chunk_id=deposit.overdraft.fees.us.v1",),
         ),
         Scenario(
             "mortgage_opening_faq",
@@ -910,11 +1075,11 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Can you help me open a mortgage account?",
-            "I can explain mortgage basics and typical application steps, but this "
-            "demo cannot open or approve a mortgage. A real lender would review an "
-            "application and disclose its terms through an approved channel.",
-            "no_tool_banking_faq",
-            grounding_facts=("faq=mortgage",),
+            "Harborlight Bank can explain mortgage products here, but an application "
+            "must be started through an approved mortgage channel "
+            "[Policy: mortgage.application.overview.us.v1].",
+            "retrieval_grounded_policy",
+            grounding_facts=("policy.chunk_id=mortgage.application.overview.us.v1",),
         ),
         Scenario(
             "mortgage_age_faq",
@@ -925,11 +1090,11 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "How old do I need to be to apply for a mortgage?",
-            "Mortgage applicants generally must be legal adults—typically at least "
-            "18 in the United States. Requirements vary by lender and jurisdiction, "
-            "and this demo cannot determine your eligibility.",
-            "no_tool_banking_faq",
-            grounding_facts=("faq=mortgage", "mortgage.minimum_age=18"),
+            "Mortgage applicants must be legal adults—generally at least 18 in the "
+            "United States. Age alone does not determine eligibility "
+            "[Policy: mortgage.eligibility.age.us.v1].",
+            "retrieval_grounded_policy",
+            grounding_facts=("policy.chunk_id=mortgage.eligibility.age.us.v1",),
         ),
         Scenario(
             "deposit_account_opening_faq",
@@ -940,11 +1105,11 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-maya",
             "state-maya-001",
             "How would I open a new savings account?",
-            "This demo cannot open a real account. Banks typically ask you to choose "
-            "an account type, review disclosures, verify identity through an approved "
-            "channel, and provide opening funds when required.",
-            "no_tool_banking_faq",
-            grounding_facts=("faq=account",),
+            "To open a Harborlight Bank checking or savings account, choose the product, "
+            "review its disclosures, complete identity verification, and provide opening "
+            "funds when required [Policy: deposit.account.opening.us.v1].",
+            "retrieval_grounded_policy",
+            grounding_facts=("policy.chunk_id=deposit.account.opening.us.v1",),
         ),
         Scenario(
             "savings_interest_faq",
@@ -957,9 +1122,10 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "How does interest on a savings account work?",
             "Savings interest is generally calculated from the balance and stated "
             "annual percentage yield, then credited on the bank’s schedule. Exact "
-            "rates and compounding rules depend on the account disclosures.",
-            "no_tool_banking_faq",
-            grounding_facts=("faq=savings_interest",),
+            "rates and compounding rules are in the account disclosures "
+            "[Policy: deposit.savings.interest.us.v1].",
+            "retrieval_grounded_policy",
+            grounding_facts=("policy.chunk_id=deposit.savings.interest.us.v1",),
         ),
         Scenario(
             "small_talk_greeting",
@@ -970,8 +1136,8 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Yo, sup?",
-            "Hi! I’m ready to help with your banking questions or the synthetic "
-            "accounts in this demo.",
+            "Hi! I’m Harbor, the Harborlight Bank assistant. I can help with your "
+            "banking questions and account tasks.",
             "conversation",
         ),
         Scenario(
@@ -983,8 +1149,7 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-maya",
             "state-maya-001",
             "How are you doing?",
-            "I’m ready to help. What banking question or account task would you like "
-            "to work on?",
+            "I’m ready to help. What banking question or account task would you like to work on?",
             "conversation",
         ),
         Scenario(
@@ -996,8 +1161,7 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Thanks for the help.",
-            "You’re welcome. I can help with another banking question whenever you’re "
-            "ready.",
+            "You’re welcome. I can help with another banking question whenever you’re ready.",
             "conversation",
         ),
         Scenario(
@@ -1142,19 +1306,14 @@ def _state_slots(template: Scenario, semantic_seed: int) -> dict[str, Any]:
     card_last4 = _last4(seed, 37)
     merchant = f"{_pick(MERCHANT_PREFIXES, seed)} {_pick(MERCHANT_TYPES, seed // 7)}"
     alternate_merchant = (
-        f"{_pick(MERCHANT_PREFIXES, seed // 11 + 3)} "
-        f"{_pick(MERCHANT_TYPES, seed // 13 + 4)}"
+        f"{_pick(MERCHANT_PREFIXES, seed // 11 + 3)} {_pick(MERCHANT_TYPES, seed // 13 + 4)}"
     )
     missing_merchant = (
-        f"{_pick(MERCHANT_PREFIXES, seed // 17 + 6)} "
-        f"{_pick(MERCHANT_TYPES, seed // 19 + 7)}"
+        f"{_pick(MERCHANT_PREFIXES, seed // 17 + 6)} {_pick(MERCHANT_TYPES, seed // 19 + 7)}"
     )
-    pending_recipient = (
-        f"{_pick(RECIPIENT_PREFIXES, seed)} {_pick(RECIPIENT_TYPES, seed // 5)}"
-    )
+    pending_recipient = f"{_pick(RECIPIENT_PREFIXES, seed)} {_pick(RECIPIENT_TYPES, seed // 5)}"
     completed_recipient = (
-        f"{_pick(RECIPIENT_PREFIXES, seed // 7 + 4)} "
-        f"{_pick(RECIPIENT_TYPES, seed // 11 + 3)}"
+        f"{_pick(RECIPIENT_PREFIXES, seed // 7 + 4)} {_pick(RECIPIENT_TYPES, seed // 11 + 3)}"
     )
     checking_name = _pick(ACCOUNT_LABELS, seed)
     savings_name = _pick(SAVINGS_LABELS, seed // 3)
@@ -1171,8 +1330,7 @@ def _state_slots(template: Scenario, semantic_seed: int) -> dict[str, Any]:
         "customer_id": customer_id,
         "login": login,
         "display_name": (
-            f"{_pick(FICTIONAL_FIRST_NAMES, seed)} "
-            f"{_pick(FICTIONAL_LAST_NAMES, seed // 9)}"
+            f"{_pick(FICTIONAL_FIRST_NAMES, seed)} {_pick(FICTIONAL_LAST_NAMES, seed // 9)}"
         ),
         "city": _pick(("North Harbor", "Pine Ridge", "Lakeview", "Cedar Point"), seed),
         "checking_name": checking_name,
@@ -1286,8 +1444,7 @@ def _materialized_pre_messages(
             },
             _message(
                 "assistant",
-                f"I found your active debit card ending in {slot['card_last4']} and "
-                "froze it.",
+                f"I found your active debit card ending in {slot['card_last4']} and froze it.",
                 loss=False,
             ),
         )
@@ -1296,8 +1453,7 @@ def _materialized_pre_messages(
             _message("user", "Replace my card.", loss=False),
             _message(
                 "assistant",
-                "Which card should I replace? Please share the last four digits shown "
-                "in the app.",
+                "Which card should I replace? Please share the last four digits shown in the app.",
                 loss=False,
             ),
         )
@@ -1317,9 +1473,7 @@ def _context_card(slot: dict[str, Any], *, status: str) -> dict[str, Any]:
     }
 
 
-def _materialized_grounding_facts(
-    template: Scenario, slot: dict[str, Any]
-) -> tuple[str, ...]:
+def _materialized_grounding_facts(template: Scenario, slot: dict[str, Any]) -> tuple[str, ...]:
     family = template.scenario_family
     if family == "read_accounts":
         return (
@@ -1353,17 +1507,17 @@ def _materialized_grounding_facts(
     return template.grounding_facts
 
 
-def _materialized_final_response(
-    template: Scenario, slot: dict[str, Any], occurrence: int
-) -> str:
+def _materialized_final_response(template: Scenario, slot: dict[str, Any], occurrence: int) -> str:
     family = template.scenario_family
     if family == "read_accounts":
         final = (
-            f"{slot['checking_name']} ending in {slot['checking_last4']} has USD "
-            f"{_format_usd(slot['checking_available'])} available and USD "
-            f"{_format_usd(slot['checking_current'])} current. "
-            f"{slot['savings_name']} ending in {slot['savings_last4']} has USD "
-            f"{_format_usd(slot['savings_available'])} available and current."
+            "| Account | Ending | Available | Current |\n|---|---:|---:|---:|\n"
+            f"| {slot['checking_name']} | {slot['checking_last4']} | USD "
+            f"{_format_usd(slot['checking_available'])} | USD "
+            f"{_format_usd(slot['checking_current'])} |\n"
+            f"| {slot['savings_name']} | {slot['savings_last4']} | USD "
+            f"{_format_usd(slot['savings_available'])} | USD "
+            f"{_format_usd(slot['savings_available'])} |"
         )
     elif family == "read_cards":
         final = (
@@ -1374,8 +1528,10 @@ def _materialized_final_response(
         final = "You have a closed service case confirming a mailing address update."
     elif family == "read_transactions":
         final = (
-            f"Your recent transactions include {slot['merchant']}, "
-            f"{slot['alternate_merchant']}, and payroll."
+            "| Date | Transaction | Status |\n|---|---|---|\n"
+            f"| Recent | {slot['merchant']} | Posted |\n"
+            f"| Recent | {slot['alternate_merchant']} | Posted |\n"
+            "| Recent | Payroll | Posted |"
         )
     elif family == "read_transfers":
         final = (
@@ -1390,18 +1546,17 @@ def _materialized_final_response(
         final = f"I opened a dispute for the {slot['merchant']} transaction."
     elif family == "transfer_cancel":
         final = f"The pending transfer to {slot['pending_recipient']} is now cancelled."
-    elif family in {"multi_tool_card_action", "emergency_card_freeze"}:
+    elif family == "multi_tool_card_action":
+        final = f"I found your active debit card ending in {slot['card_last4']} and froze it."
+    elif family == "emergency_card_freeze":
         final = (
-            f"I found your active debit card ending in {slot['card_last4']} and froze it."
+            "I’m sorry your card was stolen. I found the active debit card ending in "
+            f"{slot['card_last4']} and froze it to help protect your account."
         )
     elif family == "action_summary_followup":
-        final = (
-            f"I found the active debit card ending in {slot['card_last4']} and froze it."
-        )
+        final = f"I found the active debit card ending in {slot['card_last4']} and froze it."
     elif family == "no_action_followup":
-        final = (
-            "No. I only asked which card you want replaced; no card change was made."
-        )
+        final = "No. I only asked which card you want replaced; no card change was made."
     elif family == "backend_error" and template.template_id == "cancel-completed-v1":
         final = (
             f"I could not cancel a pending transfer to {slot['completed_recipient']} "
@@ -1540,6 +1695,9 @@ def _synthetic_bank_payload(slot: dict[str, Any]) -> dict[str, Any]:
 def _scenario_to_record(scenario: Scenario, *, bank_path: Path) -> dict[str, Any]:
     record_id = scenario.scenario_id
     messages = [_message("system", SYSTEM_PROMPT, loss=False), *scenario.pre_messages]
+    policy = POLICY_CHUNKS.get(scenario.template_id)
+    if policy is not None:
+        messages.append(_policy_context_message(policy))
     messages.append(_message("user", scenario.user, loss=False))
     tool_messages, final_state_hash, replay_hash = _replay_tool_plan(
         scenario,
@@ -1573,18 +1731,21 @@ def _scenario_to_record(scenario: Scenario, *, bank_path: Path) -> dict[str, Any
             messages.append(tool_messages[index])
     messages.append(_message("assistant", scenario.final_response, loss=True))
 
+    expected = {
+        "requires_tool": bool(scenario.tool_plan),
+        "ordered_calls": ordered_calls,
+        "tool_calls": expected_calls,
+        "final_state_hash": final_state_hash,
+        "grounding_facts": list(scenario.grounding_facts),
+        "path": scenario.path,
+    }
+    if policy is not None:
+        expected["policy_citations"] = [str(policy["chunk_id"])]
     return {
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "record_id": record_id,
         "messages": messages,
-        "expected": {
-            "requires_tool": bool(scenario.tool_plan),
-            "ordered_calls": ordered_calls,
-            "tool_calls": expected_calls,
-            "final_state_hash": final_state_hash,
-            "grounding_facts": list(scenario.grounding_facts),
-            "path": scenario.path,
-        },
+        "expected": expected,
         "split_keys": {
             "scenario_family": scenario.scenario_family,
             "state_seed": scenario.state_seed,
@@ -1700,7 +1861,7 @@ def _build_report(
     canonical = sorted(records, key=lambda record: record["record_id"])
     return {
         "format_version": 1,
-        "name": "retail-bank-servicing-v3-tool-sft",
+        "name": "retail-bank-servicing-v5-tool-sft",
         "created_at": CREATED_AT,
         "summary": {
             "total_records": len(records),
@@ -1752,7 +1913,7 @@ def _validate_report(report: dict[str, Any]) -> None:
         "tool_success",
         "tool_error",
         "clarification",
-        "no_tool_banking_faq",
+        "retrieval_grounded_policy",
         "ood",
         "hard_negative",
         "multi_turn",
@@ -1853,6 +2014,16 @@ def _message(role: str, content: str, *, loss: bool) -> dict[str, Any]:
     return {"role": role, "content": content, "loss": loss}
 
 
+def _policy_context_message(policy: dict[str, str]) -> dict[str, Any]:
+    return _message(
+        "system",
+        "Authoritative Harborlight Bank policy context. Answer only from this context "
+        "and cite the bracketed policy chunk ID.\n"
+        f"[Policy: {policy['chunk_id']}] {policy['title']}: {policy['text']}",
+        loss=False,
+    )
+
+
 def _format_usd(cents: Any) -> str:
     return f"{int(cents) / 100:,.2f}"
 
@@ -1907,10 +2078,9 @@ def _realize_user(template: Scenario, occurrence: int) -> str:
 
 
 def _realize_final(template: Scenario, occurrence: int) -> str:
-    if not template.tool_plan:
-        return template.final_response.strip()
     prefix = _pick(REALIZER_FINAL_PREFIXES, occurrence)
-    return f"{prefix} {template.final_response}".strip()
+    closer = _pick(REALIZER_FINAL_CLOSERS, occurrence // len(REALIZER_FINAL_PREFIXES))
+    return " ".join(part for part in (prefix, template.final_response.strip(), closer) if part)
 
 
 def _user_stems(template: Scenario) -> tuple[str, ...]:
@@ -2133,7 +2303,7 @@ def _user_stems(template: Scenario) -> tuple[str, ...]:
         )
     if family == "small_talk_greeting":
         return (
-            "yo sup",
+            "hello Harbor",
             "hello there",
             "hey",
             "good morning",

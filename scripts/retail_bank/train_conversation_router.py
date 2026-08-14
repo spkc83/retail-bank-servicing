@@ -39,14 +39,14 @@ from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warm
 
 from hello_slm.banking_conversation_router import ConversationRouterModel
 from hello_slm.banking_conversation_router_data import (
-    CAPABILITY_LABELS,
+    INTENT_LABELS,
     RELATION_LABELS,
 )
 
 BASE_MODEL_ID = "distilbert/distilbert-base-uncased"
 BASE_MODEL_REVISION = "12040accade4e8a0f71eabdb258fecc2e7e948be"
-DEFAULT_DATASET_DIR = Path("data/banking-conversation-router-v4")
-DEFAULT_OUTPUT_DIR = Path("artifacts/banking-conversation-router-v4")
+DEFAULT_DATASET_DIR = Path("data/banking-conversation-router-v5")
+DEFAULT_OUTPUT_DIR = Path("artifacts/banking-conversation-router-v5")
 DEFAULT_DESTINATION_ID = "spkc83/retail-bank-conversation-router"
 SEED = 7401
 MAX_LENGTH = 256
@@ -55,7 +55,7 @@ EPOCHS = 1
 LEARNING_RATE = 3e-5
 WEIGHT_DECAY = 0.01
 WARMUP_RATIO = 0.10
-CAPABILITY_LOSS_WEIGHT = 0.7
+INTENT_LOSS_WEIGHT = 0.7
 RELATION_LOSS_WEIGHT = 0.6
 MAX_RELATION_POSITIVE_WEIGHT = 12.0
 TARGETED_ROW_WEIGHT = 6.0
@@ -113,6 +113,7 @@ def route_predictions(
             relation_by_name["context_dependent"],
             relation_by_name["agent_repair"],
             relation_by_name["clarification_answer"],
+            relation_by_name["resume_previous_service"],
         )
         if banking_probability >= in_domain_threshold:
             routes.append("in_domain")
@@ -211,9 +212,7 @@ def calibrate_relation_thresholds(
     relation_probabilities: Sequence[Sequence[float]],
     relation_labels: Sequence[Sequence[int]],
 ) -> dict[str, float]:
-    if not relation_probabilities or (
-        len(relation_probabilities) != len(relation_labels)
-    ):
+    if not relation_probabilities or (len(relation_probabilities) != len(relation_labels)):
         raise ValueError("relation calibration fields must be non-empty and equal")
     thresholds: dict[str, float] = {}
     for relation_index, relation_name in enumerate(RELATION_LABELS):
@@ -241,9 +240,7 @@ def calibrate_relation_thresholds(
                 for candidate in candidates
                 if candidate[0] >= best_f1 - RELATION_F1_CALIBRATION_TOLERANCE
             ]
-            thresholds[relation_name] = min(
-                candidate[2] for candidate in eligible
-            )
+            thresholds[relation_name] = min(candidate[2] for candidate in eligible)
         else:
             optimal = [
                 candidate
@@ -255,9 +252,7 @@ def calibrate_relation_thresholds(
                     abs_tol=1e-12,
                 )
             ]
-            thresholds[relation_name] = min(
-                candidate[2] for candidate in optimal
-            )
+            thresholds[relation_name] = min(candidate[2] for candidate in optimal)
     return thresholds
 
 
@@ -265,8 +260,8 @@ def evaluate_predictions(
     *,
     domain_probabilities: Sequence[float],
     domain_labels: Sequence[int],
-    capability_predictions: Sequence[int],
-    capability_labels: Sequence[int],
+    intent_predictions: Sequence[int],
+    intent_labels: Sequence[int],
     relation_probabilities: Sequence[Sequence[float]],
     relation_labels: Sequence[Sequence[int]],
     example_kinds: Sequence[str],
@@ -275,17 +270,15 @@ def evaluate_predictions(
     ood_banking_threshold: float,
     in_domain_threshold: float,
     relation_rescue_threshold: float,
-    num_capabilities: int,
+    num_intents: int,
 ) -> dict[str, Any]:
     current_texts = current_texts or ["" for _ in domain_labels]
-    relation_thresholds = relation_thresholds or {
-        label: 0.5 for label in RELATION_LABELS
-    }
+    relation_thresholds = relation_thresholds or {label: 0.5 for label in RELATION_LABELS}
     lengths = {
         len(domain_probabilities),
         len(domain_labels),
-        len(capability_predictions),
-        len(capability_labels),
+        len(intent_predictions),
+        len(intent_labels),
         len(relation_probabilities),
         len(relation_labels),
         len(example_kinds),
@@ -302,11 +295,11 @@ def evaluate_predictions(
     )
     accepted = [route != "out_of_domain" for route in routes]
     domain_counts = _domain_counts(accepted, domain_labels)
-    capability_pairs = [
+    intent_pairs = [
         (prediction, label)
         for prediction, label in zip(
-            capability_predictions,
-            capability_labels,
+            intent_predictions,
+            intent_labels,
             strict=True,
         )
         if label >= 0
@@ -340,11 +333,11 @@ def evaluate_predictions(
             domain_counts["false_positive"],
             domain_counts["negative"],
         ),
-        "capability_macro_f1": _macro_f1(
-            capability_pairs,
-            class_count=num_capabilities,
+        "intent_macro_f1": _macro_f1(
+            intent_pairs,
+            class_count=num_intents,
         ),
-        "capability_rows": len(capability_pairs),
+        "intent_rows": len(intent_pairs),
         "relation_macro_f1": _multilabel_macro_f1(relation_pairs),
     }
     metrics["contextual_false_refusal_rate"] = _relation_false_refusal_rate(
@@ -365,28 +358,43 @@ def evaluate_predictions(
         relation_labels,
         "topic_shift",
     )
+    resume_indices = [
+        index for index, kind in enumerate(example_kinds) if kind == "resume_previous_service"
+    ]
+    resume_relation_index = RELATION_LABELS.index("resume_previous_service")
+    metrics["trajectory_resume_intent_error_rate"] = _safe_ratio(
+        sum(
+            intent_predictions[index] != intent_labels[index]
+            for index in resume_indices
+            if intent_labels[index] >= 0
+        ),
+        sum(intent_labels[index] >= 0 for index in resume_indices),
+    )
+    metrics["trajectory_resume_relation_error_rate"] = _safe_ratio(
+        sum(
+            (
+                relation_probabilities[index][resume_relation_index]
+                >= relation_thresholds["resume_previous_service"]
+            )
+            != bool(relation_labels[index][resume_relation_index])
+            for index in resume_indices
+        ),
+        len(resume_indices),
+    )
+    metrics["trajectory_resume_rows"] = len(resume_indices)
     heldout_indices = [
-        index
-        for index, kind in enumerate(example_kinds)
-        if kind == "heldout_screenshot_regression"
+        index for index, kind in enumerate(example_kinds) if kind == "heldout_screenshot_regression"
     ]
     heldout_route_errors = sum(
-        accepted[index] != bool(domain_labels[index])
-        for index in heldout_indices
+        accepted[index] != bool(domain_labels[index]) for index in heldout_indices
     )
-    heldout_capability_indices = [
-        index for index in heldout_indices if capability_labels[index] >= 0
-    ]
-    heldout_capability_errors = sum(
-        capability_predictions[index] != capability_labels[index]
-        for index in heldout_capability_indices
+    heldout_intent_indices = [index for index in heldout_indices if intent_labels[index] >= 0]
+    heldout_intent_errors = sum(
+        intent_predictions[index] != intent_labels[index] for index in heldout_intent_indices
     )
     heldout_relation_errors = sum(
         any(
-            (
-                probability >= relation_thresholds[relation_name]
-            )
-            != bool(label)
+            (probability >= relation_thresholds[relation_name]) != bool(label)
             for relation_name, probability, label in zip(
                 RELATION_LABELS,
                 relation_probabilities[index],
@@ -400,9 +408,9 @@ def evaluate_predictions(
         heldout_route_errors,
         len(heldout_indices),
     )
-    metrics["heldout_regression_capability_error_rate"] = _safe_ratio(
-        heldout_capability_errors,
-        len(heldout_capability_indices),
+    metrics["heldout_regression_intent_error_rate"] = _safe_ratio(
+        heldout_intent_errors,
+        len(heldout_intent_indices),
     )
     metrics["heldout_regression_relation_error_rate"] = _safe_ratio(
         heldout_relation_errors,
@@ -415,14 +423,10 @@ def evaluate_predictions(
             "expected_domain": int(domain_labels[index]),
             "route": routes[index],
             "banking_probability": float(domain_probabilities[index]),
-            "expected_capability": (
-                CAPABILITY_LABELS[capability_labels[index]]
-                if capability_labels[index] >= 0
-                else None
+            "expected_intent": (
+                INTENT_LABELS[intent_labels[index]] if intent_labels[index] >= 0 else None
             ),
-            "predicted_capability": CAPABILITY_LABELS[
-                capability_predictions[index]
-            ],
+            "predicted_intent": INTENT_LABELS[intent_predictions[index]],
             "expected_relations": [
                 RELATION_LABELS[relation_index]
                 for relation_index, label in enumerate(relation_labels[index])
@@ -447,30 +451,26 @@ def evaluate_predictions(
 
 def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
     gates = (
-        ("capability_macro_f1", ">=", 0.85),
+        ("intent_macro_f1", ">=", 0.85),
         ("relation_macro_f1", ">=", 0.85),
         ("in_domain_false_refusal_rate", "<=", 0.02),
         ("ood_false_accept_rate", "<=", 0.05),
         ("contextual_false_refusal_rate", "<=", 0.02),
         ("repair_false_refusal_rate", "<=", 0.01),
         ("topic_shift_ood_false_accept_rate", "<=", 0.05),
+        ("trajectory_resume_intent_error_rate", "<=", 0.00),
+        ("trajectory_resume_relation_error_rate", "<=", 0.00),
         ("heldout_regression_route_error_rate", "<=", 0.00),
-        ("heldout_regression_capability_error_rate", "<=", 0.00),
+        ("heldout_regression_intent_error_rate", "<=", 0.00),
         ("heldout_regression_relation_error_rate", "<=", 0.00),
     )
     failures: list[str] = []
     for name, operator, threshold in gates:
         value = float(metrics[name])
         equal = math.isclose(value, threshold, rel_tol=0.0, abs_tol=1e-12)
-        passed = (
-            value > threshold or equal
-            if operator == ">="
-            else value < threshold or equal
-        )
+        passed = value > threshold or equal if operator == ">=" else value < threshold or equal
         if not passed:
-            failures.append(
-                f"{name}={value:.6f} must be {operator} {threshold:.6f}"
-            )
+            failures.append(f"{name}={value:.6f} must be {operator} {threshold:.6f}")
     return failures
 
 
@@ -526,7 +526,7 @@ def main() -> int:
     model = ConversationRouterModel(
         encoder,
         hidden_size=int(encoder.config.hidden_size),
-        num_capabilities=len(CAPABILITY_LABELS),
+        num_intents=len(INTENT_LABELS),
         num_relations=len(RELATION_LABELS),
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -578,9 +578,7 @@ def main() -> int:
         num_training_steps=total_steps,
     )
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
-    relation_pos_weight_values = relation_positive_weights(
-        rows_by_split["train"]
-    )
+    relation_pos_weight_values = relation_positive_weights(rows_by_split["train"])
     relation_pos_weight = torch.tensor(
         relation_pos_weight_values,
         dtype=torch.float32,
@@ -589,9 +587,7 @@ def main() -> int:
     history: list[dict[str, Any]] = []
     best_score = -math.inf
 
-    with tempfile.TemporaryDirectory(
-        prefix="retail-bank-conversation-router-"
-    ) as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="retail-bank-conversation-router-") as temp_dir:
         best_path = Path(temp_dir) / "best.safetensors"
         for epoch in range(1, args.epochs + 1):
             training_loss = train_epoch(
@@ -612,23 +608,19 @@ def main() -> int:
             calibration = calibrate_policy(
                 domain_probabilities=validation_predictions["domain_probabilities"],
                 domain_labels=validation_predictions["domain_labels"],
-                relation_probabilities=validation_predictions[
-                    "relation_probabilities"
-                ],
+                relation_probabilities=validation_predictions["relation_probabilities"],
                 relation_labels=validation_predictions["relation_labels"],
             )
             validation_metrics = evaluate_predictions(
                 **validation_predictions,
                 ood_banking_threshold=calibration["ood_banking_threshold"],
                 in_domain_threshold=calibration["in_domain_threshold"],
-                relation_rescue_threshold=calibration[
-                    "relation_rescue_threshold"
-                ],
+                relation_rescue_threshold=calibration["relation_rescue_threshold"],
                 relation_thresholds=calibration["relation_thresholds"],
-                num_capabilities=len(CAPABILITY_LABELS),
+                num_intents=len(INTENT_LABELS),
             )
             score = (
-                float(validation_metrics["capability_macro_f1"])
+                float(validation_metrics["intent_macro_f1"])
                 + float(validation_metrics["relation_macro_f1"])
                 + 1.0
                 - float(validation_metrics["in_domain_false_refusal_rate"])
@@ -664,15 +656,13 @@ def main() -> int:
             in_domain_threshold=calibration["in_domain_threshold"],
             relation_rescue_threshold=calibration["relation_rescue_threshold"],
             relation_thresholds=calibration["relation_thresholds"],
-            num_capabilities=len(CAPABILITY_LABELS),
+            num_intents=len(INTENT_LABELS),
         )
         failures = release_gate_failures(test_metrics)
         metrics = {
             "base_model": BASE_MODEL_ID,
             "base_revision": BASE_MODEL_REVISION,
-            "data_manifest_sha256": file_sha256(
-                args.dataset_dir / "manifest.json"
-            ),
+            "data_manifest_sha256": file_sha256(args.dataset_dir / "manifest.json"),
             "seed": SEED,
             "training": {
                 "epochs": args.epochs,
@@ -680,7 +670,7 @@ def main() -> int:
                 "max_length": args.max_length,
                 "learning_rate": LEARNING_RATE,
                 "weight_decay": WEIGHT_DECAY,
-                "capability_loss_weight": CAPABILITY_LOSS_WEIGHT,
+                "intent_loss_weight": INTENT_LOSS_WEIGHT,
                 "relation_loss_weight": RELATION_LOSS_WEIGHT,
                 "relation_positive_weights": relation_pos_weight_values,
                 "targeted_row_weight": TARGETED_ROW_WEIGHT,
@@ -724,6 +714,12 @@ def load_governed_data(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("contract") != "banking-conversation-router-data":
         raise ValueError("unexpected conversation-router dataset contract")
+    if int(manifest.get("format_version", 0)) != 2:
+        raise ValueError("unsupported conversation-router dataset version")
+    if tuple(manifest.get("intent_labels", ())) != INTENT_LABELS:
+        raise ValueError("dataset intent labels do not match the V5 contract")
+    if tuple(manifest.get("relation_labels", ())) != RELATION_LABELS:
+        raise ValueError("dataset relation labels do not match the V5 contract")
     rows_by_split: dict[str, list[dict[str, Any]]] = {}
     for entry in manifest["splits"]:
         split = str(entry["name"])
@@ -731,12 +727,19 @@ def load_governed_data(
         if file_sha256(path) != str(entry["sha256"]):
             raise ValueError(f"{split} dataset digest mismatch")
         rows_by_split[split] = [
-            json.loads(line)
-            for line in path.open(encoding="utf-8")
-            if line.strip()
+            json.loads(line) for line in path.open(encoding="utf-8") if line.strip()
         ]
     if set(rows_by_split) != {"train", "validation", "test"}:
         raise ValueError("dataset must contain train, validation, and test splits")
+    trajectory_splits: dict[str, str] = {}
+    for split, rows in rows_by_split.items():
+        for row in rows:
+            trajectory_id = str(row["trajectory_id"])
+            previous = trajectory_splits.setdefault(trajectory_id, split)
+            if previous != split:
+                raise ValueError(
+                    f"trajectory {trajectory_id!r} appears in both {previous} and {split}"
+                )
     return manifest, rows_by_split
 
 
@@ -755,8 +758,8 @@ def make_collate(tokenizer: Any, *, max_length: int) -> Any:
                 [int(row["domain_label"]) for row in rows],
                 dtype=torch.long,
             ),
-            "capability_labels": torch.tensor(
-                [int(row["capability_label"]) for row in rows],
+            "intent_labels": torch.tensor(
+                [int(row["intent_label"]) for row in rows],
                 dtype=torch.long,
             ),
             "relation_labels": torch.tensor(
@@ -766,8 +769,7 @@ def make_collate(tokenizer: Any, *, max_length: int) -> Any:
             "row_weights": torch.tensor(
                 [
                     TARGETED_ROW_WEIGHT
-                    if row["source"]
-                    == "self-authored-router-v4-use-case-alignment"
+                    if row["source"] == "self-authored-router-v5-use-case-alignment"
                     else 1.0
                     for row in rows
                 ],
@@ -798,7 +800,7 @@ def train_epoch(
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         domain_labels = batch["domain_labels"].to(device, non_blocking=True)
-        capability_labels = batch["capability_labels"].to(
+        intent_labels = batch["intent_labels"].to(
             device,
             non_blocking=True,
         )
@@ -809,7 +811,7 @@ def train_epoch(
             dtype=torch.float16,
             enabled=device.type == "cuda",
         ):
-            domain_logits, capability_logits, relation_logits = model(
+            domain_logits, intent_logits, relation_logits = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
@@ -819,17 +821,17 @@ def train_epoch(
                 reduction="none",
             )
             domain_loss = _weighted_mean(domain_losses, row_weights)
-            active_capability = capability_labels >= 0
-            capability_loss = (
+            active_intent = intent_labels >= 0
+            intent_loss = (
                 _weighted_mean(
                     nn.functional.cross_entropy(
-                        capability_logits[active_capability],
-                        capability_labels[active_capability],
+                        intent_logits[active_intent],
+                        intent_labels[active_intent],
                         reduction="none",
                     ),
-                    row_weights[active_capability],
+                    row_weights[active_intent],
                 )
-                if active_capability.any()
+                if active_intent.any()
                 else domain_loss.new_zeros(())
             )
             relation_losses = nn.functional.binary_cross_entropy_with_logits(
@@ -844,7 +846,7 @@ def train_epoch(
             )
             loss = (
                 domain_loss
-                + CAPABILITY_LOSS_WEIGHT * capability_loss
+                + INTENT_LOSS_WEIGHT * intent_loss
                 + RELATION_LOSS_WEIGHT * relation_loss
             )
         scaler.scale(loss).backward()
@@ -888,8 +890,8 @@ def predict(
     result: dict[str, list[Any]] = {
         "domain_probabilities": [],
         "domain_labels": [],
-        "capability_predictions": [],
-        "capability_labels": [],
+        "intent_predictions": [],
+        "intent_labels": [],
         "relation_probabilities": [],
         "relation_labels": [],
         "example_kinds": [],
@@ -907,7 +909,7 @@ def predict(
                 dtype=torch.float16,
                 enabled=device.type == "cuda",
             ):
-                domain_logits, capability_logits, relation_logits = model(
+                domain_logits, intent_logits, relation_logits = model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                 )
@@ -915,12 +917,8 @@ def predict(
                 torch.softmax(domain_logits.float(), dim=-1)[:, 1].cpu().tolist()
             )
             result["domain_labels"].extend(batch["domain_labels"].tolist())
-            result["capability_predictions"].extend(
-                capability_logits.argmax(dim=-1).cpu().tolist()
-            )
-            result["capability_labels"].extend(
-                batch["capability_labels"].tolist()
-            )
+            result["intent_predictions"].extend(intent_logits.argmax(dim=-1).cpu().tolist())
+            result["intent_labels"].extend(batch["intent_labels"].tolist())
             result["relation_probabilities"].extend(
                 torch.sigmoid(relation_logits.float()).cpu().tolist()
             )
@@ -950,32 +948,24 @@ def save_artifact(
         {
             "domain_head.weight": model.domain_head.weight.detach().cpu().contiguous(),
             "domain_head.bias": model.domain_head.bias.detach().cpu().contiguous(),
-            "capability_head.weight": (
-                model.capability_head.weight.detach().cpu().contiguous()
-            ),
-            "capability_head.bias": (
-                model.capability_head.bias.detach().cpu().contiguous()
-            ),
-            "relation_head.weight": (
-                model.relation_head.weight.detach().cpu().contiguous()
-            ),
-            "relation_head.bias": (
-                model.relation_head.bias.detach().cpu().contiguous()
-            ),
+            "intent_head.weight": (model.intent_head.weight.detach().cpu().contiguous()),
+            "intent_head.bias": (model.intent_head.bias.detach().cpu().contiguous()),
+            "relation_head.weight": (model.relation_head.weight.detach().cpu().contiguous()),
+            "relation_head.bias": (model.relation_head.bias.detach().cpu().contiguous()),
         },
         output / "classifier_heads.safetensors",
     )
     policy = metrics["policy"]
     router_config = {
         "contract": "banking-conversation-router",
-        "format_version": 2,
+        "format_version": 3,
         "architecture": "distilbert-cross-encoder-multitask",
         "base_model": BASE_MODEL_ID,
         "base_revision": BASE_MODEL_REVISION,
         "data_revision": data_revision,
         "data_manifest_sha256": metrics["data_manifest_sha256"],
         "domain_labels": ["out_of_domain", "in_domain"],
-        "capability_labels": list(CAPABILITY_LABELS),
+        "intent_labels": list(INTENT_LABELS),
         "relation_labels": list(RELATION_LABELS),
         "ood_banking_threshold": policy["ood_banking_threshold"],
         "in_domain_threshold": policy["in_domain_threshold"],
@@ -984,12 +974,14 @@ def save_artifact(
         "max_length": max_length,
         "max_exchanges": int(data_manifest.get("max_exchanges", 3)),
         "input_format": (
+            "[PRIOR_DIALOGUE_STATE]\\n{state_json}\\n"
             "[CURRENT_USER]\\n{text}\\n"
             "[PREVIOUS_ASSISTANT]\\n{assistant}\\n"
             "[PREVIOUS_USER]\\n{user}"
         ),
-        "capability_is_advisory": True,
-        "capability_enters_generation_prompt": False,
+        "intent_is_advisory": True,
+        "intent_enters_generation_prompt": False,
+        "lane_is_derived_from_intent": True,
     }
     (output / "router_config.json").write_text(
         json.dumps(router_config, indent=2, sort_keys=True) + "\n",
@@ -1014,7 +1006,7 @@ def save_artifact(
     ]
     manifest = {
         "contract": "banking-conversation-router-artifact",
-        "format_version": 2,
+        "format_version": 3,
         "implementation_version": os.environ.get("SOURCE_COMMIT", "local"),
         "release_eligible": metrics["release_eligible"],
         "signed": False,
@@ -1045,7 +1037,7 @@ def publish_artifact(
         folder_path=output,
         repo_id=destination_id,
         repo_type="model",
-        commit_message="Publish history-aware conversation router v4",
+        commit_message="Publish history-aware conversation router V5",
     )
     print(json.dumps({"stage": "published", "commit": str(commit)}), flush=True)
 
@@ -1118,16 +1110,13 @@ def _multilabel_macro_f1(
     scores = []
     for label_index in range(len(RELATION_LABELS)):
         true_positive = sum(
-            prediction[label_index] and truth[label_index]
-            for prediction, truth in pairs
+            prediction[label_index] and truth[label_index] for prediction, truth in pairs
         )
         false_positive = sum(
-            prediction[label_index] and not truth[label_index]
-            for prediction, truth in pairs
+            prediction[label_index] and not truth[label_index] for prediction, truth in pairs
         )
         false_negative = sum(
-            not prediction[label_index] and truth[label_index]
-            for prediction, truth in pairs
+            not prediction[label_index] and truth[label_index] for prediction, truth in pairs
         )
         denominator = 2 * true_positive + false_positive + false_negative
         if denominator:
@@ -1181,9 +1170,7 @@ def _expected_acceptance_rate(
     *,
     expected_label: int,
 ) -> float:
-    positions = [
-        index for index, label in enumerate(labels) if label == expected_label
-    ]
+    positions = [index for index, label in enumerate(labels) if label == expected_label]
     return _safe_ratio(
         sum(accepted[index] for index in positions),
         len(positions),
@@ -1196,9 +1183,7 @@ def _expected_rejection_rate(
     *,
     expected_label: int,
 ) -> float:
-    positions = [
-        index for index, label in enumerate(labels) if label == expected_label
-    ]
+    positions = [index for index, label in enumerate(labels) if label == expected_label]
     return _safe_ratio(
         sum(not accepted[index] for index in positions),
         len(positions),
@@ -1267,15 +1252,15 @@ tags:
 
 # Retail Bank Conversation Router
 
-History-aware DistilBERT cross-encoder with a supported-domain head, a coarse
-servicing-capability head, and independent conversation-relation labels.
-Capabilities are diagnostic and never authorize tools or enter the generation
-prompt.
+History-aware DistilBERT cross-encoder with a supported-domain head, a
+fine-grained intent head, and independent conversation-relation labels. The
+broad lane is derived from the intent. Intents are diagnostic and never
+authorize tools or enter the generation prompt.
 
 ## Held-out results
 
 - Release eligible: `{metrics["release_eligible"]}`
-- Capability macro F1: `{test["capability_macro_f1"]:.6f}`
+- Intent macro F1: `{test["intent_macro_f1"]:.6f}`
 - Relation macro F1: `{test["relation_macro_f1"]:.6f}`
 - In-domain false-refusal rate: `{test["in_domain_false_refusal_rate"]:.6f}`
 - OOD false-accept rate: `{test["ood_false_accept_rate"]:.6f}`
@@ -1290,8 +1275,9 @@ The governed corpus contains
 {data_manifest["report"]["split_counts"]["train"]} train,
 {data_manifest["report"]["split_counts"]["validation"]} validation, and
 {data_manifest["report"]["split_counts"]["test"]} test rows. Inputs include
-only prior visible user/assistant text and the current user turn; current-turn
-tool plans, tool results, expected outputs, and final answers are excluded.
+only prior visible user/assistant text, pre-turn dialogue state, and the current
+user turn; current-turn tool plans, tool results, expected outputs, and final
+answers are excluded.
 """
 
 

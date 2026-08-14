@@ -12,6 +12,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from hello_slm.banking_conversation_router_data import (
+    lane_for_intent,
     render_router_input_with_context,
 )
 
@@ -31,31 +32,55 @@ class ConversationRouteResult:
     confidence: float
     banking_probability: float
     ood_probability: float
-    capability: str | None
-    capability_confidence: float
-    capability_candidates: tuple[dict[str, float | str], ...]
+    intent: str | None
+    lane: str | None
+    intent_confidence: float
+    intent_candidates: tuple[dict[str, float | str], ...]
     relation_probabilities: dict[str, float]
     active_relations: tuple[str, ...]
     context_applied: bool
     reason: str
 
+    @property
+    def capability(self) -> str | None:
+        """V2 compatibility alias; V5 callers should use ``intent``."""
+        return self.intent
+
+    @property
+    def capability_confidence(self) -> float:
+        return self.intent_confidence
+
+    @property
+    def capability_candidates(self) -> tuple[dict[str, float | str], ...]:
+        return tuple(
+            {
+                "capability": candidate["intent"],
+                "probability": candidate["probability"],
+            }
+            for candidate in self.intent_candidates
+        )
+
 
 class ConversationRouterModel(nn.Module):
-    """One cross-encoder with domain, capability, and multi-label relation heads."""
+    """One shared encoder with domain, fine-intent, and relation heads."""
 
     def __init__(
         self,
         encoder: nn.Module,
         *,
         hidden_size: int,
-        num_capabilities: int,
         num_relations: int,
+        num_intents: int | None = None,
+        num_capabilities: int | None = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.dropout = nn.Dropout(0.1)
         self.domain_head = nn.Linear(hidden_size, 2)
-        self.capability_head = nn.Linear(hidden_size, num_capabilities)
+        intent_count = num_intents if num_intents is not None else num_capabilities
+        if intent_count is None:
+            raise ValueError("num_intents is required")
+        self.intent_head = nn.Linear(hidden_size, intent_count)
         self.relation_head = nn.Linear(hidden_size, num_relations)
 
     def forward(
@@ -68,20 +93,20 @@ class ConversationRouterModel(nn.Module):
         pooled = self.dropout(outputs.last_hidden_state[:, 0])
         return (
             self.domain_head(pooled),
-            self.capability_head(pooled),
+            self.intent_head(pooled),
             self.relation_head(pooled),
         )
 
 
 class LearnedConversationRouter:
-    """History-aware OOD/continuity gate with diagnostic servicing capabilities."""
+    """History-aware OOD/continuity gate with diagnostic fine intents."""
 
     def __init__(
         self,
         *,
         tokenizer: Any,
         model: ConversationRouterModel,
-        capability_labels: Sequence[str],
+        intent_labels: Sequence[str] | None = None,
         relation_labels: Sequence[str],
         ood_banking_threshold: float,
         in_domain_threshold: float,
@@ -90,15 +115,15 @@ class LearnedConversationRouter:
         max_length: int,
         max_exchanges: int = 3,
         device: torch.device | str = "cpu",
+        capability_labels: Sequence[str] | None = None,
     ) -> None:
-        if not capability_labels:
-            raise ValueError("capability_labels must not be empty")
+        labels = intent_labels if intent_labels is not None else capability_labels
+        if not labels:
+            raise ValueError("intent_labels must not be empty")
         if not relation_labels:
             raise ValueError("relation_labels must not be empty")
         if not 0.0 < ood_banking_threshold < in_domain_threshold < 1.0:
-            raise ValueError(
-                "domain thresholds must satisfy 0 < OOD < in-domain < 1"
-            )
+            raise ValueError("domain thresholds must satisfy 0 < OOD < in-domain < 1")
         if not 0.0 < relation_rescue_threshold < 1.0:
             raise ValueError("relation_rescue_threshold must be between zero and one")
         if max_length < 32:
@@ -108,7 +133,7 @@ class LearnedConversationRouter:
 
         self.tokenizer = tokenizer
         self.model = model
-        self.capability_labels = tuple(capability_labels)
+        self.intent_labels = tuple(labels)
         self.relation_labels = tuple(relation_labels)
         self.ood_banking_threshold = ood_banking_threshold
         self.in_domain_threshold = in_domain_threshold
@@ -144,18 +169,23 @@ class LearnedConversationRouter:
             local_files_only=True,
             trust_remote_code=False,
         )
-        capabilities = tuple(str(label) for label in config["capability_labels"])
+        format_version = int(config["format_version"])
+        label_key = "intent_labels" if format_version == 3 else "capability_labels"
+        intents = tuple(str(label) for label in config[label_key])
         relations = tuple(str(label) for label in config["relation_labels"])
         model = ConversationRouterModel(
             encoder,
             hidden_size=int(encoder.config.hidden_size),
-            num_capabilities=len(capabilities),
+            num_intents=len(intents),
             num_relations=len(relations),
         )
         heads = load_file(root / "classifier_heads.safetensors", device="cpu")
         for name, head in (
             ("domain_head", model.domain_head),
-            ("capability_head", model.capability_head),
+            (
+                "intent_head" if format_version == 3 else "capability_head",
+                model.intent_head,
+            ),
             ("relation_head", model.relation_head),
         ):
             head.load_state_dict(
@@ -168,7 +198,7 @@ class LearnedConversationRouter:
         return cls(
             tokenizer=tokenizer,
             model=model,
-            capability_labels=capabilities,
+            intent_labels=intents,
             relation_labels=relations,
             ood_banking_threshold=float(config["ood_banking_threshold"]),
             in_domain_threshold=float(config["in_domain_threshold"]),
@@ -190,9 +220,7 @@ class LearnedConversationRouter:
     ) -> LearnedConversationRouter:
         from huggingface_hub import snapshot_download
 
-        invalid_character = any(
-            character not in "0123456789abcdef" for character in revision
-        )
+        invalid_character = any(character not in "0123456789abcdef" for character in revision)
         if len(revision) != 40 or invalid_character:
             raise ValueError("revision must be an immutable 40-character commit")
         root = snapshot_download(repo_id=repo_id, revision=revision, token=token)
@@ -201,6 +229,8 @@ class LearnedConversationRouter:
     def classify(
         self,
         messages: Sequence[ChatMessage],
+        *,
+        prior_dialogue_state: Mapping[str, Any] | None = None,
     ) -> ConversationRouteResult:
         user_indices = [
             index
@@ -220,6 +250,7 @@ class LearnedConversationRouter:
             current,
             history,
             max_exchanges=self.max_exchanges,
+            prior_dialogue_state=prior_dialogue_state,
         )
         return self._predict(rendered, context_applied=context_applied)
 
@@ -241,11 +272,9 @@ class LearnedConversationRouter:
             if name in {"input_ids", "attention_mask"}
         }
         with torch.inference_mode():
-            domain_logits, capability_logits, relation_logits = self.model(**inputs)
+            domain_logits, intent_logits, relation_logits = self.model(**inputs)
 
-        banking_probability = float(
-            torch.softmax(domain_logits.float(), dim=-1)[0, 1].cpu()
-        )
+        banking_probability = float(torch.softmax(domain_logits.float(), dim=-1)[0, 1].cpu())
         ood_probability = 1.0 - banking_probability
         relation_values = torch.sigmoid(relation_logits.float())[0].cpu().tolist()
         relations = dict(zip(self.relation_labels, relation_values, strict=True))
@@ -258,6 +287,7 @@ class LearnedConversationRouter:
             relations.get("context_dependent", 0.0),
             relations.get("agent_repair", 0.0),
             relations.get("clarification_answer", 0.0),
+            relations.get("resume_previous_service", 0.0),
         )
 
         if banking_probability >= self.in_domain_threshold:
@@ -270,13 +300,13 @@ class LearnedConversationRouter:
         else:
             route = "uncertain"
 
-        capability_probabilities = torch.softmax(
-            capability_logits.float(),
+        intent_probabilities = torch.softmax(
+            intent_logits.float(),
             dim=-1,
         )[0]
-        candidate_count = min(3, len(self.capability_labels))
+        candidate_count = min(3, len(self.intent_labels))
         candidate_probabilities, candidate_indices = torch.topk(
-            capability_probabilities,
+            intent_probabilities,
             k=candidate_count,
         )
         candidate_items: list[dict[str, float | str]] = []
@@ -287,15 +317,13 @@ class LearnedConversationRouter:
         ):
             candidate_items.append(
                 {
-                "capability": self.capability_labels[int(index)],
-                "probability": float(probability),
+                    "intent": self.intent_labels[int(index)],
+                    "probability": float(probability),
                 }
             )
         candidates = tuple(candidate_items)
-        capability = (
-            str(candidates[0]["capability"]) if route == "in_domain" else None
-        )
-        capability_confidence = float(candidate_probabilities[0].cpu())
+        intent = str(candidates[0]["intent"]) if route == "in_domain" else None
+        intent_confidence = float(candidate_probabilities[0].cpu())
         confidence = (
             banking_probability
             if route == "in_domain"
@@ -314,9 +342,10 @@ class LearnedConversationRouter:
             confidence=confidence,
             banking_probability=banking_probability,
             ood_probability=ood_probability,
-            capability=capability,
-            capability_confidence=capability_confidence,
-            capability_candidates=candidates,
+            intent=intent,
+            lane=lane_for_intent(intent) if intent is not None else None,
+            intent_confidence=intent_confidence,
+            intent_candidates=candidates,
             relation_probabilities=relations,
             active_relations=active_relations,
             context_applied=context_applied,
@@ -346,8 +375,12 @@ def verify_router_artifact(root: Path) -> dict[str, Any]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("contract") != "banking-conversation-router":
         raise ValueError("unexpected router configuration contract")
-    if int(config.get("format_version", 0)) != 2:
+    format_version = int(config.get("format_version", 0))
+    if format_version not in {2, 3}:
         raise ValueError("unsupported router configuration version")
+    label_key = "intent_labels" if format_version == 3 else "capability_labels"
+    if not isinstance(config.get(label_key), list) or not config[label_key]:
+        raise ValueError(f"router configuration is missing {label_key}")
     return config
 
 

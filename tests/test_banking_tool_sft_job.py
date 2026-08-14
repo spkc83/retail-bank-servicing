@@ -38,9 +38,9 @@ def test_job_script_has_inline_dependencies_and_pinned_artifacts() -> None:
     assert "# /// script" in source
     assert '"trl==0.26.2"' in source
     assert '"trackio>=0.33,<0.34"' in source
-    assert assignments["MODEL_REPO"] == "spkc83/retail-bank-agent-9b"
-    assert assignments["DATASET_REPO"] == "spkc83/retail-bank-agent-sft"
-    assert assignments["BASE_REVISION"] == "1504002f650e656a0a3789d99574df12e3e94ed0"
+    assert assignments["MODEL_REPO"] == "spkc83/retail-bank-servicing-agent-9b"
+    assert assignments["DATASET_REPO"] == ("spkc83/retail-bank-servicing-alignment-sft")
+    assert assignments["BASE_REVISION"] == ("1d56824995aa1adecfe20f62ca42fb1c0c443817")
 
 
 def test_source_download_requires_a_commit_hash_before_network(
@@ -55,7 +55,7 @@ def test_source_download_requires_a_commit_hash_before_network(
 def test_job_command_preserves_five_hour_internal_budget() -> None:
     source = JOB_PATH.read_text(encoding="utf-8")
 
-    assert 'default=14_400' in source
+    assert "default=14_400" in source
     assert 'default="/data/retail-bank-agent-9b"' in source
     assert "snapshot_download(" in source
     assert 'repo_type="dataset"' in source
@@ -66,15 +66,13 @@ def test_job_command_preserves_five_hour_internal_budget() -> None:
     assert 'parser.add_argument("--resume-from")' in source
     assert 'command.extend(["--resume-from", args.resume_from])' in source
     assert 'parser.add_argument("--learning-rate", type=float, default=1e-4)' in source
-    assert 'str(args.learning_rate)' in source
-    assert 'args.trackio_project' in source
-    assert 'args.trackio_run_name' in source
+    assert "str(args.learning_rate)" in source
+    assert "args.trackio_project" in source
+    assert "args.trackio_run_name" in source
 
 
 def test_remote_launcher_mounts_durable_job_bucket() -> None:
-    launcher = Path(
-        "scripts/retail_bank/run_remote_training_job.sh"
-    ).read_text(encoding="utf-8")
+    launcher = Path("scripts/retail_bank/run_remote_training_job.sh").read_text(encoding="utf-8")
 
     assert "--volume hf://buckets/spkc83/jobs-artifacts:/data" in launcher
     assert (
@@ -182,7 +180,7 @@ def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:
     curl.chmod(0o755)
     hf = bin_dir / "hf"
     hf.write_text(
-        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$HF_LOG\"\n",
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n',
         encoding="utf-8",
     )
     hf.chmod(0o755)
@@ -225,9 +223,7 @@ def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:
 
 
 def test_post_training_evaluation_detaches_closed_trackio_callback() -> None:
-    worker_source = Path(
-        "scripts/retail_bank/cloud_train_tool_sft.py"
-    ).read_text(encoding="utf-8")
+    worker_source = Path("scripts/retail_bank/cloud_train_tool_sft.py").read_text(encoding="utf-8")
 
     assert "trainer.remove_callback(TrackioCallback)" in worker_source
     assert worker_source.index("trainer.remove_callback(TrackioCallback)") < (

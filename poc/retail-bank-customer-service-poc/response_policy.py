@@ -15,11 +15,100 @@ READ_VIEWS = {
     "list_transfers": ("Transfers", "transfers"),
 }
 
+INTERNAL_LANGUAGE_PATTERNS = {
+    "synthetic": re.compile(r"\bsynthetic\b", re.IGNORECASE),
+    "demo": re.compile(r"\bdemo(?:nstration)?\b", re.IGNORECASE),
+    "mock": re.compile(r"\bmock\b", re.IGNORECASE),
+    "test": re.compile(r"\btest(?:ing| data)?\b", re.IGNORECASE),
+    "backend": re.compile(r"\bback[- ]?end\b", re.IGNORECASE),
+    "model": re.compile(r"\b(?:language )?model\b|\b9b\b", re.IGNORECASE),
+    "router": re.compile(r"\b(?:classifier|router)\b", re.IGNORECASE),
+    "compute": re.compile(r"\b(?:gpu|cpu|cuda|zerogpu)\b", re.IGNORECASE),
+    "tool": re.compile(r"\btool(?: call| result|ing|s)?\b", re.IGNORECASE),
+}
+POLICY_CITATION = re.compile(r"\[Policy:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class GroundingValidation:
     valid: bool
     errors: tuple[str, ...]
+
+
+def validate_customer_facing_answer(answer: str) -> GroundingValidation:
+    """Reject implementation vocabulary that belongs in diagnostics, not chat."""
+
+    if not isinstance(answer, str) or not answer.strip():
+        return GroundingValidation(False, ("customer-facing answer is empty",))
+    errors = tuple(
+        f"answer contains internal term: {label}"
+        for label, pattern in INTERNAL_LANGUAGE_PATTERNS.items()
+        if pattern.search(answer)
+    )
+    return GroundingValidation(not errors, errors)
+
+
+def validate_policy_answer(
+    answer: str,
+    matches: Sequence[Mapping[str, Any]],
+) -> GroundingValidation:
+    """Require citations to the exact policy chunks supplied to generation."""
+
+    customer_validation = validate_customer_facing_answer(answer)
+    errors = list(customer_validation.errors)
+    allowed = {
+        str(match.get("chunk_id", "")).strip()
+        for match in matches
+        if isinstance(match.get("chunk_id"), str) and str(match.get("chunk_id")).strip()
+    }
+    citations = {value.strip() for value in POLICY_CITATION.findall(answer)}
+    if not allowed:
+        errors.append("policy generation received no authoritative chunks")
+    if not citations:
+        errors.append("policy answer is missing a policy citation")
+    invented = citations - allowed
+    if invented:
+        errors.append(f"policy answer cites unreturned chunks: {sorted(invented)}")
+    if citations and not citations & allowed:
+        errors.append("policy answer does not cite a returned chunk")
+    return GroundingValidation(not errors, tuple(errors))
+
+
+def build_customer_experience_repair_messages(
+    *,
+    user_message: str,
+    draft: str,
+    errors: Sequence[str],
+    authoritative_evidence: Sequence[Mapping[str, Any]] = (),
+) -> list[dict[str, str]]:
+    """Build one tools-disabled repair request without losing grounding evidence."""
+
+    payload = {
+        "customer_request": user_message,
+        "draft_answer": draft,
+        "validation_errors": list(errors),
+        "authoritative_evidence": [
+            _without_private_identifiers(item, public_id_keys={"chunk_id"})
+            for item in authoritative_evidence
+        ],
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Rewrite the answer as Harbor, the Harborlight Bank assistant. "
+                "Use only the authoritative evidence when it is present. Correct every "
+                "validation error, preserve valid policy citations exactly, and keep the "
+                "answer warm and concise. Do not mention prototypes, demos, synthetic "
+                "data, models, classifiers, tools, compute infrastructure, or internal "
+                "identifiers. Return only the final customer-facing answer."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        },
+    ]
 
 
 def render_read_tool_results(
@@ -253,11 +342,7 @@ def _call_name(call: Any) -> str:
 
 
 def _call_arguments(call: Any) -> Mapping[str, Any]:
-    value = (
-        call.get("arguments")
-        if isinstance(call, Mapping)
-        else getattr(call, "arguments", None)
-    )
+    value = call.get("arguments") if isinstance(call, Mapping) else getattr(call, "arguments", None)
     return value if isinstance(value, Mapping) else {}
 
 
@@ -284,13 +369,21 @@ def _private_identifiers(value: Any) -> set[str]:
     return identifiers
 
 
-def _without_private_identifiers(value: Any) -> Any:
+def _without_private_identifiers(
+    value: Any,
+    *,
+    public_id_keys: set[str] | None = None,
+) -> Any:
+    public_ids = public_id_keys or set()
     if isinstance(value, Mapping):
         return {
-            str(key): _without_private_identifiers(item)
+            str(key): _without_private_identifiers(
+                item,
+                public_id_keys=public_ids,
+            )
             for key, item in value.items()
-            if not str(key).endswith("_id")
+            if not str(key).endswith("_id") or str(key) in public_ids
         }
     if isinstance(value, list):
-        return [_without_private_identifiers(item) for item in value]
+        return [_without_private_identifiers(item, public_id_keys=public_ids) for item in value]
     return value

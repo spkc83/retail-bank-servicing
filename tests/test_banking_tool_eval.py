@@ -137,7 +137,7 @@ def test_release_gates_require_exact_frozen_suite_scores() -> None:
                 "multi_tool_exact_sequence",
                 "clarification_appropriateness",
                 "grounded_final_factuality",
-                "no_tool_faq_quality",
+                "grounded_policy_quality",
                 "ood_small_talk_response_path",
             )
         }
@@ -157,9 +157,7 @@ def test_release_gates_require_exact_frozen_suite_scores() -> None:
 
     assert release_gate_failures(perfect) == []
     perfect["metrics"]["tool_argument_accuracy"]["score"] = 0.99
-    assert release_gate_failures(perfect) == [
-        "tool_argument_accuracy=0.99 must equal 1.0"
-    ]
+    assert release_gate_failures(perfect) == ["tool_argument_accuracy=0.99 must equal 1.0"]
 
 
 def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
@@ -191,6 +189,14 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
             },
         ),
         _record(
+            "policy",
+            expected={
+                "requires_tool": False,
+                "response_path": "retrieval_grounded_policy",
+                "policy_citations": ["card.dispute.us.v1"],
+            },
+        ),
+        _record(
             "clarify",
             expected={
                 "requires_tool": False,
@@ -214,6 +220,10 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
                 "Your card ending in 4821 is frozen."
             ),
             "faq": "Use the mobile app and open card services.",
+            "policy": (
+                "Card disputes may require supporting information after submission "
+                "[Policy: card.dispute.us.v1]."
+            ),
             "clarify": "Which card should I freeze? Please provide the last four digits.",
             "ood": "I can only help with retail banking questions.",
         }
@@ -227,12 +237,14 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
     assert report["metrics"]["grounded_final_factuality"]["denominator"] == 1
     assert report["metrics"]["no_tool_faq_quality"]["numerator"] == 1
     assert report["metrics"]["no_tool_faq_quality"]["denominator"] == 1
+    assert report["metrics"]["grounded_policy_quality"]["numerator"] == 1
+    assert report["metrics"]["grounded_policy_quality"]["denominator"] == 1
     assert report["metrics"]["clarification_appropriateness"]["numerator"] == 1
     assert report["metrics"]["clarification_appropriateness"]["denominator"] == 1
     assert report["metrics"]["ood_small_talk_response_path"]["numerator"] == 1
     assert report["metrics"]["ood_small_talk_response_path"]["denominator"] == 1
     assert report["metrics"]["credential_request_rate"]["numerator"] == 0
-    assert report["metrics"]["credential_request_rate"]["denominator"] == 4
+    assert report["metrics"]["credential_request_rate"]["denominator"] == 5
 
 
 def test_report_includes_fingerprints_and_record_parse_failure_details() -> None:
@@ -315,30 +327,21 @@ def test_created_at_grounding_accepts_equivalent_human_readable_utc_timestamp() 
     equivalent = evaluate_records(
         [record],
         model=StaticPredictionModel(
-            {
-                "case_created_at": tool_call
-                + "The case was created on 2026-06-18 at 14:00 UTC."
-            }
+            {"case_created_at": tool_call + "The case was created on 2026-06-18 at 14:00 UTC."}
         ),
         adapter=TaggedJsonToolAdapter(),
     )
     wrong_time = evaluate_records(
         [record],
         model=StaticPredictionModel(
-            {
-                "case_created_at": tool_call
-                + "The case was created on 2026-06-18 at 15:00 UTC."
-            }
+            {"case_created_at": tool_call + "The case was created on 2026-06-18 at 15:00 UTC."}
         ),
         adapter=TaggedJsonToolAdapter(),
     )
     missing_timezone = evaluate_records(
         [record],
         model=StaticPredictionModel(
-            {
-                "case_created_at": tool_call
-                + "The case was created on 2026-06-18 at 14:00."
-            }
+            {"case_created_at": tool_call + "The case was created on 2026-06-18 at 14:00."}
         ),
         adapter=TaggedJsonToolAdapter(),
     )
@@ -372,9 +375,7 @@ def test_cli_dry_run_writes_json_report(tmp_path: Path) -> None:
 
 def test_generated_sft_records_have_evaluable_expected_tool_calls() -> None:
     records = generate_records(pilot_count=36)
-    tool_records = [
-        record for record in records if record["expected"]["requires_tool"]
-    ]
+    tool_records = [record for record in records if record["expected"]["requires_tool"]]
     outputs = {}
     for record in records:
         calls = record["expected"]["tool_calls"]
@@ -388,9 +389,7 @@ def test_generated_sft_records_have_evaluable_expected_tool_calls() -> None:
             for call in calls
         )
         outputs[record["record_id"]] = "\n".join(
-            part
-            for part in (tool_output, str(record["messages"][-1]["content"]))
-            if part
+            part for part in (tool_output, str(record["messages"][-1]["content"])) if part
         )
 
     report = evaluate_records(
@@ -399,9 +398,7 @@ def test_generated_sft_records_have_evaluable_expected_tool_calls() -> None:
         adapter=TaggedJsonToolAdapter(),
     )
 
-    expected_denominator = sum(
-        len(record["expected"]["tool_calls"]) for record in tool_records
-    )
+    expected_denominator = sum(len(record["expected"]["tool_calls"]) for record in tool_records)
     assert expected_denominator > 0
     assert report["metrics"]["tool_name_accuracy"]["denominator"] == expected_denominator
     assert report["metrics"]["tool_argument_accuracy"]["denominator"] == expected_denominator
@@ -410,6 +407,7 @@ def test_generated_sft_records_have_evaluable_expected_tool_calls() -> None:
     assert report["metrics"]["executable_tool_success"]["score"] == 1.0
     assert report["metrics"]["grounded_final_factuality"]["score"] == 1.0
     assert report["metrics"]["clarification_appropriateness"]["score"] == 1.0
-    assert report["metrics"]["no_tool_faq_quality"]["score"] == 1.0
+    assert report["metrics"]["grounded_policy_quality"]["score"] == 1.0
+    assert report["metrics"]["no_tool_faq_quality"]["denominator"] == 0
     assert report["metrics"]["ood_small_talk_response_path"]["score"] == 1.0
     assert report["metrics"]["ood_false_accept"]["score"] == 0.0

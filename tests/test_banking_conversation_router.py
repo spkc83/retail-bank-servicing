@@ -38,22 +38,20 @@ class FakeEncoder(nn.Module):
     ) -> SimpleNamespace:
         del attention_mask
         value = input_ids.float().unsqueeze(-1)
-        return SimpleNamespace(
-            last_hidden_state=torch.cat((value, 1.0 - value), dim=-1)
-        )
+        return SimpleNamespace(last_hidden_state=torch.cat((value, 1.0 - value), dim=-1))
 
 
 def make_router(
     *,
     domain_logits: tuple[float, float],
-    relation_logits: tuple[float, float, float, float],
+    relation_logits: tuple[float, float, float, float, float],
 ) -> tuple[LearnedConversationRouter, RecordingTokenizer]:
     tokenizer = RecordingTokenizer()
     model = ConversationRouterModel(
         FakeEncoder(),
         hidden_size=2,
-        num_capabilities=2,
-        num_relations=4,
+        num_intents=2,
+        num_relations=5,
     )
 
     def fixed_forward(
@@ -73,12 +71,13 @@ def make_router(
         LearnedConversationRouter(
             tokenizer=tokenizer,
             model=model,
-            capability_labels=("service_cases", "cards"),
+            intent_labels=("view_service_cases", "view_cards"),
             relation_labels=(
                 "context_dependent",
                 "agent_repair",
                 "topic_shift",
                 "clarification_answer",
+                "resume_previous_service",
             ),
             ood_banking_threshold=0.20,
             in_domain_threshold=0.50,
@@ -102,7 +101,7 @@ def banking_history() -> list[ChatMessage]:
 def test_cross_encoder_always_receives_history_and_current_together() -> None:
     router, tokenizer = make_router(
         domain_logits=(-4.0, 4.0),
-        relation_logits=(4.0, -4.0, -4.0, -4.0),
+        relation_logits=(4.0, -4.0, -4.0, -4.0, -4.0),
     )
 
     result = router.classify(
@@ -113,7 +112,8 @@ def test_cross_encoder_always_receives_history_and_current_together() -> None:
     )
 
     assert result.route == "in_domain"
-    assert result.capability == "service_cases"
+    assert result.intent == "view_service_cases"
+    assert result.lane == "servicing"
     assert tokenizer.rendered.startswith("[CURRENT_USER]\nWhen was that created?")
     assert "[PREVIOUS_ASSISTANT]\nYou have a closed mailing-address" in tokenizer.rendered
     assert "[PREVIOUS_USER]\nShow my recent service cases." in tokenizer.rendered
@@ -123,7 +123,7 @@ def test_cross_encoder_always_receives_history_and_current_together() -> None:
 def test_incomplete_history_is_not_reported_as_applied_context() -> None:
     router, tokenizer = make_router(
         domain_logits=(-4.0, 4.0),
-        relation_logits=(-4.0, -4.0, -4.0, -4.0),
+        relation_logits=(-4.0, -4.0, -4.0, -4.0, -4.0),
     )
 
     result = router.classify(
@@ -140,7 +140,7 @@ def test_incomplete_history_is_not_reported_as_applied_context() -> None:
 def test_high_confidence_external_ood_is_blocked_without_context_signal() -> None:
     router, _ = make_router(
         domain_logits=(5.0, -5.0),
-        relation_logits=(-5.0, -5.0, 5.0, -5.0),
+        relation_logits=(-5.0, -5.0, 5.0, -5.0, -5.0),
     )
 
     result = router.classify(
@@ -159,7 +159,7 @@ def test_high_confidence_external_ood_is_blocked_without_context_signal() -> Non
 def test_context_repair_and_clarification_rescue_an_ood_score(
     rescue_index: int,
 ) -> None:
-    relation_logits = [-5.0, -5.0, -5.0, -5.0]
+    relation_logits = [-5.0, -5.0, -5.0, -5.0, -5.0]
     relation_logits[rescue_index] = 5.0
     router, _ = make_router(
         domain_logits=(5.0, -5.0),
@@ -174,10 +174,40 @@ def test_context_repair_and_clarification_rescue_an_ood_score(
     )
 
     assert result.route == "uncertain"
-    assert result.capability is None
+    assert result.intent is None
 
 
-def test_manifest_verification_rejects_corrupt_v4_artifact(tmp_path: Path) -> None:
+def test_prior_dialogue_state_is_rendered_before_history_and_enables_resume() -> None:
+    router, tokenizer = make_router(
+        domain_logits=(-4.0, 4.0),
+        relation_logits=(4.0, -4.0, -4.0, -4.0, 4.0),
+    )
+
+    result = router.classify(
+        [ChatMessage(role="user", content="Let's continue with that.")],
+        prior_dialogue_state={
+            "version": 1,
+            "pending_servicing": {
+                "intent": "dispute_transaction",
+                "phase": "awaiting_user",
+            },
+            "knowledge_detour_active": True,
+        },
+    )
+
+    assert tokenizer.rendered.index("[PRIOR_DIALOGUE_STATE]") < tokenizer.rendered.index(
+        "[CURRENT_USER]"
+    )
+    assert "dispute_transaction" in tokenizer.rendered
+    assert result.active_relations == (
+        "context_dependent",
+        "resume_previous_service",
+    )
+
+
+def test_manifest_verification_accepts_v2_and_rejects_corrupt_artifact(
+    tmp_path: Path,
+) -> None:
     config = {
         "contract": "banking-conversation-router",
         "format_version": 2,
@@ -208,3 +238,30 @@ def test_manifest_verification_rejects_corrupt_v4_artifact(tmp_path: Path) -> No
     config_path.write_text("corrupt", encoding="utf-8")
     with pytest.raises(ValueError, match="size mismatch|digest mismatch"):
         verify_router_artifact(tmp_path)
+
+
+def test_manifest_verification_accepts_explicit_v3_intent_contract(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "contract": "banking-conversation-router",
+        "format_version": 3,
+        "intent_labels": ["view_accounts"],
+        "relation_labels": ["resume_previous_service"],
+    }
+    config_path = tmp_path / "router_config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    manifest = {
+        "contract": "banking-conversation-router-artifact",
+        "release_eligible": True,
+        "files": [
+            {
+                "path": "router_config.json",
+                "bytes": config_path.stat().st_size,
+                "sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert verify_router_artifact(tmp_path)["intent_labels"] == ["view_accounts"]

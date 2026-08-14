@@ -2,16 +2,17 @@ from __future__ import annotations
 
 from model_service import ToolCall
 from response_policy import (
+    build_customer_experience_repair_messages,
     build_final_repair_messages,
     render_read_tool_results,
+    validate_customer_facing_answer,
     validate_grounded_answer,
+    validate_policy_answer,
 )
 
 
 def test_read_results_render_exact_markdown_tables() -> None:
-    calls = (
-        ToolCall(id="call_transactions", index=0, name="list_transactions", arguments={}),
-    )
+    calls = (ToolCall(id="call_transactions", index=0, name="list_transactions", arguments={}),)
     results = (
         {
             "ok": True,
@@ -47,9 +48,12 @@ def test_read_renderer_does_not_override_write_or_failed_results() -> None:
     failed_read = ToolCall(id="call_accounts", index=0, name="list_accounts", arguments={})
 
     assert render_read_tool_results((write_call,), ({"ok": True, "result": {}},)) is None
-    assert render_read_tool_results(
-        (failed_read,), ({"ok": False, "error": {"code": "backend_error"}},)
-    ) is None
+    assert (
+        render_read_tool_results(
+            (failed_read,), ({"ok": False, "error": {"code": "backend_error"}},)
+        )
+        is None
+    )
 
 
 def test_grounding_validator_requires_action_outcome_and_selector() -> None:
@@ -123,3 +127,58 @@ def test_grounding_policy_rejects_and_redacts_private_backend_identifiers() -> N
     assert not validation.valid
     assert "trf_internal_100" not in repair[-1]["content"]
     assert "acct_internal_200" not in repair[-1]["content"]
+
+
+def test_customer_facing_validator_rejects_internal_implementation_language() -> None:
+    validation = validate_customer_facing_answer(
+        "I can help with the synthetic accounts in this demo on the CPU backend."
+    )
+
+    assert not validation.valid
+    assert "synthetic" in " ".join(validation.errors)
+    assert "demo" in " ".join(validation.errors)
+    assert "backend" in " ".join(validation.errors)
+    assert validate_customer_facing_answer(
+        "Hi, I’m Harbor. How can I help with your banking today?"
+    ).valid
+
+
+def test_policy_answer_requires_returned_citation_and_rejects_invented_citations() -> None:
+    matches = (
+        {
+            "chunk_id": "mortgage.application.overview.us.v1",
+            "title": "Mortgage application overview",
+            "text": "A mortgage application is reviewed before approval.",
+        },
+    )
+
+    missing = validate_policy_answer("Applications are reviewed.", matches)
+    invented = validate_policy_answer(
+        "Applications are reviewed. [Policy: mortgage.rates.us.v9]", matches
+    )
+    valid = validate_policy_answer(
+        "Applications are reviewed before approval. [Policy: mortgage.application.overview.us.v1]",
+        matches,
+    )
+
+    assert not missing.valid
+    assert not invented.valid
+    assert valid.valid
+
+
+def test_customer_experience_repair_receives_authoritative_evidence() -> None:
+    repair = build_customer_experience_repair_messages(
+        user_message="Can I apply for a mortgage?",
+        draft="This demo can explain it.",
+        errors=("answer contains internal term: demo",),
+        authoritative_evidence=(
+            {
+                "chunk_id": "mortgage.application.overview.us.v1",
+                "text": "Applications are reviewed before approval.",
+            },
+        ),
+    )
+
+    assert "Harborlight Bank" in repair[0]["content"]
+    assert "authoritative_evidence" in repair[-1]["content"]
+    assert "mortgage.application.overview.us.v1" in repair[-1]["content"]

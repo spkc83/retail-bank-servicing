@@ -1,0 +1,71 @@
+{
+  "alignment_split_counts": {
+    "test": 35,
+    "train": 384,
+    "validation": 96
+  },
+  "base_manifest_sha256": "a81de72cc3cd977981aed384935feb2f122a4f308486e78e0a83ee38bf653726",
+  "base_split_counts": {
+    "test": 181,
+    "train": 838,
+    "validation": 181
+  },
+  "contract": "banking-servicing-alignment-sft-report",
+  "created_at": "2026-07-31T00:00:00Z",
+  "generator_version": "banking-servicing-alignment-sft/v5",
+  "heldout_exact_currents_in_train": [],
+  "path_counts": {
+    "test": {
+      "multi_turn": 26,
+      "ood": 5,
+      "retrieval_grounded_policy": 4
+    },
+    "train": {
+      "multi_turn": 320,
+      "ood": 32,
+      "retrieval_grounded_policy": 32
+    },
+    "validation": {
+      "multi_turn": 80,
+      "ood": 8,
+      "retrieval_grounded_policy": 8
+    }
+  },
+  "pii_matches": 0,
+  "scenario_family_counts": {
+    "test": {
+      "banking_topic_shift": 4,
+      "card_anaphora_action": 8,
+      "external_topic_shift": 4,
+      "heldout_screenshot_regression": 3,
+      "policy_detour": 4,
+      "policy_resume": 4,
+      "service_case_context": 8
+    },
+    "train": {
+      "agent_repair": 64,
+      "banking_topic_shift": 32,
+      "card_anaphora_action": 64,
+      "clarification_answer": 64,
+      "external_topic_shift": 32,
+      "policy_detour": 32,
+      "policy_resume": 32,
+      "service_case_context": 64
+    },
+    "validation": {
+      "agent_repair": 16,
+      "banking_topic_shift": 8,
+      "card_anaphora_action": 16,
+      "clarification_answer": 16,
+      "external_topic_shift": 8,
+      "policy_detour": 8,
+      "policy_resume": 8,
+      "service_case_context": 16
+    }
+  },
+  "split_counts": {
+    "test": 216,
+    "train": 1222,
+    "validation": 277
+  }
+}

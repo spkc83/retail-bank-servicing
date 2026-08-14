@@ -12,6 +12,7 @@ from typing import Any
 from hello_slm.banking_tool_sft_data import (
     BANKING_TOOL_SFT_CONTRACT,
     NO_TOOL_OOD_RESPONSE,
+    POLICY_CHUNKS,
     SYSTEM_PROMPT,
     validate_banking_tool_sft_manifest,
     validate_records,
@@ -20,12 +21,10 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v4"
-DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v4")
-DEFAULT_BASE_SFT_DIR = Path("data/banking-v3-tool-sft")
-DEFAULT_SYNTHETIC_BANK_PATH = Path(
-    "poc/retail-bank-customer-service-poc/synthetic_bank.json"
-)
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v5"
+DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
+DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
+DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
 
 SCREENSHOT_HELDOUT_CURRENTS = frozenset(
     {
@@ -65,15 +64,29 @@ REALIZATION_CONTEXTS = {
         "I am continuing from the details above",
         "I need to resolve this during the same session",
     ),
-    "test": (
-        "I am referring to the result from the previous turn",
-    ),
+    "test": ("I am referring to the result from the previous turn",),
 }
 REALIZATION_REQUESTS = (
     "Please keep the answer concise",
     "Use the information from this conversation",
     "Check the signed-in profile rather than asking for a private ID",
     "Tell me what you find and what happened",
+)
+FINAL_OPENERS = (
+    "",
+    "Here is the current update:",
+    "I reviewed the conversation and account details.",
+    "For clarity,",
+    "The relevant information is this:",
+    "Here is the concise result:",
+    "I checked the available details.",
+    "Based on this conversation,",
+)
+FINAL_CLOSERS = (
+    "",
+    "I can help with the related next step.",
+    "This keeps the response focused on your request.",
+    "That reflects the information in this session.",
 )
 
 
@@ -127,9 +140,7 @@ def load_base_sft_splits(
         if file_sha256(path) != str(entry["sha256"]):
             raise ValueError(f"base SFT {split} digest mismatch")
         splits[split] = [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line
         ]
     if set(splits) != set(SPLITS):
         raise ValueError("base SFT must contain train, validation, and test splits")
@@ -144,22 +155,15 @@ def write_servicing_alignment_dataset(
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
     base_manifest, base_splits = load_base_sft_splits(base_sft_dir)
-    splits = {
-        split: [*base_splits[split], *alignment_splits[split]]
-        for split in SPLITS
-    }
+    splits = {split: [*base_splits[split], *alignment_splits[split]] for split in SPLITS}
     validate_servicing_alignment_splits(splits)
     if _heldout_exact_currents_in_train(splits):
         raise ValueError("held-out screenshot currents leaked into composite training")
     report = {
         **alignment_report,
         "split_counts": {split: len(rows) for split, rows in splits.items()},
-        "base_split_counts": {
-            split: len(rows) for split, rows in base_splits.items()
-        },
-        "alignment_split_counts": {
-            split: len(rows) for split, rows in alignment_splits.items()
-        },
+        "base_split_counts": {split: len(rows) for split, rows in base_splits.items()},
+        "alignment_split_counts": {split: len(rows) for split, rows in alignment_splits.items()},
         "base_manifest_sha256": file_sha256(base_sft_dir / "manifest.json"),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -184,7 +188,7 @@ def write_servicing_alignment_dataset(
         )
     manifest = {
         "format_version": 1,
-        "name": "retail-bank-servicing-alignment-v4",
+        "name": "retail-bank-servicing-alignment-v5",
         "created_at": CREATED_AT,
         "contract": "banking-tool-sft-manifest",
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
@@ -202,7 +206,7 @@ def write_servicing_alignment_dataset(
                 "role": "servicing-alignment-continuation-sft",
                 "license": "MIT",
                 "trainable": True,
-            }
+            },
         },
         "synthetic_bank_sha256": file_sha256(synthetic_bank_path),
         "report": report,
@@ -226,6 +230,7 @@ def _train_records() -> list[dict[str, Any]]:
     records.extend(_clarifications("train"))
     records.extend(_agent_repairs("train"))
     records.extend(_topic_shifts("train"))
+    records.extend(_policy_detour_and_resume("train"))
     return _expand_records(records, split="train")
 
 
@@ -236,6 +241,7 @@ def _validation_records() -> list[dict[str, Any]]:
     records.extend(_clarifications("validation"))
     records.extend(_agent_repairs("validation"))
     records.extend(_topic_shifts("validation"))
+    records.extend(_policy_detour_and_resume("validation"))
     return _expand_records(records, split="validation")
 
 
@@ -244,6 +250,7 @@ def _test_records() -> list[dict[str, Any]]:
     records.extend(_service_case_followups("test"))
     records.extend(_card_anaphora("test"))
     records.extend(_topic_shifts("test"))
+    records.extend(_policy_detour_and_resume("test"))
     return [
         *_expand_records(records, split="test"),
         *_heldout_regression_records(),
@@ -301,7 +308,7 @@ def _card_anaphora(split: str) -> list[dict[str, Any]]:
             current=f"Please replace the active card you just listed{suffix}.",
             final=(
                 "Replacement is pending for the Everyday Visa Debit card ending "
-                "in 4821."
+                "in 4821. That replacement request has been submitted."
             ),
             tool_plan=[("replace_card", {"last4": "4821"})],
             grounding_facts=["card.last4=4821", "card.status=replacement_pending"],
@@ -330,10 +337,7 @@ def _clarifications(split: str) -> list[dict[str, Any]]:
             split=split,
             scenario_family="clarification_answer",
             current=f"It is 4821{suffix}.",
-            final=(
-                "Replacement is pending for your Everyday Visa Debit card ending "
-                "in 4821."
-            ),
+            final=("Replacement is pending for your Everyday Visa Debit card ending in 4821."),
             tool_plan=[("replace_card", {"last4": "4821"})],
             grounding_facts=["card.last4=4821", "card.status=replacement_pending"],
             path="multi_turn",
@@ -351,7 +355,10 @@ def _clarifications(split: str) -> list[dict[str, Any]]:
             split=split,
             scenario_family="clarification_answer",
             current=f"The North Harbor Market one{suffix}.",
-            final="I opened a dispute for the North Harbor Market transaction.",
+            final=(
+                "Using your clarification, I opened a dispute for the North Harbor "
+                "Market transaction."
+            ),
             tool_plan=[("dispute_transaction", {"description": "North Harbor Market"})],
             grounding_facts=[
                 "transaction.description=North Harbor Market",
@@ -423,7 +430,10 @@ def _topic_shifts(split: str) -> list[dict[str, Any]]:
             split=split,
             scenario_family="external_topic_shift",
             current=f"What is the weather near North Harbor{suffix}?",
-            final=NO_TOOL_OOD_RESPONSE,
+            final=(
+                "I can’t provide weather information. Harbor can help with accounts, "
+                "cards, transfers, payments, loans, and related retail banking support."
+            ),
             tool_plan=[],
             grounding_facts=[],
             path="ood",
@@ -445,6 +455,65 @@ def _topic_shifts(split: str) -> list[dict[str, Any]]:
             pre_messages=[
                 _user(f"What is the weather near North Harbor{suffix}?"),
                 _assistant(NO_TOOL_OOD_RESPONSE, loss=False),
+            ],
+        ),
+    ]
+
+
+def _policy_detour_and_resume(split: str) -> list[dict[str, Any]]:
+    suffix = _suffix(split)
+    chunk = POLICY_CHUNKS["faq-savings-interest-v1"]
+    policy_answer = (
+        "Savings interest uses the account balance and disclosed annual percentage "
+        "yield; the account disclosure gives the compounding and crediting schedule "
+        f"[Policy: {chunk['chunk_id']}]."
+    )
+    pending_history = [
+        _user(f"I need to dispute the North Harbor Market debit{suffix}."),
+        _assistant(
+            "I can help with that dispute. Before I submit it, what would you like to know?",
+            loss=False,
+        ),
+    ]
+    return [
+        _record(
+            record_id=f"policy_detour_{split}",
+            split=split,
+            scenario_family="policy_detour",
+            current=f"First, how does savings interest work{suffix}?",
+            final=policy_answer,
+            tool_plan=[],
+            grounding_facts=[f"policy.chunk_id={chunk['chunk_id']}"],
+            path="retrieval_grounded_policy",
+            pre_messages=pending_history,
+            policy=chunk,
+        ),
+        _record(
+            record_id=f"policy_resume_{split}",
+            split=split,
+            scenario_family="policy_resume",
+            current=f"Thanks. Continue with that dispute{suffix}.",
+            final=(
+                "I resumed your earlier request and opened a dispute for the North "
+                "Harbor Market transaction."
+            ),
+            tool_plan=[("dispute_transaction", {"description": "North Harbor Market"})],
+            grounding_facts=[
+                "transaction.description=North Harbor Market",
+                "transaction.disputed=true",
+            ],
+            path="multi_turn",
+            pre_messages=[
+                *pending_history,
+                _message(
+                    "system",
+                    "Authoritative Harborlight Bank policy context. Answer only from this "
+                    "context and cite the bracketed policy chunk ID.\n"
+                    f"[Policy: {chunk['chunk_id']}] {chunk['title']}: {chunk['text']}",
+                    loss=False,
+                ),
+                _user(f"First, how does savings interest work{suffix}?"),
+                _assistant(policy_answer, loss=False),
             ],
         ),
     ]
@@ -472,10 +541,7 @@ def _heldout_regression_records() -> list[dict[str, Any]]:
             split="test",
             scenario_family="heldout_screenshot_regression",
             current="ok, thats the one i want to replace",
-            final=(
-                "Replacement is pending for the Everyday Visa Debit card ending "
-                "in 4821."
-            ),
+            final=("Replacement is pending for the Everyday Visa Debit card ending in 4821."),
             tool_plan=[("replace_card", {"last4": "4821"})],
             grounding_facts=["card.last4=4821", "card.status=replacement_pending"],
             path="multi_turn",
@@ -486,7 +552,10 @@ def _heldout_regression_records() -> list[dict[str, Any]]:
             split="test",
             scenario_family="heldout_screenshot_regression",
             current="what about the weather there?",
-            final=NO_TOOL_OOD_RESPONSE,
+            final=(
+                "Weather is outside the retail banking support I provide. I can help you return "
+                "to an account, card, transfer, payment, loan, or service request."
+            ),
             tool_plan=[],
             grounding_facts=[],
             path="ood",
@@ -502,11 +571,7 @@ def _expand_records(
 ) -> list[dict[str, Any]]:
     realization_count = REALIZATION_COUNTS[split]
     contexts = REALIZATION_CONTEXTS[split]
-    combinations = [
-        (context, request)
-        for context in contexts
-        for request in REALIZATION_REQUESTS
-    ]
+    combinations = [(context, request) for context in contexts for request in REALIZATION_REQUESTS]
     if len(combinations) != realization_count:
         raise ValueError(f"realization configuration mismatch for {split}")
     expanded = []
@@ -524,6 +589,11 @@ def _expand_records(
                 raise ValueError(f"{old_id} has no user message")
             current = str(current_message["content"]).strip()
             current_message["content"] = f"{current} {context}. {request}."
+            record["messages"][-1]["content"] = _varied_final(
+                str(record["messages"][-1]["content"]),
+                split=split,
+                realization=realization,
+            )
             for message in record["messages"]:
                 for tool_call in message.get("tool_calls", []):
                     call_id = str(tool_call["id"]).replace(old_id, new_id)
@@ -538,19 +608,13 @@ def _expand_records(
                 for call_id in record["expected"]["ordered_calls"]
             ]
             if record["expected"]["requires_tool"]:
-                record["expected"]["final_state_hash"] = (
-                    f"sha256:{_sha256_text(new_id)}"
-                )
+                record["expected"]["final_state_hash"] = f"sha256:{_sha256_text(new_id)}"
             record["split_keys"]["template_id"] = old_id
             record["split_keys"]["realization_seed"] = (
                 f"servicing-alignment-{split}-{realization:03d}"
             )
-            record["validation"]["replay_hash"] = (
-                f"sha256:{_sha256_text(new_id + '|replay')}"
-            )
-            record["metadata"]["split_group"] = (
-                f"{record['metadata']['scenario_family']}|{new_id}"
-            )
+            record["validation"]["replay_hash"] = f"sha256:{_sha256_text(new_id + '|replay')}"
+            record["metadata"]["split_group"] = f"{record['metadata']['scenario_family']}|{new_id}"
             expanded.append(record)
     return expanded
 
@@ -566,8 +630,19 @@ def _record(
     grounding_facts: Sequence[str],
     path: str,
     pre_messages: Sequence[dict[str, Any]],
+    policy: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     messages = [_message("system", SYSTEM_PROMPT, loss=False), *pre_messages]
+    if policy is not None:
+        messages.append(
+            _message(
+                "system",
+                "Authoritative Harborlight Bank policy context. Answer only from this "
+                "context and cite the bracketed policy chunk ID.\n"
+                f"[Policy: {policy['chunk_id']}] {policy['title']}: {policy['text']}",
+                loss=False,
+            )
+        )
     messages.append(_user(current))
     ordered_calls = []
     expected_calls = []
@@ -595,18 +670,21 @@ def _record(
         )
         messages.append(_tool_result(call_id, tool_name))
     messages.append(_assistant(final, loss=True))
+    expected = {
+        "requires_tool": bool(tool_plan),
+        "ordered_calls": ordered_calls,
+        "tool_calls": expected_calls,
+        "final_state_hash": f"sha256:{_sha256_text(record_id)}" if tool_plan else None,
+        "grounding_facts": list(grounding_facts),
+        "path": path,
+    }
+    if policy is not None:
+        expected["policy_citations"] = [str(policy["chunk_id"])]
     return {
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "record_id": record_id,
         "messages": messages,
-        "expected": {
-            "requires_tool": bool(tool_plan),
-            "ordered_calls": ordered_calls,
-            "tool_calls": expected_calls,
-            "final_state_hash": f"sha256:{_sha256_text(record_id)}" if tool_plan else None,
-            "grounding_facts": list(grounding_facts),
-            "path": path,
-        },
+        "expected": expected,
         "split_keys": {
             "scenario_family": scenario_family,
             "state_seed": f"alignment-{split}-{scenario_family}",
@@ -636,6 +714,17 @@ def _record(
             "split_group": f"{scenario_family}|{record_id}",
         },
     }
+
+
+def _varied_final(final: str, *, split: str, realization: int) -> str:
+    split_lead = {
+        "train": "",
+        "validation": "For this request,",
+        "test": "In this session,",
+    }[split]
+    opener = FINAL_OPENERS[realization % len(FINAL_OPENERS)]
+    closer = FINAL_CLOSERS[(realization // len(FINAL_OPENERS)) % len(FINAL_CLOSERS)]
+    return " ".join(part for part in (split_lead, opener, final, closer) if part)
 
 
 def _case_history(split: str) -> list[dict[str, Any]]:
@@ -728,8 +817,7 @@ def _tool_manifest_hash() -> str:
 
 def _jsonl_bytes(records: Sequence[dict[str, Any]]) -> bytes:
     return "".join(
-        json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        + "\n"
+        json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
         for record in records
     ).encode("utf-8")
 

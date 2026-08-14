@@ -6,9 +6,9 @@ import torch
 from router import ROUTER_REPO_ID, ROUTER_REVISION, LearnedBankingRouter
 
 
-def test_router_defaults_pin_the_published_v4_artifact() -> None:
+def test_router_defaults_pin_the_published_v5_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "9e090c0fa21cebbaa03a431a7ce61e656c0739fe"
+    assert ROUTER_REVISION == "bf6abca1c3982e35b23239de13ba9fcfed3f7920"
 
 
 class FakeTokenizer:

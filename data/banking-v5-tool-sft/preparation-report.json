@@ -1,0 +1,92 @@
+{
+  "checks": {
+    "accepted_records": 1200,
+    "error_tool_messages": 88,
+    "paths": {
+      "clarification": 44,
+      "conversation": 132,
+      "hard_negative": 44,
+      "multi_turn": 223,
+      "ood": 44,
+      "retrieval_grounded_policy": 220,
+      "tool_error": 88,
+      "tool_success": 405
+    },
+    "required_tool_names": [
+      "cancel_transfer",
+      "dispute_transaction",
+      "freeze_card",
+      "list_accounts",
+      "list_cards",
+      "list_service_cases",
+      "list_transactions",
+      "list_transfers",
+      "replace_card"
+    ],
+    "success_tool_messages": 719,
+    "tool_names_covered": [
+      "cancel_transfer",
+      "dispute_transaction",
+      "freeze_card",
+      "list_accounts",
+      "list_cards",
+      "list_service_cases",
+      "list_transactions",
+      "list_transfers",
+      "replace_card"
+    ]
+  },
+  "created_at": "2026-07-29T00:00:00Z",
+  "format_version": 1,
+  "name": "retail-bank-servicing-v5-tool-sft",
+  "source": {
+    "license": "MIT",
+    "name": "self-authored-synthetic",
+    "trainable": true
+  },
+  "splits": {
+    "test": {
+      "paths": {
+        "clarification": 6,
+        "conversation": 24,
+        "hard_negative": 3,
+        "multi_turn": 30,
+        "ood": 6,
+        "retrieval_grounded_policy": 40,
+        "tool_error": 9,
+        "tool_success": 63
+      },
+      "records": 181
+    },
+    "train": {
+      "paths": {
+        "clarification": 38,
+        "conversation": 84,
+        "hard_negative": 35,
+        "multi_turn": 155,
+        "ood": 29,
+        "retrieval_grounded_policy": 157,
+        "tool_error": 58,
+        "tool_success": 282
+      },
+      "records": 838
+    },
+    "validation": {
+      "paths": {
+        "conversation": 24,
+        "hard_negative": 6,
+        "multi_turn": 38,
+        "ood": 9,
+        "retrieval_grounded_policy": 23,
+        "tool_error": 21,
+        "tool_success": 60
+      },
+      "records": 181
+    }
+  },
+  "summary": {
+    "corpus_fingerprint": "11f46022c528fefda50aaf07cc97e6bebe0fcc3be2f4c44728c27d834634601d",
+    "split_seed": 711,
+    "total_records": 1200
+  }
+}

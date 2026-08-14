@@ -9,21 +9,26 @@ from typing import Any
 
 ROUTER_SPLITS = ("train", "validation", "test")
 
-CAPABILITY_LABELS = (
-    "accounts",
-    "cards",
-    "card_actions",
-    "transactions",
-    "transfers",
-    "service_cases",
-    "faq",
+INTENT_LABELS = (
+    "view_accounts",
+    "view_cards",
+    "freeze_card",
+    "replace_card",
+    "view_transactions",
+    "dispute_transaction",
+    "view_transfers",
+    "cancel_transfer",
+    "view_service_cases",
+    "policy_knowledge",
     "conversation",
+    "other_banking",
 )
 RELATION_LABELS = (
     "context_dependent",
     "agent_repair",
     "topic_shift",
     "clarification_answer",
+    "resume_previous_service",
 )
 
 CLINC_EXTERNAL_OOD_LABELS = frozenset(
@@ -92,19 +97,50 @@ PII_PATTERNS = (
     re.compile(r"\b(?:\+?1[ -.]?)?(?:\(?\d{3}\)?[ -.]?)\d{3}[ -.]\d{4}\b"),
 )
 
-_CAPABILITY_INDEX = {label: index for index, label in enumerate(CAPABILITY_LABELS)}
+_INTENT_INDEX = {label: index for index, label in enumerate(INTENT_LABELS)}
 _RELATION_INDEX = {label: index for index, label in enumerate(RELATION_LABELS)}
+
+_SERVICING_INTENTS = frozenset(
+    {
+        "view_accounts",
+        "view_cards",
+        "freeze_card",
+        "replace_card",
+        "view_transactions",
+        "dispute_transaction",
+        "view_transfers",
+        "cancel_transfer",
+        "view_service_cases",
+    }
+)
+_V2_SERVICING_CAPABILITIES = frozenset(
+    {"accounts", "cards", "card_actions", "transactions", "transfers", "service_cases"}
+)
+
+
+def lane_for_intent(intent: str) -> str:
+    if intent in _SERVICING_INTENTS or intent in _V2_SERVICING_CAPABILITIES:
+        return "servicing"
+    if intent in {"policy_knowledge", "faq"}:
+        return "policy"
+    if intent == "conversation":
+        return "conversation"
+    if intent == "other_banking":
+        return "other_banking"
+    raise ValueError(f"unsupported intent: {intent}")
 
 
 def render_router_input(
     current: str,
     history: Sequence[dict[str, Any]] | None = None,
     max_exchanges: int = 3,
+    prior_dialogue_state: Mapping[str, Any] | None = None,
 ) -> str:
     rendered, _ = render_router_input_with_context(
         current,
         history,
         max_exchanges,
+        prior_dialogue_state,
     )
     return rendered
 
@@ -113,19 +149,26 @@ def render_router_input_with_context(
     current: str,
     history: Sequence[dict[str, Any]] | None = None,
     max_exchanges: int = 3,
+    prior_dialogue_state: Mapping[str, Any] | None = None,
 ) -> tuple[str, bool]:
     if not isinstance(current, str) or not current.strip():
         raise ValueError("current must be a non-empty string")
     if max_exchanges < 0:
         raise ValueError("max_exchanges must be non-negative")
 
-    parts = [f"[CURRENT_USER]\n{current.strip()}"]
+    parts = []
+    if prior_dialogue_state:
+        parts.append(
+            "[PRIOR_DIALOGUE_STATE]\n"
+            + json.dumps(prior_dialogue_state, sort_keys=True, separators=(",", ":"))
+        )
+    parts.append(f"[CURRENT_USER]\n{current.strip()}")
     complete_exchanges = _visible_complete_exchanges(history or [])
     selected = complete_exchanges[-max_exchanges:] if max_exchanges else []
     for previous_user, previous_assistant in reversed(selected):
         parts.append(f"[PREVIOUS_ASSISTANT]\n{previous_assistant}")
         parts.append(f"[PREVIOUS_USER]\n{previous_user}")
-    return "\n".join(parts), bool(selected)
+    return "\n".join(parts), bool(selected or prior_dialogue_state)
 
 
 def build_conversation_router_splits(
@@ -136,6 +179,7 @@ def build_conversation_router_splits(
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     splits: dict[str, list[dict[str, Any]]] = {split: [] for split in ROUTER_SPLITS}
     group_to_split: dict[str, str] = {}
+    trajectory_to_split: dict[str, str] = {}
 
     for split in ROUTER_SPLITS:
         for record in sft_records_by_split.get(split, []):
@@ -145,8 +189,12 @@ def build_conversation_router_splits(
             group_id = str(row["group_id"])
             previous_split = group_to_split.setdefault(group_id, split)
             if previous_split != split:
+                raise ValueError(f"group {group_id!r} appears in both {previous_split} and {split}")
+            trajectory_id = str(row["trajectory_id"])
+            previous_split = trajectory_to_split.setdefault(trajectory_id, split)
+            if previous_split != split:
                 raise ValueError(
-                    f"group {group_id!r} appears in both {previous_split} and {split}"
+                    f"trajectory {trajectory_id!r} appears in both {previous_split} and {split}"
                 )
             splits[split].append(row)
 
@@ -157,17 +205,16 @@ def build_conversation_router_splits(
         splits[split].extend(_external_clinc_rows(clinc_payload, oos_key))
 
     for split in ROUTER_SPLITS:
-        splits[split].extend(
-            _synthetic_generalization_rows(splits[split], split, seed)
-        )
+        splits[split].extend(_synthetic_generalization_rows(splits[split], split, seed))
         splits[split].extend(_targeted_use_case_rows(split))
+        splits[split].extend(_resume_trajectory_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
     report = {
         "contract": "banking-conversation-router-data-report",
         "seed": seed,
-        "capability_labels": CAPABILITY_LABELS,
+        "intent_labels": INTENT_LABELS,
         "relation_labels": RELATION_LABELS,
         "split_counts": {split: len(rows) for split, rows in deduplicated.items()},
         "kind_counts": {
@@ -178,8 +225,8 @@ def build_conversation_router_splits(
             split: dict(Counter(int(row["domain_label"]) for row in rows))
             for split, rows in deduplicated.items()
         },
-        "capability_counts": {
-            split: dict(Counter(str(row["capability"]) for row in rows))
+        "intent_counts": {
+            split: dict(Counter(str(row["intent"]) for row in rows))
             for split, rows in deduplicated.items()
         },
         "cross_split_duplicates_removed": duplicates_removed,
@@ -220,22 +267,25 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
     history = _visible_history_before_current(messages)
     path = str(record.get("metadata", {}).get("path", ""))
     domain_label = 0 if path == "ood" else 1
-    capability = (
-        None
-        if path in {"ood", "hard_negative"}
-        else _capability_for_record(record, current)
-    )
-    relations = _relations_for_current(current, history)
+    intent = None if path == "ood" else _intent_for_record(record, current)
+    prior_dialogue_state = record.get("prior_dialogue_state")
+    if prior_dialogue_state is None:
+        prior_dialogue_state = record.get("metadata", {}).get("prior_dialogue_state")
+    if prior_dialogue_state is not None and not isinstance(prior_dialogue_state, Mapping):
+        raise ValueError("prior_dialogue_state must be an object")
+    relations = _relations_for_current(current, history, prior_dialogue_state)
     return _make_row(
         current=current,
         history=history,
         domain_label=domain_label,
-        capability=capability,
+        intent=intent,
         relation_names=relations,
         example_kind=_example_kind_for_record(record, history, relations),
         source="self-authored-banking-tool-sft",
         source_split=split,
         group_id=_group_id(record),
+        trajectory_id=_trajectory_id(record),
+        prior_dialogue_state=prior_dialogue_state,
     )
 
 
@@ -255,7 +305,7 @@ def _external_clinc_rows(
                 current=current,
                 history=[],
                 domain_label=0,
-                capability=None,
+                intent=None,
                 relation_names=[],
                 example_kind="clinc_external_ood",
                 source="UCI/clinc150",
@@ -271,11 +321,7 @@ def _synthetic_generalization_rows(
     split: str,
     seed: int,
 ) -> list[dict[str, Any]]:
-    banking = [
-        row
-        for row in rows
-        if row["domain_label"] == 1 and row["capability"] is not None
-    ]
+    banking = [row for row in rows if row["domain_label"] == 1 and row["intent"] is not None]
     external = [row for row in rows if row["domain_label"] == 0]
     if not banking:
         return []
@@ -331,14 +377,13 @@ def _synthetic_generalization_rows(
                     current=_split_variant(current, split),
                     history=history,
                     domain_label=1,
-                    capability=str(anchor["capability"]),
+                    intent=str(anchor["intent"]),
                     relation_names=relations,
                     example_kind=kind,
-                    source="self-authored-router-v4-synthetic",
+                    source="self-authored-router-v5-synthetic",
                     source_split=split,
                     group_id=(
-                        f"{anchor['group_id']}|router-v4|{kind}|"
-                        f"{anchor_index}-{prompt_index}"
+                        f"{anchor['group_id']}|router-v5|{kind}|{anchor_index}-{prompt_index}"
                     ),
                 )
             )
@@ -350,12 +395,12 @@ def _synthetic_generalization_rows(
                 current=str(external_row["current_text"]),
                 history=_history_from_anchor(anchor),
                 domain_label=0,
-                capability=None,
+                intent=None,
                 relation_names=["topic_shift"],
                 example_kind="external_topic_shift",
-                source="self-authored-router-v4-synthetic+UCI/clinc150",
+                source="self-authored-router-v5-synthetic+UCI/clinc150",
                 source_split=split,
-                group_id=f"{anchor['group_id']}|router-v4|topic-shift|{index}",
+                group_id=f"{anchor['group_id']}|router-v5|topic-shift|{index}",
             )
         )
         generated.append(
@@ -368,20 +413,16 @@ def _synthetic_generalization_rows(
                     },
                     {
                         "role": "assistant",
-                        "content": (
-                            "That topic is outside this synthetic retail-bank demo."
-                        ),
+                        "content": "That topic is outside the banking services I support.",
                     },
                 ],
                 domain_label=1,
-                capability=str(anchor["capability"]),
+                intent=str(anchor["intent"]),
                 relation_names=["topic_shift"],
                 example_kind="banking_topic_shift",
-                source="self-authored-router-v4-synthetic+UCI/clinc150",
+                source="self-authored-router-v5-synthetic+UCI/clinc150",
                 source_split=split,
-                group_id=(
-                    f"{anchor['group_id']}|router-v4|banking-topic-shift|{index}"
-                ),
+                group_id=(f"{anchor['group_id']}|router-v5|banking-topic-shift|{index}"),
             )
         )
     return generated
@@ -487,7 +528,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
             "service_case_detail",
             prompts["service_case_detail"],
             case_histories[:history_limit],
-            "service_cases",
+            "view_service_cases",
             ["context_dependent"],
             "targeted_contextual_followup",
         ),
@@ -495,7 +536,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
             "card_selection_action",
             prompts["card_selection_action"],
             card_histories[:history_limit],
-            "card_actions",
+            "replace_card",
             ["context_dependent", "clarification_answer"],
             "targeted_clarification_answer",
         ),
@@ -503,7 +544,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
             "repetition_repair",
             prompts["repetition_repair"],
             wrong_answer_histories[:history_limit],
-            "service_cases",
+            "view_service_cases",
             ["context_dependent", "agent_repair"],
             "targeted_agent_repair",
         ),
@@ -511,7 +552,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
             "wrong_topic_repair",
             prompts["wrong_topic_repair"],
             wrong_answer_histories[:history_limit],
-            "service_cases",
+            "view_service_cases",
             ["context_dependent", "agent_repair", "topic_shift"],
             "targeted_wrong_topic_repair",
         ),
@@ -520,7 +561,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
         category,
         category_prompts,
         histories,
-        capability,
+        intent,
         relations,
         example_kind,
     ) in categories:
@@ -532,10 +573,10 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
                             current=f"{prompt}{modifier}",
                             history=history,
                             domain_label=1,
-                            capability=capability,
+                            intent=intent,
                             relation_names=relations,
                             example_kind=example_kind,
-                            source="self-authored-router-v4-use-case-alignment",
+                            source="self-authored-router-v5-use-case-alignment",
                             source_split=split,
                             group_id=(
                                 f"targeted|{split}|{category}|{prompt_index}|"
@@ -550,17 +591,136 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
                     current=f"{prompt}{modifier}",
                     history=[],
                     domain_label=1,
-                    capability="service_cases",
+                    intent="view_service_cases",
                     relation_names=[],
                     example_kind="targeted_service_case",
-                    source="self-authored-router-v4-use-case-alignment",
+                    source="self-authored-router-v5-use-case-alignment",
                     source_split=split,
                     group_id=(
-                        f"targeted|{split}|standalone-address|"
-                        f"{prompt_index}|{modifier_index}"
+                        f"targeted|{split}|standalone-address|{prompt_index}|{modifier_index}"
                     ),
                 )
             )
+    return rows
+
+
+def _resume_trajectory_rows(split: str) -> list[dict[str, Any]]:
+    intent_frames = {
+        "view_accounts": (
+            "Show me my account balances.",
+            "Which accounts should I include?",
+            "How is available balance different from current balance?",
+        ),
+        "view_cards": (
+            "Show me my debit cards.",
+            "Would you like all active cards?",
+            "What does an active card status mean?",
+        ),
+        "freeze_card": (
+            "I need to freeze a card.",
+            "Which card should I freeze?",
+            "What happens to pending payments after a card is frozen?",
+        ),
+        "replace_card": (
+            "I need to replace my debit card.",
+            "Which card should I replace?",
+            "Is there a fee for a replacement card?",
+        ),
+        "view_transactions": (
+            "Show my recent purchases.",
+            "How many transactions should I retrieve?",
+            "How long do pending card purchases take to post?",
+        ),
+        "dispute_transaction": (
+            "I need to dispute a purchase.",
+            "Which transaction should I look for?",
+            "How long does a purchase dispute review take?",
+        ),
+        "view_transfers": (
+            "Show my recent transfers.",
+            "Should I include completed transfers?",
+            "When does a scheduled transfer become final?",
+        ),
+        "cancel_transfer": (
+            "I need to cancel a scheduled transfer.",
+            "Which transfer should I cancel?",
+            "When can a scheduled transfer still be cancelled?",
+        ),
+        "view_service_cases": (
+            "Show my recent support requests.",
+            "Should I include closed service cases?",
+            "How long are closed service cases retained?",
+        ),
+    }
+    prompt_stems = {
+        "train": (
+            "Let's continue with the original request",
+            "Go back to the banking task we paused",
+            "Please resume what we were doing before",
+            "Okay, return to that earlier request",
+            "Thanks; carry on with the first task",
+            "Now finish the service request we started",
+        ),
+        "validation": (
+            "Pick up the request from before the policy question",
+            "Return to the unfinished banking action",
+            "Continue the task that was on hold",
+            "Let's get back to my initial request",
+            "Resume the service item we paused",
+            "Proceed with what I originally asked for",
+        ),
+        "test": (
+            "Reopen the task we were handling earlier",
+            "Take me back to the service request in progress",
+            "Carry on from where we stopped before that question",
+            "Finish the banking request that is still pending",
+            "Move back to the issue we had underway",
+            "Continue with the original matter now",
+        ),
+    }[split]
+    modifiers = (
+        (".", " please.", " now.", " from where we left off.") if split == "train" else (".",)
+    )
+    rows = []
+    for intent, (anchor_user, anchor_assistant, policy_question) in intent_frames.items():
+        prior_state = {
+            "version": 1,
+            "pending_servicing": {
+                "intent": intent,
+                "anchor_user_message": anchor_user,
+                "anchor_assistant_message": anchor_assistant,
+                "phase": "awaiting_user",
+            },
+            "knowledge_detour_active": True,
+        }
+        history = [
+            {"role": "user", "content": policy_question},
+            {
+                "role": "assistant",
+                "content": "I can explain the applicable policy.",
+            },
+        ]
+        for prompt_index, stem in enumerate(prompt_stems):
+            for modifier_index, modifier in enumerate(modifiers):
+                trajectory_id = f"v5-resume|{split}|{intent}|{prompt_index}|{modifier_index}"
+                rows.append(
+                    _make_row(
+                        current=f"{stem}{modifier}",
+                        history=history,
+                        prior_dialogue_state=prior_state,
+                        domain_label=1,
+                        intent=intent,
+                        relation_names=[
+                            "context_dependent",
+                            "resume_previous_service",
+                        ],
+                        example_kind="resume_previous_service",
+                        source="self-authored-router-v5-resume-trajectory",
+                        source_split=split,
+                        group_id=trajectory_id,
+                        trajectory_id=trajectory_id,
+                    )
+                )
     return rows
 
 
@@ -751,7 +911,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="When was that created?",
             history=case_history,
             domain_label=1,
-            capability="service_cases",
+            intent="view_service_cases",
             relation_names=["context_dependent"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -762,7 +922,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="what is that all about? when was it created?",
             history=case_history,
             domain_label=1,
-            capability="service_cases",
+            intent="view_service_cases",
             relation_names=["context_dependent"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -773,7 +933,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="was the mailing address updated recently?",
             history=[],
             domain_label=1,
-            capability="service_cases",
+            intent="view_service_cases",
             relation_names=[],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -784,7 +944,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="ok, thats the one i want to replace",
             history=card_history,
             domain_label=1,
-            capability="card_actions",
+            intent="replace_card",
             relation_names=["context_dependent", "clarification_answer"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -795,7 +955,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="why are you repeating yourself",
             history=wrong_answer_history,
             domain_label=1,
-            capability="service_cases",
+            intent="view_service_cases",
             relation_names=["context_dependent", "agent_repair"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -806,7 +966,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="I didn't ask about mortgage",
             history=wrong_answer_history,
             domain_label=1,
-            capability="service_cases",
+            intent="view_service_cases",
             relation_names=["context_dependent", "agent_repair", "topic_shift"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -817,7 +977,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             current="what about the weather there?",
             history=case_history,
             domain_label=0,
-            capability=None,
+            intent=None,
             relation_names=["topic_shift"],
             example_kind="heldout_screenshot_regression",
             source="self-authored-heldout-regression",
@@ -832,15 +992,17 @@ def _make_row(
     current: str,
     history: Sequence[dict[str, Any]],
     domain_label: int,
-    capability: str | None,
+    intent: str | None,
     relation_names: Sequence[str],
     example_kind: str,
     source: str,
     source_split: str,
     group_id: str,
+    trajectory_id: str | None = None,
+    prior_dialogue_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if capability is not None and capability not in _CAPABILITY_INDEX:
-        raise ValueError(f"unsupported capability: {capability}")
+    if intent is not None and intent not in _INTENT_INDEX:
+        raise ValueError(f"unsupported intent: {intent}")
     relation_labels = [0 for _ in RELATION_LABELS]
     for relation in relation_names:
         relation_labels[_RELATION_INDEX[relation]] = 1
@@ -850,17 +1012,24 @@ def _make_row(
         if item.get("role") in {"user", "assistant"} and str(item.get("content", "")).strip()
     ]
     return {
-        "text": render_router_input(current, visible_history),
+        "text": render_router_input(
+            current,
+            visible_history,
+            prior_dialogue_state=prior_dialogue_state,
+        ),
         "current_text": current.strip(),
         "history": visible_history,
         "domain_label": int(domain_label),
-        "capability_label": _CAPABILITY_INDEX[capability] if capability else -100,
-        "capability": capability,
+        "intent_label": _INTENT_INDEX[intent] if intent else -100,
+        "intent": intent,
+        "lane": lane_for_intent(intent) if intent else None,
         "relation_labels": relation_labels,
         "example_kind": example_kind,
         "source": source,
         "source_split": source_split,
         "group_id": group_id,
+        "trajectory_id": trajectory_id or group_id,
+        "prior_dialogue_state": dict(prior_dialogue_state or {}),
     }
 
 
@@ -907,8 +1076,11 @@ def _visible_complete_exchanges(
     return exchanges
 
 
-def _capability_for_record(record: dict[str, Any], current: str) -> str | None:
+def _intent_for_record(record: dict[str, Any], current: str) -> str:
     scenario = str(record.get("metadata", {}).get("scenario_family", "")).casefold()
+    path = str(record.get("metadata", {}).get("path", "")).casefold()
+    if path == "hard_negative":
+        return "other_banking"
     expected = record.get("expected", {})
     tool_names = []
     if isinstance(expected, dict):
@@ -918,41 +1090,54 @@ def _capability_for_record(record: dict[str, Any], current: str) -> str | None:
             if isinstance(call, dict)
         ]
     joined = " ".join((scenario, current.casefold(), " ".join(tool_names)))
-    if "account" in joined or "balance" in joined:
-        return "accounts"
-    if "freeze_card" in joined or "replace_card" in joined or "stolen" in joined:
-        return "card_actions"
-    if "card" in joined:
-        return "cards"
-    if "transaction" in joined or "dispute" in joined or "purchase" in joined:
-        return "transactions"
-    if "transfer" in joined:
-        return "transfers"
+    if "freeze_card" in joined or "freeze" in joined or "stolen" in joined:
+        return "freeze_card"
+    if "replace_card" in joined or "replace" in joined:
+        return "replace_card"
+    if "dispute_transaction" in joined or "dispute" in joined:
+        return "dispute_transaction"
+    if "cancel_transfer" in joined or ("cancel" in joined and "transfer" in joined):
+        return "cancel_transfer"
     if "case" in joined or "address" in joined:
-        return "service_cases"
-    if "faq" in joined or "mortgage" in joined or "open " in joined:
-        return "faq"
+        return "view_service_cases"
+    if "faq" in joined or "policy" in joined or "mortgage" in joined:
+        return "policy_knowledge"
+    if "card" in joined:
+        return "view_cards"
+    if "transaction" in joined or "purchase" in joined:
+        return "view_transactions"
+    if "transfer" in joined:
+        return "view_transfers"
+    if "account" in joined or "balance" in joined:
+        return "view_accounts"
     if "conversation" in joined or "greeting" in joined or "hello" in joined:
         return "conversation"
-    return "conversation"
+    return "other_banking"
 
 
 def _relations_for_current(
     current: str,
     history: Sequence[dict[str, Any]],
+    prior_dialogue_state: Mapping[str, Any] | None = None,
 ) -> list[str]:
     relations = []
     normalized = normalize_router_text(current)
     words = set(normalized.split())
     if history and (
-        len(words) <= 6
-        or words & {"it", "that", "this", "those", "them", "one", "again", "there"}
+        len(words) <= 6 or words & {"it", "that", "this", "those", "them", "one", "again", "there"}
     ):
         relations.append("context_dependent")
     if words & {"no", "not", "wrong", "instead", "asked"}:
         relations.append("agent_repair")
     if history and words & {"yes", "yeah", "yep", "4821", "that", "one"} and len(words) <= 6:
         relations.append("clarification_answer")
+    if (
+        prior_dialogue_state
+        and prior_dialogue_state.get("knowledge_detour_active") is True
+        and prior_dialogue_state.get("pending_servicing")
+        and words & {"continue", "resume", "back", "return"}
+    ):
+        relations.append("resume_previous_service")
     return relations
 
 
@@ -979,21 +1164,25 @@ def _history_from_anchor(anchor: dict[str, Any]) -> list[dict[str, Any]]:
         return history
     return [
         {"role": "user", "content": str(anchor["current_text"])},
-        {"role": "assistant", "content": _assistant_stub(str(anchor["capability"]))},
+        {"role": "assistant", "content": _assistant_stub(str(anchor["intent"]))},
     ]
 
 
-def _assistant_stub(capability: str) -> str:
+def _assistant_stub(intent: str) -> str:
     return {
-        "accounts": "I found your synthetic account balances.",
-        "cards": "I found your synthetic card details.",
-        "card_actions": "I can help with that synthetic card action.",
-        "transactions": "I found the matching synthetic transaction detail.",
-        "transfers": "I found your recent synthetic transfers.",
-        "service_cases": "I found your recent synthetic service cases.",
-        "faq": "I can answer general questions about this banking demo.",
-        "conversation": "I can help with this synthetic retail-bank demo.",
-    }[capability]
+        "view_accounts": "I found your account balances.",
+        "view_cards": "I found your card details.",
+        "freeze_card": "I can help freeze the selected card.",
+        "replace_card": "I can help replace the selected card.",
+        "view_transactions": "I found the matching transaction detail.",
+        "dispute_transaction": "I can help dispute the selected transaction.",
+        "view_transfers": "I found your recent transfers.",
+        "cancel_transfer": "I can help cancel the selected transfer.",
+        "view_service_cases": "I found your recent service cases.",
+        "policy_knowledge": "I can answer that banking policy question.",
+        "conversation": "I can help with your banking questions.",
+        "other_banking": "I can help with that banking request.",
+    }[intent]
 
 
 def _split_variant(current: str, split: str) -> str:
@@ -1020,6 +1209,19 @@ def _group_id(record: dict[str, Any]) -> str:
     return str(record.get("record_id", "unknown"))
 
 
+def _trajectory_id(record: dict[str, Any]) -> str:
+    metadata = record.get("metadata")
+    split_keys = record.get("split_keys")
+    for container in (metadata, split_keys, record):
+        if not isinstance(container, Mapping):
+            continue
+        for key in ("trajectory_id", "conversation_id"):
+            value = container.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return _group_id(record)
+
+
 def _deduplicate_across_splits(
     splits: dict[str, list[dict[str, Any]]],
 ) -> tuple[dict[str, list[dict[str, Any]]], int]:
@@ -1044,23 +1246,25 @@ def _deduplicate_across_splits(
 
 def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     groups: dict[str, set[str]] = defaultdict(set)
+    trajectories: dict[str, set[str]] = defaultdict(set)
     for split, rows in splits.items():
         for row in rows:
             groups[str(row["group_id"])].add(split)
+            trajectories[str(row["trajectory_id"])].add(split)
     leaking = {group: sorted(values) for group, values in groups.items() if len(values) > 1}
+    trajectory_leaks = {
+        trajectory: sorted(values) for trajectory, values in trajectories.items() if len(values) > 1
+    }
     return {
         "group_split_leaks": leaking,
         "group_split_leak_count": len(leaking),
+        "trajectory_split_leaks": trajectory_leaks,
+        "trajectory_split_leak_count": len(trajectory_leaks),
     }
 
 
 def _count_pii_matches(texts: Iterable[str]) -> int:
-    return sum(
-        1
-        for text in texts
-        for pattern in PII_PATTERNS
-        if pattern.search(text)
-    )
+    return sum(1 for text in texts for pattern in PII_PATTERNS if pattern.search(text))
 
 
 def _is_screenshot_regression_text(text: str) -> bool:

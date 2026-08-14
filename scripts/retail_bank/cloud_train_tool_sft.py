@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Guarded banking-v3 tool-use SFT worker.
+"""Guarded V5 grounded-policy and dialogue-resume SFT worker.
 
 Default behavior is a dry-run plan. Full BF16 LoRA or QLoRA execution requires
 an explicit CLI switch plus an environment confirmation; local tiny smoke uses
@@ -32,13 +32,13 @@ from hello_slm.banking_tool_sft_data import public_tool_manifest
 from hello_slm.banking_tool_wire import IGNORED_LABEL, ToolWireAdapter
 
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT"
-REMOTE_CONFIRMATION_VALUE = "banking-v3-tool-sft"
+REMOTE_CONFIRMATION_VALUE = "banking-v5-grounded-dialogue-sft"
 TRAINING_SEED = 7303
-DEFAULT_MANIFEST = "data/banking-v3-tool-sft/manifest.json"
-DEFAULT_OUTPUT_DIR = "artifacts/banking-v3-tool-sft"
-DEFAULT_HUB_DEST = "spkc83/retail-bank-agent-9b"
-DEFAULT_BASE_MODEL = "ibm-granite/granite-4.1-8b"
-DEFAULT_BASE_REVISION = "1504002f650e656a0a3789d99574df12e3e94ed0"
+DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
+DEFAULT_OUTPUT_DIR = "artifacts/banking-servicing-agent-v5"
+DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_FAMILY = "granite"
 
 LORA_TARGET_MODULES = (
@@ -263,11 +263,7 @@ def build_dry_run_plan(config: WorkerConfig) -> dict[str, Any]:
                 "Transformers",
                 "TRL SFTTrainer",
                 "PEFT LoRA",
-                *(
-                    ["bitsandbytes QLoRA"]
-                    if config.precision == "qlora"
-                    else ["BF16 base weights"]
-                ),
+                *(["bitsandbytes QLoRA"] if config.precision == "qlora" else ["BF16 base weights"]),
             ],
             "precision": config.precision,
             "max_steps": config.max_steps,
@@ -322,9 +318,7 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
         value = entry["path"] if isinstance(entry, Mapping) else entry
         declared = Path(value)
         paths.append(
-            declared.resolve()
-            if declared.is_absolute()
-            else (base_dir / declared).resolve()
+            declared.resolve() if declared.is_absolute() else (base_dir / declared).resolve()
         )
     elif "tool_sft" in manifest:
         for entry in manifest["tool_sft"]:
@@ -353,8 +347,7 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
     ]
     if non_trainable:
         raise ValueError(
-            "evaluation-only records cannot be used for training: "
-            + ", ".join(non_trainable[:3])
+            "evaluation-only records cannot be used for training: " + ", ".join(non_trainable[:3])
         )
     return records
 
@@ -551,10 +544,7 @@ def configure_trackio_environment(config: WorkerConfig) -> None:
 
 
 def tf32_supported() -> bool:
-    return bool(
-        torch.cuda.is_available()
-        and torch.cuda.get_device_capability()[0] >= 8
-    )
+    return bool(torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8)
 
 
 def build_training_configs(config: WorkerConfig) -> dict[str, Any]:
@@ -601,11 +591,7 @@ def build_training_configs(config: WorkerConfig) -> dict[str, Any]:
         eval_steps=max(config.checkpoint_every, 1_000),
         save_total_limit=2,
         remove_unused_columns=False,
-        optim=(
-            "paged_adamw_8bit"
-            if config.precision == "qlora"
-            else "adamw_torch_fused"
-        ),
+        optim=("paged_adamw_8bit" if config.precision == "qlora" else "adamw_torch_fused"),
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
         run_name=config.trackio_run_name or f"{config.family}-tool-sft",
@@ -668,12 +654,16 @@ def merge_adapter_with_reload_parity(
     }
     with torch.inference_mode():
         adapter_logits = reference_adapter(**reference_batch).logits.detach().float().cpu()
-        adapter_generation = reference_adapter.generate(
-            **reference_batch,
-            max_new_tokens=1,
-            do_sample=False,
-            pad_token_id=getattr(tokenizer, "pad_token_id", None),
-        ).detach().cpu()
+        adapter_generation = (
+            reference_adapter.generate(
+                **reference_batch,
+                max_new_tokens=1,
+                do_sample=False,
+                pad_token_id=getattr(tokenizer, "pad_token_id", None),
+            )
+            .detach()
+            .cpu()
+        )
     del reference_adapter
     del reference_base
     gc.collect()
@@ -692,23 +682,21 @@ def merge_adapter_with_reload_parity(
     }
     with torch.inference_mode():
         reloaded_logits = reloaded(**reload_batch).logits.detach().float().cpu()
-        reloaded_generation = reloaded.generate(
-            **reload_batch,
-            max_new_tokens=1,
-            do_sample=False,
-            pad_token_id=getattr(tokenizer, "pad_token_id", None),
-        ).detach().cpu()
+        reloaded_generation = (
+            reloaded.generate(
+                **reload_batch,
+                max_new_tokens=1,
+                do_sample=False,
+                pad_token_id=getattr(tokenizer, "pad_token_id", None),
+            )
+            .detach()
+            .cpu()
+        )
     differences = (adapter_logits - reloaded_logits).abs()
     finite = bool(torch.isfinite(differences).all().item())
     max_abs_logit_diff = float(differences.max().item())
     argmax_agreement = float(
-        (
-            adapter_logits.argmax(dim=-1)
-            == reloaded_logits.argmax(dim=-1)
-        )
-        .float()
-        .mean()
-        .item()
+        (adapter_logits.argmax(dim=-1) == reloaded_logits.argmax(dim=-1)).float().mean().item()
     )
     generation_equal = torch.equal(adapter_generation, reloaded_generation)
     if (
@@ -748,7 +736,7 @@ def write_model_card(
 ) -> Path:
     dataset_repo = os.environ.get(
         "RETAIL_BANK_TOOL_SFT_DATASET_REPO",
-        "spkc83/retail-bank-agent-sft",
+        "spkc83/retail-bank-servicing-alignment-sft",
     )
     dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "unrecorded")
     source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "unrecorded")
@@ -1064,10 +1052,7 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
             repo_id=config.hub_dest,
             repo_type="model",
             path_or_fileobj=(
-                config.output_dir
-                / "checkpoints"
-                / f"step-{actual_step:06d}"
-                / "metadata.json"
+                config.output_dir / "checkpoints" / f"step-{actual_step:06d}" / "metadata.json"
             ),
             path_in_repo="training_metadata.json",
         )

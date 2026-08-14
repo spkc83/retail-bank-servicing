@@ -9,6 +9,14 @@ from typing import Any
 import streamlit as st
 
 from auth import load_demo_auth
+from branding import (
+    ASSISTANT_NAME,
+    BANK_NAME,
+    PROTOTYPE_NOTICE,
+    STREAMLIT_CSS,
+    account_type_label,
+    response_provenance,
+)
 from local_app_service import (
     LocalBankingController,
     visible_conversation,
@@ -72,22 +80,24 @@ def resolve_local_router_artifact() -> Path | None:
     candidate = (
         Path(configured).expanduser()
         if configured
-        else Path(__file__).resolve().parents[2]
-        / "artifacts"
-        / "banking-conversation-router-v4-release"
+        else Path(__file__).resolve().parents[2] / "artifacts" / "banking-conversation-router-v5"
     )
     return candidate if (candidate / "manifest.json").is_file() else None
 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Local Granite 9B Retail Bank",
+        page_title=f"{ASSISTANT_NAME} | {BANK_NAME}",
         page_icon="🏦",
         layout="wide",
     )
-    st.title("Local Granite 9B Retail Bank POC")
-    st.caption(
-        "Fictional data only · Granite 9B · TITAN V CUDA · NF4 double quantization"
+    st.markdown(STREAMLIT_CSS, unsafe_allow_html=True)
+    st.markdown('<div class="harbor-kicker">HARBORLIGHT BANK</div>', unsafe_allow_html=True)
+    st.title(BANK_NAME)
+    st.markdown(f"### Meet {ASSISTANT_NAME}")
+    st.markdown(
+        f'<div class="prototype-notice">{PROTOTYPE_NOTICE}</div>',
+        unsafe_allow_html=True,
     )
     if not _authenticated():
         _render_login()
@@ -99,10 +109,7 @@ def main() -> None:
         controller = get_local_controller()
     _initialize_chat_state()
     _render_sidebar(controller, username, session_hash)
-    st.info(
-        "The classifier only gates high-confidence OOD turns. Granite owns allowed "
-        "conversation, tool calls, and final wording."
-    )
+    st.caption("Ask a question in your own words, or start with one of the ideas below.")
     for item in visible_conversation(st.session_state["conversation"]):
         with st.chat_message(item["role"]):
             st.markdown(item["content"])
@@ -114,7 +121,7 @@ def main() -> None:
         st.write("")
         st.write("")
         run_preset = st.button("Run preset", use_container_width=True)
-    entered = st.chat_input("Ask the signed-in synthetic bank agent")
+    entered = st.chat_input("How can Harbor help today?")
     prompt = selected if run_preset else entered
     if prompt:
         _execute_turn(controller, username, session_hash, str(prompt))
@@ -128,7 +135,7 @@ def _authenticated() -> bool:
 
 def _render_login() -> None:
     credentials = local_auth_credentials()
-    st.warning("Synthetic demo authentication only. No real bank is connected.")
+    st.info(f"Welcome. Sign in to explore {BANK_NAME} with fictional customer data.")
     st.markdown(
         "Use either local account:\n\n"
         + "\n".join(f"- `{username}` / `{password}`" for username, password in credentials)
@@ -168,20 +175,21 @@ def _render_sidebar(
     customer = snapshot["customer"]
     metadata = controller.runtime_metadata()
     with st.sidebar:
+        st.caption(BANK_NAME)
         st.header(str(customer["display_name"]))
         st.write(f"Authenticated as `{username}`")
         st.write(f"{customer['segment']} · {customer['city']}")
     _render_experiment_diagnostics(metadata)
     with st.sidebar:
         st.markdown(render_snapshot(snapshot))
-        if st.button("Reset synthetic session", use_container_width=True):
+        if st.button("Start over", use_container_width=True):
             controller.reset(username, session_hash)
             st.session_state["conversation"] = []
             st.session_state["diagnostics"] = (
                 "### Local experiment diagnostics\n\nSession reset; no new model turn yet."
             )
             st.rerun()
-        if st.button("Log out", use_container_width=True):
+        if st.button("Sign out", use_container_width=True):
             for key in ("username", "session_hash", "conversation", "diagnostics"):
                 st.session_state.pop(key, None)
             st.rerun()
@@ -219,7 +227,7 @@ def _execute_turn(
 ) -> None:
     with st.chat_message("user"):
         st.markdown(prompt)
-    with st.spinner("Granite is generating and may call the synthetic bank tools…"):
+    with st.spinner("Granite is generating and may use the available banking actions…"):
         result = controller.run_turn(
             username=username,
             session_hash=session_hash,
@@ -230,18 +238,14 @@ def _execute_turn(
     st.session_state["diagnostics"] = result.diagnostics
     with st.chat_message("assistant"):
         st.markdown(result.response)
-    if result.model_call_count:
-        st.success(
-            f"Granite generated this response in {result.model_call_count} model pass(es)."
-        )
-    else:
-        st.info(result.activity)
+    st.caption(response_provenance(result.response_path, result.model_passes))
 
 
 def render_snapshot(snapshot: dict[str, Any]) -> str:
     accounts = "\n".join(
         (
-            f"- **{item['name']} ····{item['last4']}** — "
+            f"- **{item['name']} ····{item['last4']}**  "
+            f"_{account_type_label(item.get('type'))}_ — "
             f"{_money(item['available_balance_cents'], item['currency'])} available"
         )
         for item in snapshot["accounts"]
@@ -256,14 +260,13 @@ def render_snapshot(snapshot: dict[str, Any]) -> str:
         for item in snapshot["transfers"][:3]
     )
     cases = "\n".join(
-        f"- {item['subject']} — `{item['status']}`"
-        for item in snapshot["service_cases"][:4]
+        f"- {item['subject']} — `{item['status']}`" for item in snapshot["service_cases"][:4]
     )
     return (
-        f"### Synthetic state\n\n#### Accounts\n{accounts or '- None'}\n\n"
-        f"#### Cards\n{cards or '- None'}\n\n"
-        f"#### Transfers\n{transfers or '- None'}\n\n"
-        f"#### Service cases\n{cases or '- None'}"
+        f"### Your products\n\n#### Bank accounts\n{accounts or '- None'}\n\n"
+        f"#### Debit cards\n{cards or '- None'}\n\n"
+        f"#### Recent transfers\n{transfers or '- None'}\n\n"
+        f"#### Support requests\n{cases or '- None'}"
     )
 
 

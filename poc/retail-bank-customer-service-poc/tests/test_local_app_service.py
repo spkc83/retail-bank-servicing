@@ -20,16 +20,17 @@ class StaticRouter:
             "ood_probability": 0.01 if self.route_name == "in_domain" else 0.99,
             "confidence": 0.99,
             "capability": "accounts",
+            "intent": "view_accounts",
+            "intent_confidence": 0.9,
             "capability_confidence": 0.9,
-            "capability_candidates": [
-                {"capability": "accounts", "probability": 0.9}
-            ],
+            "capability_candidates": [{"capability": "accounts", "probability": 0.9}],
             "relation_probabilities": {
                 "context_dependent": 0.05,
                 "agent_repair": 0.05,
                 "topic_shift": 0.05,
                 "clarification_answer": 0.05,
             },
+            "active_relations": [],
             "context_applied": bool(history),
             "router_revision": "test-router",
             "reason": "test route",
@@ -39,8 +40,10 @@ class StaticRouter:
 class FakeRuntime:
     def __init__(self, outputs: list[str]) -> None:
         self.outputs = iter(outputs)
+        self.calls = []
 
-    def generate(self, _messages, _tools, _max_new_tokens):
+    def generate(self, messages, tools, _max_new_tokens):
+        self.calls.append({"messages": messages, "tools": tools})
         return next(self.outputs)
 
     def count_tokens(self, messages, _tools):
@@ -118,7 +121,8 @@ def test_controller_uses_stock_response_for_high_confidence_ood(tmp_path: Path) 
         conversation=[],
     )
 
-    assert "synthetic retail-banking" in result.response
+    assert "banking" in result.response.casefold()
+    assert "synthetic" not in result.response.casefold()
     assert result.model_call_count == 0
     assert result.route["route"] == "out_of_domain"
 
@@ -158,6 +162,129 @@ def test_controller_reset_restores_synthetic_backend_and_clears_history(
 
     snapshot = controller.reset("alex.demo", "local-browser")
 
-    assert next(card for card in snapshot["cards"] if card["last4"] == "4821")[
-        "status"
-    ] == "active"
+    assert next(card for card in snapshot["cards"] if card["last4"] == "4821")["status"] == "active"
+
+
+class SequenceRouter:
+    def __init__(self, routes: list[dict[str, object]]) -> None:
+        self.routes = iter(routes)
+
+    def classify(self, _message, _history, **_kwargs):
+        return next(self.routes)
+
+
+class PolicyMatch:
+    def as_dict(self):
+        return {
+            "chunk_id": "disputes.timeline.us.v1",
+            "title": "Transaction dispute review",
+            "text": "A submitted dispute is reviewed and status updates are provided.",
+            "effective_from": "2026-01-01",
+        }
+
+
+class PolicyResult:
+    matched = True
+    matches = (PolicyMatch(),)
+    corpus_revision = "sha256:policy-v1"
+
+
+class FakePolicyKnowledge:
+    def lookup(self, _query):
+        return PolicyResult()
+
+
+def routed(intent: str, *, relations: list[str] | None = None) -> dict[str, object]:
+    return {
+        "route": "in_domain",
+        "banking_probability": 0.99,
+        "ood_probability": 0.01,
+        "confidence": 0.99,
+        "intent": intent,
+        "intent_confidence": 0.99,
+        "intent_candidates": [{"intent": intent, "probability": 0.99}],
+        "relation_probabilities": {},
+        "active_relations": relations or [],
+        "context_applied": True,
+        "router_revision": "test-router-v5",
+    }
+
+
+def test_policy_detour_is_granite_grounded_and_resumes_pending_dispute(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            "I’m sorry this happened. Which purchase would you like to dispute?",
+            "A submitted dispute is reviewed and status updates are provided. "
+            "[Policy: disputes.timeline.us.v1]",
+            '<tool_call>{"name":"dispute_transaction","arguments":'
+            '{"description":"Blue Line Coffee"}}</tool_call>',
+            "I submitted a dispute for Blue Line Coffee.",
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [
+                routed("dispute_transaction"),
+                routed("policy_knowledge"),
+                routed(
+                    "dispute_transaction",
+                    relations=["resume_previous_service"],
+                ),
+            ]
+        ),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    first = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="I need to dispute a purchase.",
+        conversation=[],
+    )
+    policy = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="How long does a dispute review take?",
+        conversation=first.conversation,
+    )
+    resumed = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Continue with Blue Line Coffee.",
+        conversation=policy.conversation,
+    )
+
+    assert policy.response_path == "policy_grounded"
+    assert policy.policy_sources == ("disputes.timeline.us.v1",)
+    assert runtime.calls[1]["tools"] is None
+    resume_prompt = runtime.calls[2]["messages"]
+    assert {"role": "user", "content": "I need to dispute a purchase."} in resume_prompt
+    assert {
+        "role": "assistant",
+        "content": "I’m sorry this happened. Which purchase would you like to dispute?",
+    } in resume_prompt
+    assert resumed.tool_calls[0].name == "dispute_transaction"
+    assert resumed.dialogue_state["pending_servicing"] is None
+
+
+def test_reset_clears_dialogue_state(tmp_path: Path) -> None:
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(["Which card should I replace?"]),
+        router=SequenceRouter([routed("replace_card")]),
+    )
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Replace my card.",
+        conversation=[],
+    )
+    assert result.dialogue_state["pending_servicing"]["intent"] == "replace_card"
+
+    controller.reset("alex.demo", "local-browser")
+
+    assert controller.dialogue_state("alex.demo", "local-browser")["pending_servicing"] is None

@@ -1,0 +1,127 @@
+{
+  "contract": "banking-tool-sft-manifest",
+  "created_at": "2026-07-31T00:00:00Z",
+  "format_version": 1,
+  "generator_version": "banking-servicing-alignment-sft/v5",
+  "name": "retail-bank-servicing-alignment-v5",
+  "report": {
+    "alignment_split_counts": {
+      "test": 35,
+      "train": 384,
+      "validation": 96
+    },
+    "base_manifest_sha256": "a81de72cc3cd977981aed384935feb2f122a4f308486e78e0a83ee38bf653726",
+    "base_split_counts": {
+      "test": 181,
+      "train": 838,
+      "validation": 181
+    },
+    "contract": "banking-servicing-alignment-sft-report",
+    "created_at": "2026-07-31T00:00:00Z",
+    "generator_version": "banking-servicing-alignment-sft/v5",
+    "heldout_exact_currents_in_train": [],
+    "path_counts": {
+      "test": {
+        "multi_turn": 26,
+        "ood": 5,
+        "retrieval_grounded_policy": 4
+      },
+      "train": {
+        "multi_turn": 320,
+        "ood": 32,
+        "retrieval_grounded_policy": 32
+      },
+      "validation": {
+        "multi_turn": 80,
+        "ood": 8,
+        "retrieval_grounded_policy": 8
+      }
+    },
+    "pii_matches": 0,
+    "scenario_family_counts": {
+      "test": {
+        "banking_topic_shift": 4,
+        "card_anaphora_action": 8,
+        "external_topic_shift": 4,
+        "heldout_screenshot_regression": 3,
+        "policy_detour": 4,
+        "policy_resume": 4,
+        "service_case_context": 8
+      },
+      "train": {
+        "agent_repair": 64,
+        "banking_topic_shift": 32,
+        "card_anaphora_action": 64,
+        "clarification_answer": 64,
+        "external_topic_shift": 32,
+        "policy_detour": 32,
+        "policy_resume": 32,
+        "service_case_context": 64
+      },
+      "validation": {
+        "agent_repair": 16,
+        "banking_topic_shift": 8,
+        "card_anaphora_action": 16,
+        "clarification_answer": 16,
+        "external_topic_shift": 8,
+        "policy_detour": 8,
+        "policy_resume": 8,
+        "service_case_context": 16
+      }
+    },
+    "split_counts": {
+      "test": 216,
+      "train": 1222,
+      "validation": 277
+    }
+  },
+  "schema_version": "banking-tool-sft/v1",
+  "signed": false,
+  "source_roles": {
+    "released-retail-bank-agent-sft": {
+      "generator_version": null,
+      "license": "MIT",
+      "manifest_sha256": "a81de72cc3cd977981aed384935feb2f122a4f308486e78e0a83ee38bf653726",
+      "role": "base-tool-use-sft",
+      "trainable": true
+    },
+    "self-authored-synthetic": {
+      "license": "MIT",
+      "role": "servicing-alignment-continuation-sft",
+      "trainable": true
+    }
+  },
+  "synthetic_bank_sha256": "e01955d99de955104c3cf630c1e5a38976616f4306504ab528a8bcfb6aab8282",
+  "tool_sft": [
+    {
+      "allowed_use": [
+        "granite-continuation-sft"
+      ],
+      "bytes": 3348769,
+      "name": "train",
+      "path": "train.jsonl",
+      "record_count": 1222,
+      "sha256": "89114ce3a23f19f297d38f72de76047d91e5ef83e3da7644c56b7caca064627b"
+    },
+    {
+      "allowed_use": [
+        "granite-continuation-evaluation"
+      ],
+      "bytes": 762154,
+      "name": "validation",
+      "path": "validation.jsonl",
+      "record_count": 277,
+      "sha256": "e48e69ddd4d56e9b3d66bb282c0a398b67f097bd48018a8e4cbcc5582f0c80d5"
+    },
+    {
+      "allowed_use": [
+        "granite-continuation-evaluation"
+      ],
+      "bytes": 568636,
+      "name": "test",
+      "path": "test.jsonl",
+      "record_count": 216,
+      "sha256": "6c7ee71e4d7cfcc156f0825da2b70cf6020f655cb1eff053d57b97478aca8c3a"
+    }
+  ]
+}

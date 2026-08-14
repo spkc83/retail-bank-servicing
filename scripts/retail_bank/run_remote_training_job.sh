@@ -4,12 +4,12 @@ set -euo pipefail
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "usage: $0 SOURCE_COMMIT DATASET_REVISION [RESUME_FROM]" >&2
   echo "optional env overrides:"
-  echo "  BASE_MODEL (default: ibm-granite/granite-4.1-8b)"
+  echo "  BASE_MODEL (default: spkc83/retail-bank-servicing-agent-9b)"
   echo "  BASE_REVISION (exact 40-char SHA)"
   echo "  BASE_FAMILY (default: granite)"
-  echo "  CONFIRMATION_TOKEN (default: banking-v3-tool-sft)"
-  echo "  DATASET_REPO (default: spkc83/retail-bank-agent-sft)"
-  echo "  HF_HUB_DEST (default: spkc83/retail-bank-agent-9b)"
+  echo "  CONFIRMATION_TOKEN (default: banking-v5-grounded-dialogue-sft)"
+  echo "  DATASET_REPO (default: spkc83/retail-bank-servicing-alignment-sft)"
+  echo "  HF_HUB_DEST (default: spkc83/retail-bank-servicing-agent-9b)"
   echo "  MANIFEST_PATH (optional path, forwarded to hf_job_tool_sft.py)"
   echo "  OUTPUT_PREFIX (default: /data/retail-bank-agent-9b-\${SOURCE_COMMIT_PREFIX})"
   echo "  MAX_STEPS (default: 3000)"
@@ -17,9 +17,9 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "  GRADIENT_ACCUMULATION_STEPS (default: 2)"
   echo "  CHECKPOINT_EVERY (default: 500)"
   echo "  LEARNING_RATE (default: 1e-4)"
-  echo "  TRACKIO_PROJECT (default: retail-bank-agent-v3)"
+  echo "  TRACKIO_PROJECT (default: retail-bank-agent-v5)"
   echo "  TRACKIO_RUN_NAME (default derived from source commit)"
-  echo "  PROJECT_LABEL (default: retail-bank-agent-v3)"
+  echo "  PROJECT_LABEL (default: retail-bank-agent-v5)"
   exit 2
 fi
 
@@ -27,12 +27,12 @@ source_commit="$1"
 dataset_revision="$2"
 resume_from="${3:-}"
 
-base_model="${BASE_MODEL:-ibm-granite/granite-4.1-8b}"
-base_revision="${BASE_REVISION:-1504002f650e656a0a3789d99574df12e3e94ed0}"
+base_model="${BASE_MODEL:-spkc83/retail-bank-servicing-agent-9b}"
+base_revision="${BASE_REVISION:-1d56824995aa1adecfe20f62ca42fb1c0c443817}"
 base_family="${BASE_FAMILY:-granite}"
-confirmation_token="${CONFIRMATION_TOKEN:-banking-v3-tool-sft}"
-dataset_repo="${DATASET_REPO:-spkc83/retail-bank-agent-sft}"
-hub_dest="${HF_HUB_DEST:-spkc83/retail-bank-agent-9b}"
+confirmation_token="${CONFIRMATION_TOKEN:-banking-v5-grounded-dialogue-sft}"
+dataset_repo="${DATASET_REPO:-spkc83/retail-bank-servicing-alignment-sft}"
+hub_dest="${HF_HUB_DEST:-spkc83/retail-bank-servicing-agent-9b}"
 manifest_path="${MANIFEST_PATH:-}"
 output_prefix="${OUTPUT_PREFIX:-/data/retail-bank-agent-9b-${source_commit:0:8}}"
 max_steps="${MAX_STEPS:-3000}"
@@ -40,9 +40,9 @@ max_train_seconds="${MAX_TRAIN_SECONDS:-14400}"
 gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS:-2}"
 checkpoint_every="${CHECKPOINT_EVERY:-500}"
 learning_rate="${LEARNING_RATE:-1e-4}"
-trackio_project="${TRACKIO_PROJECT:-retail-bank-agent-v3}"
+trackio_project="${TRACKIO_PROJECT:-retail-bank-agent-v5}"
 trackio_run_name="${TRACKIO_RUN_NAME:-${base_family}-tool-sft-${source_commit:0:8}}"
-project_label="${PROJECT_LABEL:-retail-bank-agent-v3}"
+project_label="${PROJECT_LABEL:-retail-bank-agent-v5}"
 
 if [[ ! "$base_revision" =~ ^[0-9a-f]{40}$ ]]; then
   echo "BASE_REVISION must be the exact 40-character lowercase Git revision." >&2

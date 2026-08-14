@@ -72,7 +72,10 @@ def test_remote_execution_requires_flag_and_env(
     with pytest.raises(PermissionError, match="RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT"):
         worker.assert_remote_execution_allowed(config)
 
-    monkeypatch.setenv("RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT", "banking-v3-tool-sft")
+    monkeypatch.setenv(
+        "RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT",
+        "banking-v5-grounded-dialogue-sft",
+    )
     assert worker.remote_execution_allowed(config)
 
 
@@ -94,8 +97,8 @@ def test_cli_defaults_align_generator_path_and_final_repo() -> None:
     args = worker.parse_args([])
     config = worker.worker_config_from_args(args)
 
-    assert str(config.manifest) == "data/banking-v3-tool-sft/manifest.json"
-    assert config.hub_dest == "spkc83/retail-bank-agent-9b"
+    assert str(config.manifest) == "data/banking-servicing-alignment-v5/manifest.json"
+    assert config.hub_dest == "spkc83/retail-bank-servicing-agent-9b"
 
 
 def test_qlora_is_an_explicit_optional_precision_lane(tmp_path: Path) -> None:
@@ -229,8 +232,8 @@ def test_worker_cli_default_is_dry_run() -> None:
 
     assert payload["mode"] == "dry_run"
     assert payload["remote_guard"]["currently_allowed"] is False
-    assert payload["manifest"] == "data/banking-v3-tool-sft/manifest.json"
-    assert payload["hub_dest"] == "spkc83/retail-bank-agent-9b"
+    assert payload["manifest"] == "data/banking-servicing-alignment-v5/manifest.json"
+    assert payload["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b"
     assert "download 9B base weights" in payload["will_not_do_without_guard"]
 
 
@@ -328,10 +331,10 @@ def test_configs_pin_tool_sft_contract_and_disable_push_by_default() -> None:
         with config_path.open("rb") as handle:
             config = tomllib.load(handle)
 
-        assert config["run"]["format"] == "banking_v3_tool_sft_config"
+        assert config["run"]["format"] == "banking_v5_tool_sft_config"
         assert config["run"]["push_to_hub_default"] is False
         assert config["dataset"]["schema_version"] == "banking-tool-sft/v1"
-        assert config["dataset"]["name"] == "data/banking-v3-tool-sft/manifest.json"
+        assert config["dataset"]["name"] == ("data/banking-servicing-alignment-v5/manifest.json")
         assert config["dataset"]["tool_manifest"] == "public_banking_poc_nine_tools"
         assert config["training"]["stack"] == "trl_sfttrainer_peft_bf16_lora"
         assert config["training"]["precision"] == "bf16"

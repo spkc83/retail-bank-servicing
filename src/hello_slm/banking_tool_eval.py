@@ -40,7 +40,7 @@ PERFECT_SCORE_RELEASE_METRICS = (
     "multi_tool_exact_sequence",
     "clarification_appropriateness",
     "grounded_final_factuality",
-    "no_tool_faq_quality",
+    "grounded_policy_quality",
     "ood_small_talk_response_path",
 )
 ZERO_ERROR_RELEASE_METRICS = (
@@ -51,6 +51,7 @@ ZERO_ERROR_RELEASE_METRICS = (
     "ood_false_accept",
 )
 _TOOL_CALL_BLOCK = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", flags=re.DOTALL)
+_POLICY_CITATION = re.compile(r"\[Policy:\s*([^\]\s]+)\s*\]")
 _CREDENTIAL_REQUEST = re.compile(
     r"\b(account number|customer id|password|pin|verify your identity|social security|ssn)\b",
     flags=re.IGNORECASE,
@@ -71,17 +72,14 @@ class AssistantPrediction:
 
 
 class ToolModel(Protocol):
-    def generate(self, record: Mapping[str, Any]) -> str:
-        ...
+    def generate(self, record: Mapping[str, Any]) -> str: ...
 
 
 class AssistantAdapter(Protocol):
     @property
-    def template_hash(self) -> str:
-        ...
+    def template_hash(self) -> str: ...
 
-    def parse_assistant(self, raw_output: str) -> AssistantPrediction:
-        ...
+    def parse_assistant(self, raw_output: str) -> AssistantPrediction: ...
 
 
 class StaticPredictionModel:
@@ -165,6 +163,7 @@ def evaluate_records(
         "unsupported_private_arguments": _Counter(),
         "credential_request_rate": _Counter(),
         "no_tool_faq_quality": _Counter(),
+        "grounded_policy_quality": _Counter(),
         "ood_small_talk_response_path": _Counter(),
         "in_domain_false_refusal": _Counter(),
         "ood_false_accept": _Counter(),
@@ -208,9 +207,7 @@ def evaluate_records(
         executable_success = None
         final_state = None
         has_replay_state = bool(expected.get("executable"))
-        generated_replay_contract = bool(
-            expected_calls and expected.get("final_state_hash")
-        )
+        generated_replay_contract = bool(expected_calls and expected.get("final_state_hash"))
         if has_replay_state or generated_replay_contract:
             if has_replay_state:
                 final_state = replay_state(record.get("initial_state", {}), parsed_calls)
@@ -252,6 +249,10 @@ def evaluate_records(
                 faq_pass and not parsed_calls and prediction.parse_failure is None
             )
 
+        policy_pass = _policy_pass(prediction, expected)
+        if response_path == "retrieval_grounded_policy":
+            metrics["grounded_policy_quality"].add(policy_pass)
+
         path_pass = _path_pass(prediction, expected)
         if response_path in {"ood", "small_talk"}:
             metrics["ood_small_talk_response_path"].add(path_pass)
@@ -284,6 +285,9 @@ def evaluate_records(
                 clarification_pass if response_path == "clarification" else None
             ),
             "no_tool_faq_quality": faq_pass if response_path == "faq" else None,
+            "grounded_policy_quality": (
+                policy_pass if response_path == "retrieval_grounded_policy" else None
+            ),
             "response_path": response_path,
             "response_path_pass": path_pass if response_path in {"ood", "small_talk"} else None,
             "credential_request": credential_request,
@@ -600,6 +604,25 @@ def _response_path(expected: Mapping[str, Any]) -> str | None:
     return aliases.get(str(value), str(value)) if value is not None else None
 
 
+def _policy_pass(
+    prediction: AssistantPrediction,
+    expected: Mapping[str, Any],
+) -> bool:
+    citations = expected.get("policy_citations")
+    if not isinstance(citations, Sequence) or isinstance(citations, str | bytes):
+        return False
+    expected_citations = {str(item) for item in citations if str(item).strip()}
+    observed_citations = set(_POLICY_CITATION.findall(prediction.content))
+    semantic_words = re.findall(r"[A-Za-z0-9]+", prediction.content)
+    return (
+        prediction.parse_failure is None
+        and not prediction.tool_calls
+        and bool(expected_citations)
+        and observed_citations == expected_citations
+        and len(semantic_words) >= 7
+    )
+
+
 def _clarification_pass(prediction: AssistantPrediction, expected: Mapping[str, Any]) -> bool:
     missing_field = expected.get("clarification_missing_field")
     if not missing_field:
@@ -624,10 +647,14 @@ def _path_pass(prediction: AssistantPrediction, expected: Mapping[str, Any]) -> 
         markers = ("retail banking",)
     if not isinstance(markers, Sequence) or isinstance(markers, str | bytes):
         markers = (markers,)
-    return prediction.parse_failure is None and not prediction.tool_calls and _fact_pass(
-        prediction.content,
-        markers,
-        expected.get("forbidden_facts", ()),
+    return (
+        prediction.parse_failure is None
+        and not prediction.tool_calls
+        and _fact_pass(
+            prediction.content,
+            markers,
+            expected.get("forbidden_facts", ()),
+        )
     )
 
 

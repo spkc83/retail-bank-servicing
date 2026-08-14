@@ -19,6 +19,26 @@ from hello_slm.banking_tool_sft_data import (
     validate_records,
 )
 
+POC_PRESETS = {
+    "Hello, how are you?",
+    "yo, sup?",
+    "Show my account balances.",
+    "What happened with the money I sent recently?",
+    "Show my five most recent transactions.",
+    "What is the status of my debit card?",
+    "My card was stolen. Freeze it.",
+    "Please replace my debit card.",
+    "I did not make the North Harbor Market purchase. Dispute it.",
+    "Cancel the pending transfer to River Consulting.",
+    "When was my mailing address changed?",
+    "Can you help me open a mortgage account?",
+    "What is the weather tomorrow?",
+}
+
+
+def _final(record: dict) -> str:
+    return str(record["messages"][-1]["content"])
+
 
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -41,10 +61,7 @@ def test_generate_records_cover_tool_and_non_tool_contracts() -> None:
     assert called_names == manifest_names
 
     tool_messages = [
-        message
-        for record in records
-        for message in record["messages"]
-        if message["role"] == "tool"
+        message for record in records for message in record["messages"] if message["role"] == "tool"
     ]
     assert any(
         message["content"]["ok"] is True and "result" in message["content"]
@@ -60,7 +77,7 @@ def test_generate_records_cover_tool_and_non_tool_contracts() -> None:
         "tool_success",
         "tool_error",
         "clarification",
-        "no_tool_banking_faq",
+        "retrieval_grounded_policy",
         "ood",
         "hard_negative",
         "multi_turn",
@@ -68,9 +85,59 @@ def test_generate_records_cover_tool_and_non_tool_contracts() -> None:
 
     assert any(len(record["expected"]["ordered_calls"]) >= 2 for record in records)
     assert any(
-        len([m for m in record["messages"] if m["role"] == "user"]) > 1
-        for record in records
+        len([m for m in record["messages"] if m["role"] == "user"]) > 1 for record in records
     )
+
+
+def test_v5_customer_facing_contract_is_grounded_varied_and_preset_free() -> None:
+    records = generate_records(pilot_count=1200, split_seed=711)
+    forbidden = ("demo", "synthetic", "mock", "test")
+
+    assert "Harborlight Bank" in records[0]["messages"][0]["content"]
+    assert "Harbor" in records[0]["messages"][0]["content"]
+    assert not any(term in records[0]["messages"][0]["content"].lower() for term in forbidden)
+    assert not any(
+        term in tool["function"]["description"].lower()
+        for tool in public_tool_manifest()
+        for term in forbidden
+    )
+    assert not any(term in _final(record).lower() for record in records for term in forbidden)
+
+    preset_keys = {normalized_user_text(prompt) for prompt in POC_PRESETS}
+    train_users = {
+        normalized_user_text(
+            next(
+                message["content"]
+                for message in reversed(record["messages"])
+                if message["role"] == "user"
+            )
+        )
+        for record in records
+        if record["metadata"]["split"] == "train"
+    }
+    assert not train_users & preset_keys
+
+    policy_rows = [
+        record for record in records if record["expected"]["path"] == "retrieval_grounded_policy"
+    ]
+    assert policy_rows
+    for record in policy_rows:
+        chunk_ids = record["expected"]["policy_citations"]
+        assert len(chunk_ids) == 1
+        assert f"[Policy: {chunk_ids[0]}]" in _final(record)
+        assert any(
+            message["role"] == "system" and chunk_ids[0] in str(message["content"])
+            for message in record["messages"][1:-1]
+        )
+
+    normalized_finals = [normalized_user_text(_final(record)) for record in records]
+    assert len(normalized_finals) == len(set(normalized_finals))
+    assert len({_final(row) for row in policy_rows if row["metadata"]["split"] == "train"}) > 8
+
+    assert any("| Account |" in _final(record) for record in records)
+    assert any("| Date |" in _final(record) for record in records)
+    emergency = next(row for row in records if row["record_id"] == "emergency_card_freeze")
+    assert "sorry" in _final(emergency).lower()
 
 
 def test_tool_calls_have_stable_ids_typed_args_and_replay_hashes() -> None:
@@ -176,9 +243,7 @@ def test_emergency_freeze_and_followups_cover_real_conversation_shapes() -> None
         "list_cards",
         "freeze_card",
     ]
-    discovered_last4 = emergency["messages"][4]["tool_calls"][0]["function"][
-        "arguments"
-    ]["last4"]
+    discovered_last4 = emergency["messages"][4]["tool_calls"][0]["function"]["arguments"]["last4"]
     assert discovered_last4 in json.dumps(emergency["messages"][3]["content"])
 
     summary = by_id["action_summary_followup"]
@@ -225,7 +290,7 @@ def test_faq_and_conversation_templates_cover_out_of_template_live_prompts() -> 
         "at least 18",
         "open a new savings account",
         "savings interest",
-        "yo sup",
+        "hello harbor",
         "thanks for the help",
     ):
         assert marker in text
@@ -236,16 +301,14 @@ def test_faq_and_conversation_templates_cover_out_of_template_live_prompts() -> 
 def test_servicing_targets_include_requested_balances_without_canned_prefixes() -> None:
     records = generate_records(pilot_count=96, split_seed=711)
     account_rows = [
-        record
-        for record in records
-        if record["metadata"]["scenario_family"] == "read_accounts"
+        record for record in records if record["metadata"]["scenario_family"] == "read_accounts"
     ]
     assert account_rows
     for record in account_rows:
         response = record["messages"][-1]["content"]
         facts = record["expected"]["grounding_facts"]
-        assert " available" in response
-        assert " current" in response
+        assert "available" in response.lower()
+        assert "current" in response.lower()
         assert sum(fact.startswith("account.balance=") for fact in facts) == 2
         assert all(
             fact.split("=", 1)[1] in response
@@ -399,9 +462,7 @@ def test_pilot_realizer_uses_natural_text_and_varied_state_slots() -> None:
 
     assert all(len(values) >= 20 for values in write_values.values())
 
-    final_responses = [
-        str(record["messages"][-1]["content"]).strip() for record in records
-    ]
+    final_responses = [str(record["messages"][-1]["content"]).strip() for record in records]
     assert all(len(normalized_user_text(response).split()) >= 7 for response in final_responses)
     by_path = {
         path: [
@@ -411,7 +472,7 @@ def test_pilot_realizer_uses_natural_text_and_varied_state_slots() -> None:
         ]
         for path in {
             "clarification",
-            "no_tool_banking_faq",
+            "retrieval_grounded_policy",
             "ood",
             "hard_negative",
         }
@@ -432,11 +493,8 @@ def test_pilot_realizer_uses_natural_text_and_varied_state_slots() -> None:
         "faq-savings-interest-v1": "interest",
     }
     for record, response in zip(records, final_responses, strict=True):
-        if record["expected"]["path"] == "no_tool_banking_faq":
-            assert (
-                faq_template_markers[record["split_keys"]["template_id"]]
-                in response.lower()
-            )
+        if record["expected"]["path"] == "retrieval_grounded_policy":
+            assert faq_template_markers[record["split_keys"]["template_id"]] in response.lower()
     assert all("retail banking" in response.lower() for response in by_path["ood"])
     assert all(
         "account number" in response.lower() and "customer id" in response.lower()
@@ -530,9 +588,7 @@ def test_cli_exports_and_applies_teacher_realizations(tmp_path: Path) -> None:
     split_paths = [entry["path"] for entry in manifest["tool_sft"]]
     assert split_paths == ["train.jsonl", "validation.jsonl", "test.jsonl"]
     all_rows = [
-        row
-        for entry in manifest["tool_sft"]
-        for row in _read_jsonl(output_dir / entry["path"])
+        row for entry in manifest["tool_sft"] for row in _read_jsonl(output_dir / entry["path"])
     ]
     realized = next(row for row in all_rows if row["record_id"] == rows[0]["record_id"])
     assert realized["provenance"]["teacher_model"] == "teacher-cli-test"
@@ -561,4 +617,18 @@ def test_validator_rejects_untrainable_final_assistant_response() -> None:
     record["messages"][-1]["loss"] = False
 
     with pytest.raises(BankingToolSftDataError, match="must be trainable"):
+        validate_records([record])
+
+
+def test_validator_rejects_internal_language_in_customer_facing_messages() -> None:
+    record = generate_records(pilot_count=27)[0]
+    record["messages"][0]["content"] = "You are an assistant for a demo bank."
+    with pytest.raises(BankingToolSftDataError, match="system prompt leaks"):
+        validate_records([record])
+
+    record = generate_records(pilot_count=27)[0]
+    record["messages"][-1]["content"] = (
+        "The backend completed this request using an internal tool call successfully."
+    )
+    with pytest.raises(BankingToolSftDataError, match="final assistant response leaks"):
         validate_records([record])

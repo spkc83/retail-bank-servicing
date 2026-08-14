@@ -8,9 +8,12 @@ from typing import Any, Protocol
 
 from mock_bank import SessionBankRegistry
 from response_policy import (
+    build_customer_experience_repair_messages,
     build_final_repair_messages,
     render_read_tool_results,
+    validate_customer_facing_answer,
     validate_grounded_answer,
+    validate_policy_answer,
 )
 
 INPUT_TOKEN_BUDGET = 8192
@@ -18,11 +21,14 @@ MAX_NEW_TOKENS = 512
 MAX_TOOL_CALLS = 8
 
 AGENT_SYSTEM_PROMPT = (
-    "You are the conversational customer-service agent for a fictional retail-bank "
-    "demonstration. The customer is already authenticated. Use the supplied tools for "
+    "You are Harbor, the conversational customer-service assistant for Harborlight "
+    "Bank. The customer is already authenticated. Use the supplied tools for "
     "customer-specific banking records or actions, use tool results for final answers, "
     "call dependent tools one at a time so each later call can use the earlier result, "
     "and never ask for account numbers, customer IDs, passwords, PINs, or private IDs."
+    " Respond warmly and concisely, acknowledge distress before helping, name banking "
+    "products clearly, and never mention prototypes, demos, synthetic data, models, "
+    "routers, tools, GPUs, CPUs, or implementation details."
 )
 
 MODEL_TOOLS: list[dict[str, Any]] = [
@@ -30,7 +36,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_accounts",
-            "description": "List the signed-in synthetic customer's accounts and balances.",
+            "description": "List the signed-in customer's accounts and balances.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -38,7 +44,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_cards",
-            "description": "List the signed-in synthetic customer's cards and statuses.",
+            "description": "List the signed-in customer's cards and statuses.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -46,7 +52,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_service_cases",
-            "description": "List recent synthetic service cases.",
+            "description": "List the signed-in customer's recent service cases.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -54,7 +60,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_transactions",
-            "description": "List recent synthetic account transactions.",
+            "description": "List the signed-in customer's recent account transactions.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -72,7 +78,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_transfers",
-            "description": "List the signed-in synthetic customer's transfers and statuses.",
+            "description": "List the signed-in customer's transfers and statuses.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -80,7 +86,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "freeze_card",
-            "description": "Freeze a synthetic card, optionally selected by last four digits.",
+            "description": "Freeze a card, optionally selected by last four digits.",
             "parameters": {
                 "type": "object",
                 "properties": {"last4": {"type": ["string", "null"]}},
@@ -92,7 +98,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "replace_card",
-            "description": "Request replacement of a synthetic card.",
+            "description": "Request replacement of a card.",
             "parameters": {
                 "type": "object",
                 "properties": {"last4": {"type": ["string", "null"]}},
@@ -104,7 +110,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "dispute_transaction",
-            "description": "Dispute a synthetic transaction by description.",
+            "description": "Dispute a transaction by description.",
             "parameters": {
                 "type": "object",
                 "properties": {"description": {"type": ["string", "null"]}},
@@ -116,7 +122,7 @@ MODEL_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "cancel_transfer",
-            "description": "Cancel a synthetic pending transfer by recipient.",
+            "description": "Cancel a pending transfer by recipient.",
             "parameters": {
                 "type": "object",
                 "properties": {"recipient": {"type": ["string", "null"]}},
@@ -173,15 +179,13 @@ class ModelRuntime(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
-    ) -> str:
-        ...
+    ) -> str: ...
 
     def count_tokens(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-    ) -> int:
-        ...
+    ) -> int: ...
 
 
 @dataclass(frozen=True)
@@ -209,29 +213,25 @@ class ToolSyntaxAdapter(Protocol):
     def render_tools(
         self,
         public_tool_manifest: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        ...
+    ) -> list[dict[str, Any]]: ...
 
     def parse_assistant(
         self,
         output: str,
         *,
         turn_key: str | None = None,
-    ) -> tuple[ToolCall, ...]:
-        ...
+    ) -> tuple[ToolCall, ...]: ...
 
     def render_assistant_tool_calls(
         self,
         calls: tuple[ToolCall, ...],
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     def render_tool_result(
         self,
         call: ToolCall,
         content: dict[str, Any],
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class TaggedJsonToolSyntaxAdapter:
@@ -292,6 +292,7 @@ class AgentTurnResult:
     snapshot: dict[str, Any]
     response_path: str
     model_passes: tuple[ModelPassTrace, ...]
+    policy_sources: tuple[str, ...] = ()
 
 
 class ConversationalBankingAgent:
@@ -316,6 +317,7 @@ class ConversationalBankingAgent:
         message: str,
         conversation: list[dict[str, Any]],
         router_result: dict[str, Any],
+        pinned_exchange: list[dict[str, Any]] | None = None,
     ) -> AgentTurnResult:
         if not isinstance(message, str) or not message.strip():
             raise ValueError("message must be a non-empty string")
@@ -328,6 +330,7 @@ class ConversationalBankingAgent:
             tools=self.tool_adapter.render_tools(MODEL_TOOLS),
             token_counter=self.model.count_tokens,
             input_budget=self.input_budget,
+            pinned_exchange=pinned_exchange,
         )
         model_passes: list[ModelPassTrace] = []
         first_output, first_trace = self._generate_pass(
@@ -367,17 +370,13 @@ class ConversationalBankingAgent:
                     raise AgentProtocolError(
                         f"model attempted more than {MAX_TOOL_CALLS} total tool calls"
                     )
-                call_message = self.tool_adapter.render_assistant_tool_calls(
-                    pending_calls
-                )
+                call_message = self.tool_adapter.render_assistant_tool_calls(pending_calls)
                 with_tools.append(call_message)
                 all_calls.extend(pending_calls)
                 for call in pending_calls:
                     result = self._execute_tool(username, session_hash, call)
                     results.append(result)
-                    with_tools.append(
-                        self.tool_adapter.render_tool_result(call, result)
-                    )
+                    with_tools.append(self.tool_adapter.render_tool_result(call, result))
 
                 post_tool_passes += 1
                 followup_context = select_token_budgeted_context(
@@ -386,6 +385,7 @@ class ConversationalBankingAgent:
                     tools=serving_tools,
                     token_counter=self.model.count_tokens,
                     input_budget=self.input_budget,
+                    pinned_exchange=pinned_exchange,
                 )
                 pass_label = (
                     "grounded_final"
@@ -444,6 +444,13 @@ class ConversationalBankingAgent:
                         )
                     final_output = repaired
                     response_path = f"{response_path}_repaired"
+            final_output, response_path = self._ensure_customer_facing(
+                user_message=message.strip(),
+                draft=final_output,
+                response_path=response_path,
+                model_passes=model_passes,
+                authoritative_evidence=results,
+            )
         except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
             raise AgentExecutionError(
                 str(error),
@@ -464,6 +471,64 @@ class ConversationalBankingAgent:
             model_passes=tuple(model_passes),
         )
 
+    def run_policy_turn(
+        self,
+        *,
+        username: str,
+        session_hash: str,
+        message: str,
+        conversation: list[dict[str, Any]],
+        policy_matches: tuple[dict[str, Any], ...],
+        corpus_revision: str,
+        pinned_exchange: list[dict[str, Any]] | None = None,
+    ) -> AgentTurnResult:
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("message must be a non-empty string")
+        if not policy_matches:
+            raise AgentProtocolError("policy generation requires retrieved evidence")
+        canonical = canonical_conversation(conversation)
+        current = [*canonical, {"role": "user", "content": message.strip()}]
+        system = _policy_system_message(policy_matches, corpus_revision)
+        context = select_token_budgeted_context(
+            system,
+            current,
+            tools=None,
+            token_counter=self.model.count_tokens,
+            input_budget=self.input_budget,
+            pinned_exchange=pinned_exchange,
+        )
+        output, trace = self._generate_pass("policy_grounded", context, None)
+        model_passes = [trace]
+        validation = validate_policy_answer(output, policy_matches)
+        response_path = "policy_grounded"
+        if not validation.valid:
+            repair_messages = build_customer_experience_repair_messages(
+                user_message=message.strip(),
+                draft=output,
+                errors=validation.errors,
+                authoritative_evidence=policy_matches,
+            )
+            output, repair_trace = self._generate_pass("policy_repair_1", repair_messages, None)
+            model_passes.append(repair_trace)
+            repaired_validation = validate_policy_answer(output, policy_matches)
+            if not repaired_validation.valid:
+                raise AgentProtocolError(
+                    "policy-answer repair failed validation: "
+                    + "; ".join(repaired_validation.errors)
+                )
+            response_path = "policy_grounded_repaired"
+        sources = tuple(str(item["chunk_id"]) for item in policy_matches)
+        return AgentTurnResult(
+            response=output,
+            conversation=[*current, {"role": "assistant", "content": output}],
+            tool_calls=(),
+            tool_results=(),
+            snapshot=self.bank.snapshot(username, session_hash),
+            response_path=response_path,
+            model_passes=tuple(model_passes),
+            policy_sources=sources,
+        )
+
     def _complete_without_tools(
         self,
         *,
@@ -474,16 +539,52 @@ class ConversationalBankingAgent:
         response_path: str,
         model_passes: list[ModelPassTrace],
     ) -> AgentTurnResult:
-        completed = [*current, {"role": "assistant", "content": first_output}]
+        final_output, final_path = self._ensure_customer_facing(
+            user_message=str(current[-1]["content"]),
+            draft=first_output,
+            response_path=response_path,
+            model_passes=model_passes,
+        )
+        completed = [*current, {"role": "assistant", "content": final_output}]
         return AgentTurnResult(
-            response=first_output,
+            response=final_output,
             conversation=completed,
             tool_calls=(),
             tool_results=(),
             snapshot=self.bank.snapshot(username, session_hash),
-            response_path=response_path,
+            response_path=final_path,
             model_passes=tuple(model_passes),
         )
+
+    def _ensure_customer_facing(
+        self,
+        *,
+        user_message: str,
+        draft: str,
+        response_path: str,
+        model_passes: list[ModelPassTrace],
+        authoritative_evidence: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+    ) -> tuple[str, str]:
+        validation = validate_customer_facing_answer(draft)
+        if validation.valid:
+            return draft, response_path
+        repair_messages = build_customer_experience_repair_messages(
+            user_message=user_message,
+            draft=draft,
+            errors=validation.errors,
+            authoritative_evidence=authoritative_evidence,
+        )
+        repaired, repair_trace = self._generate_pass(
+            "customer_experience_repair_1", repair_messages, None
+        )
+        model_passes.append(repair_trace)
+        repaired_validation = validate_customer_facing_answer(repaired)
+        if not repaired_validation.valid:
+            raise AgentProtocolError(
+                "customer-experience repair failed validation: "
+                + "; ".join(repaired_validation.errors)
+            )
+        return repaired, f"{response_path}_customer_repaired"
 
     def _generate_pass(
         self,
@@ -508,9 +609,7 @@ class ConversationalBankingAgent:
         return output, ModelPassTrace(
             label=label,
             input_tokens=input_tokens,
-            prompt_sha256=hashlib.sha256(
-                prompt_payload.encode("utf-8")
-            ).hexdigest(),
+            prompt_sha256=hashlib.sha256(prompt_payload.encode("utf-8")).hexdigest(),
             output_chars=len(output),
             output_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
             raw_output=output,
@@ -609,10 +708,7 @@ def _stable_tool_call_id(
 
 
 def _validate_tool_calls(calls: tuple[ToolCall, ...]) -> None:
-    schemas = {
-        tool["function"]["name"]: tool["function"]["parameters"]
-        for tool in MODEL_TOOLS
-    }
+    schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in MODEL_TOOLS}
     seen_ids: set[str] = set()
     for expected_index, call in enumerate(calls):
         if call.index != expected_index:
@@ -645,27 +741,21 @@ def _validate_arguments(
         expected = subschema.get("type")
         expected_types = expected if isinstance(expected, list) else [expected]
         if not _value_matches_json_types(value, expected_types):
-            raise AgentProtocolError(
-                f"model supplied invalid type for {tool_name}.{name}"
-            )
+            raise AgentProtocolError(f"model supplied invalid type for {tool_name}.{name}")
         if (
             isinstance(value, int)
             and not isinstance(value, bool)
             and isinstance(subschema.get("minimum"), int)
             and value < subschema["minimum"]
         ):
-            raise AgentProtocolError(
-                f"model supplied value below minimum for {tool_name}.{name}"
-            )
+            raise AgentProtocolError(f"model supplied value below minimum for {tool_name}.{name}")
         if (
             isinstance(value, int)
             and not isinstance(value, bool)
             and isinstance(subschema.get("maximum"), int)
             and value > subschema["maximum"]
         ):
-            raise AgentProtocolError(
-                f"model supplied value above maximum for {tool_name}.{name}"
-            )
+            raise AgentProtocolError(f"model supplied value above maximum for {tool_name}.{name}")
 
 
 def _value_matches_json_types(value: Any, expected_types: list[Any]) -> bool:
@@ -674,17 +764,9 @@ def _value_matches_json_types(value: Any, expected_types: list[Any]) -> bool:
             return True
         if expected == "string" and isinstance(value, str):
             return True
-        if (
-            expected == "integer"
-            and isinstance(value, int)
-            and not isinstance(value, bool)
-        ):
+        if expected == "integer" and isinstance(value, int) and not isinstance(value, bool):
             return True
-        if (
-            expected == "number"
-            and isinstance(value, int | float)
-            and not isinstance(value, bool)
-        ):
+        if expected == "number" and isinstance(value, int | float) and not isinstance(value, bool):
             return True
         if expected == "boolean" and isinstance(value, bool):
             return True
@@ -711,13 +793,13 @@ def _safe_tool_error(error: Exception) -> dict[str, str]:
         safe_message = "Select a transfer by either ID or recipient, not both."
     elif message.startswith("expected exactly one matching synthetic"):
         code = "record_match_count"
-        safe_message = "The request did not match exactly one synthetic banking record."
+        safe_message = "The request did not match exactly one banking record."
     elif message == "no matching synthetic banking record":
         code = "record_not_found"
-        safe_message = "No matching synthetic banking record was found."
+        safe_message = "No matching banking record was found."
     else:
         code = "backend_error"
-        safe_message = "The synthetic banking backend could not complete the request."
+        safe_message = "The banking service could not complete the request."
     return {
         "code": code,
         "message": safe_message,
@@ -731,6 +813,7 @@ def select_token_budgeted_context(
     tools: list[dict[str, Any]] | None,
     token_counter: Any,
     input_budget: int = INPUT_TOKEN_BUDGET,
+    pinned_exchange: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if input_budget < 1:
         raise ValueError("input budget must be positive")
@@ -742,21 +825,41 @@ def select_token_budgeted_context(
             raise AgentProtocolError("system prompt exceeds the model input budget")
         return selected
 
-    retained = [groups[-1]]
-    selected = [system_message, *groups[-1]]
+    required_indexes = {len(groups) - 1}
+    canonical_pin = canonical_conversation(pinned_exchange)
+    if canonical_pin:
+        pin_index = next(
+            (index for index, group in enumerate(groups) if group == canonical_pin),
+            None,
+        )
+        if pin_index is None:
+            raise AgentProtocolError("pinned servicing exchange is not in conversation")
+        required_indexes.add(pin_index)
+    selected_indexes = set(required_indexes)
+    selected = [
+        system_message,
+        *(message for index in sorted(selected_indexes) for message in groups[index]),
+    ]
     if token_counter(selected, tools) > input_budget:
-        raise AgentProtocolError("latest conversation turn exceeds the model input budget")
-    for group in reversed(groups[:-1]):
-        proposal_groups = [group, *retained]
+        label = "pinned servicing exchange" if canonical_pin else "latest conversation turn"
+        raise AgentProtocolError(f"{label} exceeds the model input budget")
+    for index in reversed(range(len(groups) - 1)):
+        if index in selected_indexes:
+            continue
+        proposal_indexes = {*selected_indexes, index}
         proposal = [
             system_message,
-            *(message for item in proposal_groups for message in item),
+            *(
+                message
+                for group_index in sorted(proposal_indexes)
+                for message in groups[group_index]
+            ),
         ]
         if token_counter(proposal, tools) <= input_budget:
-            retained = proposal_groups
+            selected_indexes = proposal_indexes
     return [
         system_message,
-        *(message for item in retained for message in item),
+        *(message for group_index in sorted(selected_indexes) for message in groups[group_index]),
     ]
 
 
@@ -785,11 +888,7 @@ def canonical_conversation(
                 )
             elif content.strip():
                 canonical.append({"role": "assistant", "content": content.strip()})
-        elif (
-            role == "tool"
-            and isinstance(item.get("name"), str)
-            and isinstance(content, str)
-        ):
+        elif role == "tool" and isinstance(item.get("name"), str) and isinstance(content, str):
             canonical_tool = {
                 "role": "tool",
                 "name": str(item["name"]),
@@ -820,4 +919,30 @@ def _system_message(
     return {
         "role": "system",
         "content": AGENT_SYSTEM_PROMPT,
+    }
+
+
+def _policy_system_message(
+    matches: tuple[dict[str, Any], ...],
+    corpus_revision: str,
+) -> dict[str, str]:
+    evidence = json.dumps(
+        {
+            "corpus_revision": corpus_revision,
+            "policy_chunks": list(matches),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return {
+        "role": "system",
+        "content": (
+            "You are Harbor, the customer-service assistant for Harborlight Bank. "
+            "Answer the customer's policy question using only APPROVED_POLICY_CONTEXT. "
+            "Cite every material answer with one or more exact returned chunk IDs in "
+            "the form [Policy: chunk_id]. If the context does not answer the question, "
+            "say that you could not find the current policy. Do not perform account "
+            "actions, invent terms, or mention implementation details. Be warm and "
+            f"concise.\n\nAPPROVED_POLICY_CONTEXT={evidence}"
+        ),
     }

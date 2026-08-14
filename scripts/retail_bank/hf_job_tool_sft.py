@@ -30,10 +30,10 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
-DATASET_REPO = "spkc83/retail-bank-agent-sft"
-MODEL_REPO = "spkc83/retail-bank-agent-9b"
-BASE_MODEL = "ibm-granite/granite-4.1-8b"
-BASE_REVISION = "1504002f650e656a0a3789d99574df12e3e94ed0"
+DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
+MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
+BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,23 +53,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
-    parser.add_argument("--trackio-project", default="retail-bank-agent-v3")
+    parser.add_argument("--trackio-project", default="retail-bank-agent-v5")
     parser.add_argument("--trackio-run-name")
     parser.add_argument(
         "--confirmation-token",
-        default="banking-v3-tool-sft",
+        default="banking-v5-grounded-dialogue-sft",
         help="Value required by the worker confirmation env guard.",
     )
     return parser.parse_args()
 
 
 def download_source(source_commit: str, destination: Path) -> Path:
-    if len(source_commit) != 40 or any(
-        char not in "0123456789abcdef" for char in source_commit
-    ):
-        raise ValueError(
-            "--source-commit must be an exact 40-character lowercase Git commit"
-        )
+    if len(source_commit) != 40 or any(char not in "0123456789abcdef" for char in source_commit):
+        raise ValueError("--source-commit must be an exact 40-character lowercase Git commit")
     url = f"https://github.com/{SOURCE_REPO}/archive/{source_commit}.tar.gz"
     destination.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": "retail-bank-tool-sft-job"})
@@ -99,11 +95,7 @@ def main() -> int:
                 token=os.environ["HF_TOKEN"],
             )
         )
-        manifest = (
-            dataset_root / args.manifest
-            if args.manifest
-            else dataset_root / "manifest.json"
-        )
+        manifest = dataset_root / args.manifest if args.manifest else dataset_root / "manifest.json"
         if not manifest.is_file():
             raise RuntimeError(f"dataset manifest is unavailable: {manifest}")
         env = {
@@ -151,8 +143,7 @@ def main() -> int:
             "--trackio-project",
             args.trackio_project,
             "--trackio-run-name",
-            args.trackio_run_name
-            or f"{args.base_family}-tool-sft-{args.source_commit[:8]}",
+            args.trackio_run_name or f"{args.base_family}-tool-sft-{args.source_commit[:8]}",
         ]
         if args.resume_from:
             command.extend(["--resume-from", args.resume_from])

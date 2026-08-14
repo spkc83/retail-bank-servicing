@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare governed v4 conversation-router data from SFT records and CLINC OOD."""
+"""Prepare governed V5 conversation-router data from SFT records and CLINC OOD."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from hello_slm.banking_conversation_router_data import (
-    CAPABILITY_LABELS,
     CLINC_EXTERNAL_OOD_LABELS,
+    INTENT_LABELS,
     RELATION_LABELS,
     ROUTER_SPLITS,
     build_conversation_router_splits,
@@ -27,9 +27,9 @@ CLINC_URL = "https://archive.ics.uci.edu/static/public/570/clinc150.zip"
 CLINC_ZIP_SHA256 = "0d8ecc3e1edd7b25cabde0177544ce536ddf773844bc80ef1a75f36e7f030ea2"
 CLINC_MEMBER = "clinc150_uci/data_oos_plus.json"
 CLINC_MEMBER_SHA256 = "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f"
-DEFAULT_SFT_DIR = Path("data/banking-v3-tool-sft")
-DEFAULT_OUTPUT_DIR = Path("data/banking-conversation-router-v4")
-DEFAULT_RELEASE_LOCK = Path("data/sources/banking-conversation-router-v4.lock.json")
+DEFAULT_SFT_DIR = Path("data/banking-servicing-alignment-v5")
+DEFAULT_OUTPUT_DIR = Path("data/banking-conversation-router-v5")
+DEFAULT_RELEASE_LOCK = Path("data/sources/banking-conversation-router-v5.lock.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,12 +47,12 @@ def parse_args() -> argparse.Namespace:
         "--expected-release-lock",
         type=Path,
         default=DEFAULT_RELEASE_LOCK,
-        help="Optional v4 lock whose prepared split digests should match when present.",
+        help="Optional V5 lock whose prepared split digests should match when present.",
     )
     parser.add_argument(
         "--skip-release-digest-check",
         action="store_true",
-        help="Allow new v4 splits before a release lock exists.",
+        help="Allow new V5 splits before a release lock exists.",
     )
     return parser.parse_args()
 
@@ -60,9 +60,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     expected_release_lock = (
-        read_json(args.expected_release_lock)
-        if args.expected_release_lock.is_file()
-        else None
+        read_json(args.expected_release_lock) if args.expected_release_lock.is_file() else None
     )
     sft_manifest, sft_records = load_sft_records(args.sft_dir)
     clinc_bytes = download_clinc_member()
@@ -74,11 +72,12 @@ def main() -> int:
     )
     if report["pii_matches"] != 0:
         raise ValueError(
-            "conversation router data contains "
-            f"{report['pii_matches']} PII-like matches"
+            f"conversation router data contains {report['pii_matches']} PII-like matches"
         )
     if report["leakage"]["group_split_leak_count"] != 0:
         raise ValueError("conversation router data has group leakage across splits")
+    if report["leakage"]["trajectory_split_leak_count"] != 0:
+        raise ValueError("conversation router data has trajectory leakage across splits")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     split_entries = []
@@ -104,17 +103,18 @@ def main() -> int:
     created_at = release_created_at(expected_release_lock)
     manifest = {
         "contract": "banking-conversation-router-data",
-        "format_version": 1,
+        "format_version": 2,
         "created_at": created_at,
         "seed": args.seed,
         "max_exchanges": 3,
         "schema": {
             "text": "cross-encoder input rendered by render_router_input",
             "domain_label": "1=in-domain banking/conversation, 0=external OOD",
-            "capability_label": "index into capability_labels or -100",
+            "intent_label": "index into intent_labels or -100",
+            "lane": "deterministically derived from intent_label",
             "relation_labels": "multi-hot vector in relation_labels order",
         },
-        "capability_labels": CAPABILITY_LABELS,
+        "intent_labels": INTENT_LABELS,
         "relation_labels": RELATION_LABELS,
         "sources": {
             "sft": {
@@ -125,7 +125,7 @@ def main() -> int:
                     for entry in sft_manifest.get("tool_sft", [])
                     if isinstance(entry, dict)
                 },
-                "allowed_use": ["conversation-router-domain-capability-training"],
+                "allowed_use": ["conversation-router-domain-intent-training"],
             },
             "UCI/clinc150": {
                 "url": CLINC_URL,
@@ -238,10 +238,10 @@ def write_data_card(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(
         "\n".join(
             [
-                "# Retail Bank Conversation Router v4 Data",
+                "# Retail Bank Conversation Router V5 Data",
                 "",
                 "Governed cross-encoder data for a history-aware OOD, "
-                "capability, and relation classifier.",
+                "fine-intent, and relation classifier.",
                 "",
                 "Rows include only prior visible user/assistant messages "
                 "and the current user message.",
@@ -251,7 +251,7 @@ def write_data_card(path: Path, manifest: dict[str, Any]) -> None:
                 f"- Train rows: {counts['train']}",
                 f"- Validation rows: {counts['validation']}",
                 f"- Test rows: {counts['test']}",
-                f"- Capability labels: {', '.join(manifest['capability_labels'])}",
+                f"- Intent labels: {', '.join(manifest['intent_labels'])}",
                 f"- Relation labels: {', '.join(manifest['relation_labels'])}",
                 "",
             ]
@@ -264,8 +264,8 @@ def write_source_lock(path: Path, manifest: dict[str, Any], clinc_bytes: bytes) 
     path.write_text(
         json.dumps(
             {
-                "contract": "banking-conversation-router-v4-source-lock",
-                "format_version": 1,
+                "contract": "banking-conversation-router-v5-source-lock",
+                "format_version": 2,
                 "created_at": manifest["created_at"],
                 "sources": manifest["sources"],
                 "clinc_member_sha256": _bytes_sha256(clinc_bytes),

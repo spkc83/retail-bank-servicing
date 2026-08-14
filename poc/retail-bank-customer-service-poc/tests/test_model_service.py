@@ -74,10 +74,7 @@ def router_guidance() -> dict[str, Any]:
 
 
 def test_public_tool_schemas_use_customer_facing_arguments() -> None:
-    schemas = {
-        item["function"]["name"]: item["function"]["parameters"]
-        for item in MODEL_TOOLS
-    }
+    schemas = {item["function"]["name"]: item["function"]["parameters"] for item in MODEL_TOOLS}
 
     assert set(schemas) == {
         "list_accounts",
@@ -156,14 +153,111 @@ def test_plain_first_pass_text_is_a_model_authored_conversational_answer() -> No
     assert model.calls[0]["messages"][0] == {
         "role": "system",
         "content": (
-            "You are the conversational customer-service agent for a fictional "
-            "retail-bank demonstration. The customer is already authenticated. "
+            "You are Harbor, the conversational customer-service assistant for "
+            "Harborlight Bank. The customer is already authenticated. "
             "Use the supplied tools for customer-specific banking records or actions, "
             "use tool results for final answers, call dependent tools one at a time "
             "so each later call can use the earlier result, and never ask for account "
-            "numbers, customer IDs, passwords, PINs, or private IDs."
+            "numbers, customer IDs, passwords, PINs, or private IDs. Respond warmly "
+            "and concisely, acknowledge distress before helping, name banking products "
+            "clearly, and never mention prototypes, demos, synthetic data, models, "
+            "routers, tools, GPUs, CPUs, or implementation details."
         ),
     }
+
+
+def test_internal_language_leak_gets_one_customer_experience_repair() -> None:
+    model = RecordingModel(
+        [
+            "Hi! I’m ready to help with the synthetic accounts in this demo.",
+            "Hi, I’m Harbor. How can I help with your banking today?",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Hi, I’m Harbor. How can I help with your banking today?"
+    assert result.response_path == "direct_answer_customer_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "customer_experience_repair_1",
+    ]
+    assert model.calls[-1]["tools"] is None
+
+
+def test_policy_turn_is_generated_from_evidence_without_banking_tools() -> None:
+    model = RecordingModel(
+        [
+            "Harborlight Bank accepts mortgage applications for review; approval is "
+            "not automatic. [Policy: mortgage.application.overview.us.v1]"
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+    matches = (
+        {
+            "chunk_id": "mortgage.application.overview.us.v1",
+            "title": "Mortgage application overview",
+            "text": "Applications are reviewed before approval.",
+            "effective_from": "2026-01-01",
+        },
+    )
+
+    result = agent.run_policy_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="How do I start a mortgage application?",
+        conversation=[],
+        policy_matches=matches,
+        corpus_revision="sha256:policy-v1",
+    )
+
+    assert result.response_path == "policy_grounded"
+    assert result.policy_sources == ("mortgage.application.overview.us.v1",)
+    assert result.tool_calls == ()
+    assert len(model.calls) == 1
+    assert model.calls[0]["tools"] is None
+    assert "sha256:policy-v1" in model.calls[0]["messages"][0]["content"]
+
+
+def test_policy_turn_repairs_an_invented_citation_once() -> None:
+    model = RecordingModel(
+        [
+            "Apply online. [Policy: invented.policy]",
+            "Applications are reviewed before approval. "
+            "[Policy: mortgage.application.overview.us.v1]",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+    matches = (
+        {
+            "chunk_id": "mortgage.application.overview.us.v1",
+            "title": "Mortgage application overview",
+            "text": "Applications are reviewed before approval.",
+        },
+    )
+
+    result = agent.run_policy_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Can I get a mortgage?",
+        conversation=[],
+        policy_matches=matches,
+        corpus_revision="sha256:policy-v1",
+    )
+
+    assert result.response_path == "policy_grounded_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "policy_grounded",
+        "policy_repair_1",
+    ]
+    assert all(call["tools"] is None for call in model.calls)
 
 
 def test_tool_calls_execute_in_order_and_second_model_pass_writes_final_answer() -> None:
@@ -312,7 +406,7 @@ def test_backend_error_returns_safe_canonical_tool_result_to_model() -> None:
             "ok": False,
             "error": {
                 "code": "record_match_count",
-                "message": "The request did not match exactly one synthetic banking record.",
+                "message": "The request did not match exactly one banking record.",
             },
         },
     )
@@ -393,9 +487,7 @@ def test_repeated_same_name_calls_keep_distinct_tool_call_ids() -> None:
     assert result.tool_calls[1].id.endswith("_1_list_transactions")
     assert result.tool_calls[0].id != result.tool_calls[1].id
     assert [
-        item["tool_call_id"]
-        for item in model.calls[1]["messages"]
-        if item["role"] == "tool"
+        item["tool_call_id"] for item in model.calls[1]["messages"] if item["role"] == "tool"
     ] == [call.id for call in result.tool_calls]
     assert all(item["ok"] is True for item in result.tool_results)
 
@@ -433,9 +525,7 @@ def test_fallback_tool_call_ids_do_not_collide_across_retained_turns() -> None:
     assert second_id.endswith("_0_list_transfers")
     assert first_id != second_id
     retained_tool_ids = [
-        item["tool_call_id"]
-        for item in second.conversation
-        if item["role"] == "tool"
+        item["tool_call_id"] for item in second.conversation if item["role"] == "tool"
     ]
     assert retained_tool_ids == [first_id, second_id]
 
@@ -585,6 +675,33 @@ def test_token_budget_rejects_oversized_latest_group_without_truncation() -> Non
             token_counter=lambda messages, _tools: len(json.dumps(messages)),
             input_budget=50,
         )
+
+
+def test_token_budget_pins_pending_servicing_exchange_across_long_detour() -> None:
+    anchor = [
+        {"role": "user", "content": "I need to dispute a purchase."},
+        {"role": "assistant", "content": "Which purchase should I review?"},
+    ]
+    detour = [
+        {"role": "user", "content": f"policy question {index}"} for index in range(5) for _ in (0,)
+    ]
+    conversation: list[dict[str, Any]] = [*anchor]
+    for item in detour:
+        conversation.extend([item, {"role": "assistant", "content": "policy answer " * 15}])
+    conversation.append({"role": "user", "content": "Okay, continue."})
+
+    selected = select_token_budgeted_context(
+        {"role": "system", "content": "system"},
+        conversation,
+        tools=MODEL_TOOLS,
+        token_counter=lambda messages, _tools: len(json.dumps(messages)),
+        input_budget=1000,
+        pinned_exchange=anchor,
+    )
+
+    assert anchor[0] in selected
+    assert anchor[1] in selected
+    assert selected[-1]["content"] == "Okay, continue."
 
 
 def test_default_input_budget_is_8192_tokens() -> None:

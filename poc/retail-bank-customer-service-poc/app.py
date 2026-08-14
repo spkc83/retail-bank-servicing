@@ -34,6 +34,14 @@ else:
 import gradio as gr
 
 from auth import load_demo_auth
+from branding import (
+    ASSISTANT_NAME,
+    BANK_NAME,
+    GRADIO_CSS,
+    PROTOTYPE_NOTICE,
+    account_type_label,
+    response_provenance,
+)
 from model_service import (
     AgentExecutionError,
     AgentProtocolError,
@@ -43,17 +51,20 @@ from model_service import (
     ToolCall,
     canonical_conversation,
 )
+from dialogue_state import DialogueState, begin_turn, finish_turn
+from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
 from responses import (
     MODEL_FAILURE_RESPONSE,
     OOD_RESPONSE,
+    POLICY_NOT_FOUND_RESPONSE,
 )
 from router import ROUTER_REVISION, LearnedBankingRouter
 from state import BANK
 
 AUTH_CREDENTIALS = load_demo_auth()
 AUTH_MESSAGE = (
-    "<strong>Synthetic demo only.</strong><br>"
-    "Use either public test account:<br>"
+    f"<strong>Welcome to {BANK_NAME}'s prototype.</strong><br>"
+    f"Choose either fictional customer profile to meet {ASSISTANT_NAME}:<br>"
     + "<br>".join(
         f"<code>{html.escape(username)}</code> / <code>{html.escape(password)}</code>"
         for username, password in AUTH_CREDENTIALS
@@ -61,23 +72,9 @@ AUTH_MESSAGE = (
 )
 SKIP_ROUTER_LOAD = os.environ.get("POC_SKIP_ROUTER_LOAD") == "1"
 router = None if SKIP_ROUTER_LOAD else LearnedBankingRouter.from_hub()
+POLICY_KNOWLEDGE = PolicyKnowledgeBase.from_json(DEFAULT_POLICY_PATH)
 
-CSS = """
-.gradio-container { max-width: 1220px !important; }
-.synthetic-banner {
-  border: 1px solid #f0b429;
-  background: #fff8df;
-  border-radius: 12px;
-  padding: 12px 16px;
-}
-.profile-card {
-  border: 1px solid #dbe4f0;
-  border-radius: 14px;
-  padding: 14px;
-  background: linear-gradient(145deg, #f8fbff, #eef5ff);
-}
-.status-ok { color: #087f5b; font-weight: 700; }
-"""
+CSS = GRADIO_CSS
 
 PRESETS = [
     "Hello, how are you?",
@@ -94,6 +91,7 @@ PRESETS = [
     "Can you help me open a mortgage account?",
     "What is the weather tomorrow?",
 ]
+
 
 class _RuntimeModel(ModelRuntime):
     def generate(
@@ -120,6 +118,7 @@ def run_model_turn(
     message: str,
     visible_history: list[dict[str, Any]],
     conversation_history: list[dict[str, Any]],
+    dialogue_state_payload: dict[str, Any] | None,
     request: gr.Request,
 ) -> tuple[
     Any,
@@ -131,14 +130,17 @@ def run_model_turn(
     Any,
     Any,
     Any,
+    dict[str, Any],
 ]:
     if not isinstance(message, str) or not message.strip():
         raise ValueError("message must be a non-empty string")
     username, session_hash = _identity(request)
     visible = _visible_history(visible_history)
     conversation = canonical_conversation(conversation_history)
+    prior_state = DialogueState.from_dict(dialogue_state_payload)
 
-    route = route_query(message, conversation)
+    route = route_query(message, conversation, prior_state.as_dict())
+    transition = begin_turn(prior_state, route, message.strip())
     if route.get("route") == "classifier_error":
         return _direct_turn(
             message=message,
@@ -146,15 +148,15 @@ def run_model_turn(
             visible=visible,
             conversation=conversation,
             snapshot=render_snapshot(BANK.snapshot(username, session_hash)),
-            activity=(
-                "The conversation classifier failed; the 9B model was not invoked."
-            ),
+            activity=("The conversation classifier failed; the 9B model was not invoked."),
             diagnostics=_render_diagnostics(
                 route,
                 (),
                 (),
                 "classifier failure",
+                dialogue_state=transition.state.as_dict(),
             ),
+            dialogue_state=transition.state.as_dict(),
         )
     if route.get("route") == "out_of_domain":
         return _direct_turn(
@@ -164,19 +166,63 @@ def run_model_turn(
             conversation=conversation,
             snapshot=render_snapshot(BANK.snapshot(username, session_hash)),
             activity="High-confidence OOD head decision; the 9B model was not invoked.",
-            diagnostics=_render_diagnostics(route, (), (), "OOD stock response"),
+            diagnostics=_render_diagnostics(
+                route,
+                (),
+                (),
+                "OOD stock response",
+                dialogue_state=transition.state.as_dict(),
+            ),
+            dialogue_state=transition.state.as_dict(),
         )
 
     agent = ConversationalBankingAgent(bank=BANK, model=_RuntimeModel())
     try:
-        result = agent.run_turn(
-            username=username,
-            session_hash=session_hash,
-            message=message,
-            conversation=conversation,
-            router_result=route,
-        )
+        pinned_exchange = list(transition.anchor_exchange) or None
+        if transition.lane == "policy":
+            lookup = POLICY_KNOWLEDGE.lookup(message.strip())
+            if not lookup.matched:
+                return _direct_turn(
+                    message=message,
+                    response=POLICY_NOT_FOUND_RESPONSE,
+                    visible=visible,
+                    conversation=conversation,
+                    snapshot=render_snapshot(BANK.snapshot(username, session_hash)),
+                    activity="No approved current policy passage matched the question.",
+                    diagnostics=_render_diagnostics(
+                        route,
+                        (),
+                        (),
+                        "policy no match",
+                        dialogue_state=transition.state.as_dict(),
+                    ),
+                    dialogue_state=transition.state.as_dict(),
+                )
+            result = agent.run_policy_turn(
+                username=username,
+                session_hash=session_hash,
+                message=message,
+                conversation=conversation,
+                policy_matches=tuple(match.as_dict() for match in lookup.matches),
+                corpus_revision=lookup.corpus_revision,
+                pinned_exchange=pinned_exchange,
+            )
+        else:
+            result = agent.run_turn(
+                username=username,
+                session_hash=session_hash,
+                message=message,
+                conversation=conversation,
+                router_result=route,
+                pinned_exchange=pinned_exchange,
+            )
     except AgentExecutionError as error:
+        failed_state = finish_turn(
+            transition.state,
+            MODEL_FAILURE_RESPONSE,
+            tuple(call.name for call in error.tool_calls),
+            error.tool_results,
+        )
         failed_conversation = [
             *error.conversation,
             {"role": "assistant", "content": MODEL_FAILURE_RESPONSE},
@@ -188,6 +234,7 @@ def run_model_turn(
             error.tool_results,
             "9B second-pass failure",
             error.model_passes,
+            dialogue_state=failed_state.as_dict(),
         )
         return (
             gr.update(value="", interactive=True),
@@ -198,17 +245,24 @@ def run_model_turn(
                 "The 9B model failed after executing the tool calls shown in "
                 "diagnostics. No CPU-authored servicing answer was substituted."
             ),
-            f"{failure_diagnostics}\n\n"
-            f"Failure type: `{type(error.__cause__).__name__}`",
+            f"{failure_diagnostics}\n\nFailure type: `{type(error.__cause__).__name__}`",
             enabled,
             enabled,
             enabled,
+            failed_state.as_dict(),
         )
     except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
         failed_conversation = _with_text_turn(
             conversation,
             message,
             MODEL_FAILURE_RESPONSE,
+        )
+        failure_diagnostics = _render_diagnostics(
+            route,
+            (),
+            (),
+            "9B model failure",
+            dialogue_state=transition.state.as_dict(),
         )
         enabled = gr.update(interactive=True)
         return (
@@ -218,17 +272,21 @@ def run_model_turn(
             render_snapshot(BANK.snapshot(username, session_hash)),
             (
                 "The 9B model event failed. No CPU-authored servicing answer was "
-                "substituted; the synthetic dashboard shows the current backend state."
+                "substituted; the account panel shows the current recorded state."
             ),
-            (
-                f"{_render_diagnostics(route, (), (), '9B model failure')}\n\n"
-                f"Failure type: `{type(error).__name__}`"
-            ),
+            (f"{failure_diagnostics}\n\nFailure type: `{type(error).__name__}`"),
             enabled,
             enabled,
             enabled,
+            transition.state.as_dict(),
         )
 
+    next_state = finish_turn(
+        transition.state,
+        result.response,
+        tuple(call.name for call in result.tool_calls),
+        result.tool_results,
+    )
     enabled = gr.update(interactive=True)
     return (
         gr.update(value="", interactive=True),
@@ -236,14 +294,8 @@ def run_model_turn(
         result.conversation,
         render_snapshot(result.snapshot),
         (
-            (
-                "The 9B model selected and called the synthetic tools, then authored "
-                "the final response from their results."
-            )
-            if result.tool_calls
-            else (
-                "The 9B model authored the conversational answer directly."
-            )
+            f"{ASSISTANT_NAME}'s response was model authored.\n\n"
+            f"_{response_provenance(result.response_path, result.model_passes)}_"
         ),
         _render_diagnostics(
             route,
@@ -252,16 +304,20 @@ def run_model_turn(
             f"9B {result.response_path}",
             result.model_passes,
             result.response,
+            policy_sources=result.policy_sources,
+            dialogue_state=next_state.as_dict(),
         ),
         enabled,
         enabled,
         enabled,
+        next_state.as_dict(),
     )
 
 
 def fail_model_turn(
     message: str,
     current_conversation: list[dict[str, Any]],
+    dialogue_state_payload: dict[str, Any] | None,
     request: gr.Request,
 ) -> tuple[
     Any,
@@ -273,11 +329,13 @@ def fail_model_turn(
     Any,
     Any,
     Any,
+    dict[str, Any],
 ]:
     if not isinstance(message, str) or not message.strip():
         raise ValueError("message must be a non-empty string")
     username, session_hash = _identity(request)
     conversation = canonical_conversation(current_conversation)
+    dialogue_state = DialogueState.from_dict(dialogue_state_payload).as_dict()
     enabled = gr.update(interactive=True)
     failed_conversation = _with_text_turn(
         conversation,
@@ -298,21 +356,24 @@ def fail_model_turn(
             (),
             (),
             "ZeroGPU/model unavailable",
+            dialogue_state=dialogue_state,
         ),
         enabled,
         enabled,
         enabled,
+        dialogue_state,
     )
 
 
 def route_query(
     message: str,
     history: list[dict[str, Any]] | None = None,
+    dialogue_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if router is None:
         return _uncertain_route("router unavailable; delegated to the 9B model")
     try:
-        return router.classify(message, history)
+        return router.classify(message, history, dialogue_state=dialogue_state)
     except (RuntimeError, TypeError, ValueError) as error:
         return _classifier_error_route(type(error).__name__)
 
@@ -345,7 +406,7 @@ def load_profile(request: gr.Request) -> tuple[str, str, str, str]:
     return (
         profile,
         render_snapshot(snapshot),
-        "Ready. Allowed turns are handled by the 9B model; OOD is gated.",
+        f"{ASSISTANT_NAME} is ready when you are.",
         "### Experiment diagnostics\n\nNo turn has run yet.",
     )
 
@@ -357,7 +418,7 @@ def refresh_snapshot(request: gr.Request) -> str:
 
 def reset_session(
     request: gr.Request,
-) -> tuple[list[Any], list[Any], str, str, Any, Any, Any, Any]:
+) -> tuple[list[Any], list[Any], str, str, Any, Any, Any, Any, dict[str, Any]]:
     username, session_hash = _identity(request)
     snapshot = BANK.reset(username, session_hash)
     enabled = gr.update(interactive=True)
@@ -370,13 +431,15 @@ def reset_session(
         enabled,
         enabled,
         enabled,
+        DialogueState().as_dict(),
     )
 
 
 def render_snapshot(snapshot: dict[str, Any]) -> str:
     accounts = "\n".join(
         (
-            f"- **{account['name']} ····{account['last4']}** — "
+            f"- **{account['name']} ····{account['last4']}**  "
+            f"_{account_type_label(account.get('type'))}_ — "
             f"{_money(account['available_balance_cents'], account['currency'])} available; "
             f"{_money(account['current_balance_cents'], account['currency'])} current"
         )
@@ -395,15 +458,14 @@ def render_snapshot(snapshot: dict[str, Any]) -> str:
         for transfer in snapshot["transfers"][:3]
     )
     cases = "\n".join(
-        f"- {case['subject']} — `{case['status']}`"
-        for case in snapshot["service_cases"][:4]
+        f"- {case['subject']} — `{case['status']}`" for case in snapshot["service_cases"][:4]
     )
     return (
-        "### Synthetic backend state\n\n"
-        f"#### Accounts\n{accounts or '- None'}\n\n"
-        f"#### Cards\n{cards or '- None'}\n\n"
-        f"#### Transfers\n{transfers or '- None'}\n\n"
-        f"#### Service cases\n{cases or '- None'}"
+        "### Your products\n\n"
+        f"#### Bank accounts\n{accounts or '- None'}\n\n"
+        f"#### Debit cards\n{cards or '- None'}\n\n"
+        f"#### Recent transfers\n{transfers or '- None'}\n\n"
+        f"#### Support requests\n{cases or '- None'}"
     )
 
 
@@ -416,6 +478,7 @@ def _direct_turn(
     snapshot: str,
     activity: str,
     diagnostics: str,
+    dialogue_state: dict[str, Any],
 ) -> tuple[
     Any,
     list[dict[str, str]],
@@ -426,6 +489,7 @@ def _direct_turn(
     Any,
     Any,
     Any,
+    dict[str, Any],
 ]:
     completed_conversation = _with_text_turn(conversation, message, response)
     completed_visible = [
@@ -444,6 +508,7 @@ def _direct_turn(
         enabled,
         enabled,
         enabled,
+        dialogue_state,
     )
 
 
@@ -501,6 +566,10 @@ def _uncertain_route(reason: str) -> dict[str, Any]:
         "capability": None,
         "capability_confidence": None,
         "capability_candidates": [],
+        "intent": None,
+        "intent_confidence": None,
+        "intent_candidates": [],
+        "lane": None,
         "relation_probabilities": {},
         "ood_banking_threshold": None,
         "in_domain_threshold": None,
@@ -511,9 +580,7 @@ def _uncertain_route(reason: str) -> dict[str, Any]:
 
 
 def _classifier_error_route(failure_type: str) -> dict[str, Any]:
-    route = _uncertain_route(
-        "classifier failed; the 9B model was not invoked"
-    )
+    route = _uncertain_route("classifier failed; the 9B model was not invoked")
     route["route"] = "classifier_error"
     route["failure_type"] = failure_type
     return route
@@ -526,6 +593,8 @@ def _render_diagnostics(
     response_path: str,
     model_passes: tuple[ModelPassTrace, ...] = (),
     visible_response: str | None = None,
+    policy_sources: tuple[str, ...] = (),
+    dialogue_state: dict[str, Any] | None = None,
 ) -> str:
     candidates = route.get("capability_candidates")
     if not isinstance(candidates, list):
@@ -544,10 +613,7 @@ def _render_diagnostics(
     )
     call_text = (
         "\n".join(
-            (
-                f"- `{call.id}` `{call.name}` "
-                f"`{json.dumps(call.arguments, sort_keys=True)}`"
-            )
+            (f"- `{call.id}` `{call.name}` `{json.dumps(call.arguments, sort_keys=True)}`")
             for call in calls
         )
         or "- None"
@@ -595,6 +661,8 @@ def _render_diagnostics(
         f"- Router reason: `{route.get('reason', 'not provided')}`\n"
         f"- Router failure type: `{route.get('failure_type', 'none')}`\n"
         f"- Response path: `{response_path}`\n\n"
+        f"- Policy sources: `{json.dumps(policy_sources)}`\n"
+        f"- Dialogue state: `{json.dumps(dialogue_state or {}, sort_keys=True)}`\n\n"
         f"**Diagnostic servicing capabilities**\n"
         f"{candidate_text or '- None'}\n\n"
         f"**9B tool calls**\n{call_text}\n\n"
@@ -621,20 +689,17 @@ def _diagnostic_error_suffix(result: dict[str, Any]) -> str:
 
 
 with gr.Blocks(
-    title="Retail Bank Customer Service POC",
+    title=f"{ASSISTANT_NAME} | {BANK_NAME}",
     css=CSS,
-    theme=gr.themes.Soft(primary_hue="blue", secondary_hue="amber"),
+    theme=gr.themes.Soft(primary_hue="teal", secondary_hue="blue"),
 ) as demo:
     gr.Markdown(
-        """
-        # Retail Bank Customer Service POC
-
-        <div class="synthetic-banner">
-        <strong>Fictional data only.</strong> The history-aware classifier gates
-        only high-confidence OOD requests; its capability predictions are diagnostic.
-        The 9B model owns allowed conversation, tool selection, tool arguments,
-        and final responses. No real banking system is connected.
+        f"""
+        <div class="harbor-header">
+          <h1>{BANK_NAME}</h1>
+          <p>Meet {ASSISTANT_NAME}, your calm guide for everyday banking.</p>
         </div>
+        <div class="prototype-notice">{PROTOTYPE_NOTICE}</div>
         """
     )
     with gr.Row():
@@ -642,21 +707,23 @@ with gr.Blocks(
             profile_panel = gr.HTML()
             snapshot_panel = gr.Markdown()
             activity_panel = gr.Markdown()
-            diagnostics_panel = gr.Markdown()
+            with gr.Accordion("Technical details", open=False):
+                diagnostics_panel = gr.Markdown()
             with gr.Row():
                 refresh_button = gr.Button("Refresh state", size="sm")
                 reset_button = gr.Button("Reset demo", size="sm")
             gr.Button("Log out", link="/logout?all_session=false", size="sm")
         with gr.Column(scale=2, min_width=580):
             chatbot = gr.Chatbot(
+                label=f"Chat with {ASSISTANT_NAME}",
                 height=590,
                 layout="bubble",
                 type="messages",
-                placeholder="Talk naturally to the 9B synthetic bank agent.",
+                placeholder=f"{ASSISTANT_NAME} is here to help with your banking questions.",
             )
             with gr.Row():
                 message_box = gr.Textbox(
-                    placeholder="Ask the signed-in synthetic bank agent.",
+                    placeholder=f"How can {ASSISTANT_NAME} help today?",
                     show_label=False,
                     scale=8,
                     submit_btn=False,
@@ -665,17 +732,19 @@ with gr.Blocks(
             gr.Examples(
                 examples=[[prompt] for prompt in PRESETS],
                 inputs=message_box,
-                label="Preset evaluation prompts",
+                label=f"Try asking {ASSISTANT_NAME}",
             )
 
     conversation_history = gr.State([])
+    dialogue_state = gr.State(DialogueState().as_dict())
     route_message = gr.Textbox(visible=False)
     route_history = gr.JSON(visible=False)
+    route_dialogue_state = gr.JSON(visible=False)
     route_output = gr.JSON(visible=False)
     route_button = gr.Button(visible=False)
     route_button.click(
         route_query,
-        inputs=[route_message, route_history],
+        inputs=[route_message, route_history, route_dialogue_state],
         outputs=route_output,
         api_name="route",
         queue=False,
@@ -691,7 +760,7 @@ with gr.Blocks(
     model_event = gr.on(
         triggers=[message_box.submit, send_button.click],
         fn=run_model_turn,
-        inputs=[message_box, chatbot, conversation_history],
+        inputs=[message_box, chatbot, conversation_history, dialogue_state],
         outputs=[
             message_box,
             chatbot,
@@ -702,11 +771,10 @@ with gr.Blocks(
             send_button,
             reset_button,
             refresh_button,
+            dialogue_state,
         ],
         api_name="chat",
-        api_description=(
-            "History-aware classifier routing and 9B ZeroGPU conversational turn."
-        ),
+        api_description=("History-aware classifier routing and 9B ZeroGPU conversational turn."),
         queue=True,
         trigger_mode="once",
     )
@@ -715,6 +783,7 @@ with gr.Blocks(
         inputs=[
             message_box,
             conversation_history,
+            dialogue_state,
         ],
         outputs=[
             message_box,
@@ -726,6 +795,7 @@ with gr.Blocks(
             send_button,
             reset_button,
             refresh_button,
+            dialogue_state,
         ],
         api_name=False,
         queue=True,
@@ -752,6 +822,7 @@ with gr.Blocks(
             send_button,
             reset_button,
             refresh_button,
+            dialogue_state,
         ],
         api_name="reset_demo",
         queue=False,

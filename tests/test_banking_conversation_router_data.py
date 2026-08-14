@@ -4,7 +4,7 @@ from collections import Counter
 from typing import Any
 
 from hello_slm.banking_conversation_router_data import (
-    CAPABILITY_LABELS,
+    INTENT_LABELS,
     RELATION_LABELS,
     build_conversation_router_splits,
     normalize_router_text,
@@ -74,7 +74,7 @@ def test_cross_encoder_renderer_places_current_then_recent_complete_exchanges() 
     assert "hidden" not in rendered
 
 
-def test_v4_splits_use_capabilities_relations_and_no_current_turn_leakage() -> None:
+def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
     splits, report = build_conversation_router_splits(
         sft_records_by_split(),
         clinc_payload(),
@@ -82,21 +82,26 @@ def test_v4_splits_use_capabilities_relations_and_no_current_turn_leakage() -> N
     )
 
     assert set(splits) == {"train", "validation", "test"}
-    assert CAPABILITY_LABELS == (
-        "accounts",
-        "cards",
-        "card_actions",
-        "transactions",
-        "transfers",
-        "service_cases",
-        "faq",
+    assert INTENT_LABELS == (
+        "view_accounts",
+        "view_cards",
+        "freeze_card",
+        "replace_card",
+        "view_transactions",
+        "dispute_transaction",
+        "view_transfers",
+        "cancel_transfer",
+        "view_service_cases",
+        "policy_knowledge",
         "conversation",
+        "other_banking",
     )
     assert RELATION_LABELS == (
         "context_dependent",
         "agent_repair",
         "topic_shift",
         "clarification_answer",
+        "resume_previous_service",
     )
     for rows in splits.values():
         for row in rows:
@@ -105,13 +110,16 @@ def test_v4_splits_use_capabilities_relations_and_no_current_turn_leakage() -> N
                 "current_text",
                 "history",
                 "domain_label",
-                "capability_label",
-                "capability",
+                "intent_label",
+                "intent",
+                "lane",
                 "relation_labels",
                 "example_kind",
                 "source",
                 "source_split",
                 "group_id",
+                "trajectory_id",
+                "prior_dialogue_state",
             }
             assert len(row["relation_labels"]) == len(RELATION_LABELS)
             assert "tool_call" not in str(row["text"])
@@ -139,7 +147,7 @@ def test_v4_splits_use_capabilities_relations_and_no_current_turn_leakage() -> N
     assert report["pii_matches"] == 0
 
 
-def test_sft_ood_and_policy_refusals_are_not_forced_into_capabilities() -> None:
+def test_sft_ood_has_no_intent_and_banking_refusal_uses_other_banking() -> None:
     records = sft_records_by_split()
     records["train"].extend(
         [
@@ -170,9 +178,35 @@ def test_sft_ood_and_policy_refusals_are_not_forced_into_capabilities() -> None:
     by_current = {row["current_text"]: row for row in splits["train"]}
 
     assert by_current["Explain photosynthesis."]["domain_label"] == 0
-    assert by_current["Explain photosynthesis."]["capability_label"] == -100
+    assert by_current["Explain photosynthesis."]["intent_label"] == -100
     assert by_current["Tell me my full account number."]["domain_label"] == 1
-    assert by_current["Tell me my full account number."]["capability_label"] == -100
+    assert by_current["Tell me my full account number."]["intent"] == "other_banking"
+
+
+def test_resume_examples_use_pre_turn_state_and_remain_in_one_split() -> None:
+    splits, report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+
+    resume_index = RELATION_LABELS.index("resume_previous_service")
+    resume_rows = [
+        row for rows in splits.values() for row in rows if row["relation_labels"][resume_index]
+    ]
+    assert resume_rows
+    assert all(row["prior_dialogue_state"]["knowledge_detour_active"] for row in resume_rows)
+    assert all("[PRIOR_DIALOGUE_STATE]" in row["text"] for row in resume_rows)
+    assert report["leakage"]["trajectory_split_leak_count"] == 0
+
+
+def test_explicit_trajectory_cannot_cross_splits() -> None:
+    records = sft_records_by_split()
+    records["train"][0]["metadata"]["trajectory_id"] = "shared-trajectory"
+    records["test"][0]["metadata"]["trajectory_id"] = "shared-trajectory"
+
+    import pytest
+
+    with pytest.raises(ValueError, match="trajectory .* appears in both"):
+        build_conversation_router_splits(records, clinc_payload(), seed=7404)
 
 
 def test_held_out_screenshot_regressions_are_test_only() -> None:
@@ -183,18 +217,13 @@ def test_held_out_screenshot_regressions_are_test_only() -> None:
     )
 
     heldout_by_split = {
-        split: [
-            row
-            for row in rows
-            if row["example_kind"] == "heldout_screenshot_regression"
-        ]
+        split: [row for row in rows if row["example_kind"] == "heldout_screenshot_regression"]
         for split, rows in splits.items()
     }
     assert heldout_by_split["train"] == []
     assert heldout_by_split["validation"] == []
     heldout_current = {
-        normalize_router_text(str(row["current_text"]))
-        for row in heldout_by_split["test"]
+        normalize_router_text(str(row["current_text"])) for row in heldout_by_split["test"]
     }
     assert heldout_current == {
         "i didn t ask about mortgage",

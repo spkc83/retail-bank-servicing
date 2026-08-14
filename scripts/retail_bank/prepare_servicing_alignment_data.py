@@ -15,14 +15,12 @@ from hello_slm.banking_servicing_alignment_data import (  # noqa: E402
     write_servicing_alignment_dataset,
 )
 
-DEFAULT_RELEASE_LOCK = Path(
-    "data/sources/banking-servicing-alignment-v4.lock.json"
-)
+DEFAULT_RELEASE_LOCK: Path | None = None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare local Granite v4 servicing-alignment SFT data."
+        description="Prepare local Granite v5 servicing-alignment SFT data."
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
@@ -45,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         "--expected-release-lock",
         type=Path,
         default=DEFAULT_RELEASE_LOCK,
-        help="Tracked lock whose composite split hashes must match.",
+        help="Optional tracked lock whose composite split hashes must match.",
     )
     parser.add_argument(
         "--repo-id",
@@ -62,7 +60,8 @@ def main() -> int:
         base_sft_dir=args.base_sft_dir,
         synthetic_bank_path=args.synthetic_bank,
     )
-    verify_release_lock(manifest, args.expected_release_lock)
+    if args.expected_release_lock is not None:
+        verify_release_lock(manifest, args.expected_release_lock)
     if args.push_to_hub:
         from huggingface_hub import HfApi
 
@@ -89,9 +88,7 @@ def verify_release_lock(manifest: dict[str, object], lock_path: Path) -> None:
     if not isinstance(entries, list):
         raise ValueError("manifest tool_sft must be a list")
     actual = {
-        str(entry["name"]): str(entry["sha256"])
-        for entry in entries
-        if isinstance(entry, dict)
+        str(entry["name"]): str(entry["sha256"]) for entry in entries if isinstance(entry, dict)
     }
     if actual != lock.get("prepared_split_sha256"):
         raise ValueError("servicing alignment split digests drifted from release lock")

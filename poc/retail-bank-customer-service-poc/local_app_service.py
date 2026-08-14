@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass
 from typing import Any
 
+from dialogue_state import DialogueStateRegistry
 from local_gpu_runtime import MODEL_ID, MODEL_REVISION
 from mock_bank import SessionBankRegistry
 from model_service import (
@@ -16,7 +18,8 @@ from model_service import (
     ToolCall,
     canonical_conversation,
 )
-from responses import MODEL_FAILURE_RESPONSE, OOD_RESPONSE
+from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
+from responses import MODEL_FAILURE_RESPONSE, OOD_RESPONSE, POLICY_NOT_FOUND_RESPONSE
 from router import ROUTER_REVISION
 
 
@@ -32,6 +35,8 @@ class LocalTurnResult:
     response_path: str
     activity: str
     diagnostics: str
+    policy_sources: tuple[str, ...] = ()
+    dialogue_state: dict[str, Any] | None = None
 
     @property
     def model_call_count(self) -> int:
@@ -47,10 +52,16 @@ class LocalBankingController:
         bank: SessionBankRegistry,
         runtime: ModelRuntime,
         router: Any | None,
+        policy_knowledge: Any | None = None,
+        dialogue_states: DialogueStateRegistry | None = None,
     ) -> None:
         self.bank = bank
         self.runtime = runtime
         self.router = router
+        self.policy_knowledge = policy_knowledge or PolicyKnowledgeBase.from_json(
+            DEFAULT_POLICY_PATH
+        )
+        self.dialogue_states = dialogue_states or DialogueStateRegistry()
 
     def run_turn(
         self,
@@ -63,7 +74,14 @@ class LocalBankingController:
         if not isinstance(message, str) or not message.strip():
             raise ValueError("message must be a non-empty string")
         canonical = canonical_conversation(conversation)
-        route = self._route(message.strip(), canonical)
+        prior_state = self.dialogue_states.as_dict(username, session_hash)
+        route = self._route(message.strip(), canonical, prior_state)
+        transition = self.dialogue_states.begin_turn(
+            username,
+            session_hash,
+            route,
+            message.strip(),
+        )
         if route["route"] == "classifier_error":
             return self._direct_result(
                 username=username,
@@ -89,14 +107,47 @@ class LocalBankingController:
 
         agent = ConversationalBankingAgent(bank=self.bank, model=self.runtime)
         try:
-            turn = agent.run_turn(
-                username=username,
-                session_hash=session_hash,
-                message=message,
-                conversation=canonical,
-                router_result=route,
-            )
+            pinned_exchange = list(transition.anchor_exchange) or None
+            if transition.lane == "policy":
+                lookup = self.policy_knowledge.lookup(message.strip())
+                if not lookup.matched:
+                    return self._direct_result(
+                        username=username,
+                        session_hash=session_hash,
+                        message=message,
+                        response=POLICY_NOT_FOUND_RESPONSE,
+                        conversation=canonical,
+                        route=route,
+                        response_path="policy_no_match",
+                        activity="No approved current policy passage matched the question.",
+                    )
+                policy_matches = tuple(match.as_dict() for match in lookup.matches)
+                turn = agent.run_policy_turn(
+                    username=username,
+                    session_hash=session_hash,
+                    message=message,
+                    conversation=canonical,
+                    policy_matches=policy_matches,
+                    corpus_revision=lookup.corpus_revision,
+                    pinned_exchange=pinned_exchange,
+                )
+            else:
+                turn = agent.run_turn(
+                    username=username,
+                    session_hash=session_hash,
+                    message=message,
+                    conversation=canonical,
+                    router_result=route,
+                    pinned_exchange=pinned_exchange,
+                )
         except AgentExecutionError as error:
+            dialogue_state = self.dialogue_states.finish_turn(
+                username,
+                session_hash,
+                MODEL_FAILURE_RESPONSE,
+                tuple(call.name for call in error.tool_calls),
+                error.tool_results,
+            ).as_dict()
             failed_conversation = [
                 *error.conversation,
                 {"role": "assistant", "content": MODEL_FAILURE_RESPONSE},
@@ -114,6 +165,7 @@ class LocalBankingController:
                     "Granite failed after the recorded tool calls; no CPU-authored "
                     "servicing answer was substituted."
                 ),
+                dialogue_state=dialogue_state,
             )
         except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
             route = {**route, "failure_type": type(error).__name__}
@@ -132,17 +184,26 @@ class LocalBankingController:
                 model_passes=(),
                 response_path="local model failure",
                 activity=(
-                    "Granite generation failed; no CPU-authored servicing answer "
-                    "was substituted."
+                    "Granite generation failed; no CPU-authored servicing answer was substituted."
                 ),
+                dialogue_state=transition.state.as_dict(),
             )
 
-        activity = (
-            "Granite selected and executed the recorded synthetic tools, then "
-            "authored the final response."
-            if turn.tool_calls
-            else "Granite authored the response directly."
-        )
+        dialogue_state = self.dialogue_states.finish_turn(
+            username,
+            session_hash,
+            turn.response,
+            tuple(call.name for call in turn.tool_calls),
+            turn.tool_results,
+        ).as_dict()
+        if turn.policy_sources:
+            activity = "Granite authored the answer from the cited policy passages."
+        elif turn.response_path.endswith("_rendered"):
+            activity = "Granite selected the data request; verified results were rendered."
+        elif turn.tool_calls:
+            activity = "Granite selected the recorded banking actions and authored the answer."
+        else:
+            activity = "Granite authored the response directly."
         return self._result(
             response=turn.response,
             conversation=turn.conversation,
@@ -153,13 +214,19 @@ class LocalBankingController:
             model_passes=turn.model_passes,
             response_path=turn.response_path,
             activity=activity,
+            policy_sources=turn.policy_sources,
+            dialogue_state=dialogue_state,
         )
 
     def snapshot(self, username: str, session_hash: str) -> dict[str, Any]:
         return self.bank.snapshot(username, session_hash)
 
     def reset(self, username: str, session_hash: str) -> dict[str, Any]:
+        self.dialogue_states.reset(username, session_hash)
         return self.bank.reset(username, session_hash)
+
+    def dialogue_state(self, username: str, session_hash: str) -> dict[str, Any]:
+        return self.dialogue_states.as_dict(username, session_hash)
 
     def runtime_metadata(self) -> dict[str, str]:
         provider = getattr(self.runtime, "runtime_metadata", None)
@@ -169,11 +236,26 @@ class LocalBankingController:
         self,
         message: str,
         conversation: list[dict[str, Any]],
+        dialogue_state: dict[str, Any],
     ) -> dict[str, Any]:
         if self.router is None:
             return _uncertain_route("local router unavailable; delegated to Granite")
         try:
-            return dict(self.router.classify(message, conversation))
+            parameters = inspect.signature(self.router.classify).parameters.values()
+            supports_dialogue_state = any(
+                parameter.name == "dialogue_state"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+            if supports_dialogue_state:
+                result = self.router.classify(
+                    message,
+                    conversation,
+                    dialogue_state=dialogue_state,
+                )
+            else:
+                result = self.router.classify(message, conversation)
+            return dict(result)
         except (RuntimeError, TypeError, ValueError) as error:
             return {
                 **_uncertain_route("classifier failed; Granite was not invoked"),
@@ -208,6 +290,7 @@ class LocalBankingController:
             model_passes=(),
             response_path=response_path,
             activity=activity,
+            dialogue_state=self.dialogue_states.as_dict(username, session_hash),
         )
 
     def _result(
@@ -222,7 +305,10 @@ class LocalBankingController:
         model_passes: tuple[ModelPassTrace, ...],
         response_path: str,
         activity: str,
+        policy_sources: tuple[str, ...] = (),
+        dialogue_state: dict[str, Any] | None = None,
     ) -> LocalTurnResult:
+        state_payload = dialogue_state or {}
         return LocalTurnResult(
             response=response,
             conversation=conversation,
@@ -233,6 +319,8 @@ class LocalBankingController:
             model_passes=model_passes,
             response_path=response_path,
             activity=activity,
+            policy_sources=policy_sources,
+            dialogue_state=state_payload,
             diagnostics=render_local_diagnostics(
                 route=route,
                 calls=tool_calls,
@@ -241,6 +329,8 @@ class LocalBankingController:
                 model_passes=model_passes,
                 visible_response=response,
                 runtime_metadata=self.runtime_metadata(),
+                policy_sources=policy_sources,
+                dialogue_state=state_payload,
             ),
         )
 
@@ -268,30 +358,44 @@ def render_local_diagnostics(
     model_passes: tuple[ModelPassTrace, ...],
     visible_response: str,
     runtime_metadata: dict[str, str],
+    policy_sources: tuple[str, ...] = (),
+    dialogue_state: dict[str, Any] | None = None,
 ) -> str:
     candidates = route.get("capability_candidates", [])
-    candidate_text = "\n".join(
-        f"- `{item.get('capability')}`: {float(item.get('probability', 0)):.3f}"
-        for item in candidates
-        if isinstance(item, dict)
-    ) or "- None"
-    call_text = "\n".join(
-        f"- `{call.id}` `{call.name}` `{json.dumps(call.arguments, sort_keys=True)}`"
-        for call in calls
-    ) or "- None"
-    result_text = "\n".join(
-        f"- `{call.id}` `{call.name}`: {'success' if result.get('ok') else 'error'}"
-        for call, result in zip(calls, results, strict=False)
-    ) or "- None"
-    pass_text = "\n".join(
-        (
-            f"- `{trace.label}` — input tokens `{trace.input_tokens}`, prompt SHA-256 "
-            f"`{trace.prompt_sha256}`, output SHA-256 `{trace.output_sha256}`, "
-            f"runtime `{trace.runtime_device}`, CUDA `{trace.cuda_device_name}`\n\n"
-            f"```text\n{trace.raw_output}\n```"
+    candidate_text = (
+        "\n".join(
+            f"- `{item.get('capability')}`: {float(item.get('probability', 0)):.3f}"
+            for item in candidates
+            if isinstance(item, dict)
         )
-        for trace in model_passes
-    ) or "- None; Granite was not invoked."
+        or "- None"
+    )
+    call_text = (
+        "\n".join(
+            f"- `{call.id}` `{call.name}` `{json.dumps(call.arguments, sort_keys=True)}`"
+            for call in calls
+        )
+        or "- None"
+    )
+    result_text = (
+        "\n".join(
+            f"- `{call.id}` `{call.name}`: {'success' if result.get('ok') else 'error'}"
+            for call, result in zip(calls, results, strict=False)
+        )
+        or "- None"
+    )
+    pass_text = (
+        "\n".join(
+            (
+                f"- `{trace.label}` — input tokens `{trace.input_tokens}`, prompt SHA-256 "
+                f"`{trace.prompt_sha256}`, output SHA-256 `{trace.output_sha256}`, "
+                f"runtime `{trace.runtime_device}`, CUDA `{trace.cuda_device_name}`\n\n"
+                f"```text\n{trace.raw_output}\n```"
+            )
+            for trace in model_passes
+        )
+        or "- None; Granite was not invoked."
+    )
     visible_hash = hashlib.sha256(visible_response.encode("utf-8")).hexdigest()
     return (
         "### Local experiment diagnostics\n\n"
@@ -302,6 +406,8 @@ def render_local_diagnostics(
         f"- Relation probabilities: "
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
         f"- Response path: `{response_path}`\n\n"
+        f"- Policy sources: `{json.dumps(policy_sources)}`\n"
+        f"- Dialogue state: `{json.dumps(dialogue_state or {}, sort_keys=True)}`\n\n"
         f"**Diagnostic capabilities**\n{candidate_text}\n\n"
         f"**Generated tool calls**\n{call_text}\n\n"
         f"**Tool results**\n{result_text}\n\n"
@@ -331,6 +437,10 @@ def _uncertain_route(reason: str) -> dict[str, Any]:
         "capability": None,
         "capability_confidence": None,
         "capability_candidates": [],
+        "intent": None,
+        "intent_confidence": None,
+        "intent_candidates": [],
+        "lane": None,
         "relation_probabilities": {},
         "context_applied": False,
         "router_revision": ROUTER_REVISION,

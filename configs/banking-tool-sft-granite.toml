@@ -1,22 +1,22 @@
 [run]
-name = "banking-tool-sft-granite"
-description = "Released Granite 4.1 8B PEFT tool-use SFT configuration."
-format = "banking_v3_tool_sft_config"
-hub_dest = "spkc83/retail-bank-agent-9b"
+name = "banking-servicing-v5-granite"
+description = "Incremental Granite 9B grounded-policy and dialogue-resume PEFT configuration."
+format = "banking_v5_tool_sft_config"
+hub_dest = "spkc83/retail-bank-servicing-agent-9b"
 private_hub_repo = false
 push_to_hub_default = false
 
 [model]
-base_model = "ibm-granite/granite-4.1-8b"
-base_revision = "1504002f650e656a0a3789d99574df12e3e94ed0"
+base_model = "spkc83/retail-bank-servicing-agent-9b"
+base_revision = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 family = "granite"
 parameter_tier = "approximately_9b"
 
 [dataset]
-name = "data/banking-v3-tool-sft/manifest.json"
+name = "data/banking-servicing-alignment-v5/manifest.json"
 schema_version = "banking-tool-sft/v1"
 tool_manifest = "public_banking_poc_nine_tools"
-task = "model_owned_banking_tool_use_sft"
+task = "grounded_policy_dialogue_resume_and_banking_tool_use_sft"
 
 [training]
 stack = "trl_sfttrainer_peft_bf16_lora"

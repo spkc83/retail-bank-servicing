@@ -13,7 +13,7 @@ from hello_slm.banking_servicing_alignment_data import (
     validate_servicing_alignment_splits,
     write_servicing_alignment_dataset,
 )
-from hello_slm.banking_tool_sft_data import validate_banking_tool_sft_manifest
+from hello_slm.banking_tool_sft_data import prepare, validate_banking_tool_sft_manifest
 
 
 def _last_user(record: dict[str, Any]) -> str:
@@ -46,13 +46,11 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 320,
-        "validation": 80,
-        "test": 27,
+        "train": 384,
+        "validation": 96,
+        "test": 35,
     }
-    train_families = Counter(
-        record["metadata"]["scenario_family"] for record in splits["train"]
-    )
+    train_families = Counter(record["metadata"]["scenario_family"] for record in splits["train"])
     assert train_families == {
         "service_case_context": 64,
         "card_anaphora_action": 64,
@@ -60,6 +58,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "agent_repair": 64,
         "external_topic_shift": 32,
         "banking_topic_shift": 32,
+        "policy_detour": 32,
+        "policy_resume": 32,
     }
     service_case_records = [
         record
@@ -68,9 +68,7 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
     ]
     assert service_case_records
     for record in service_case_records:
-        assert record["expected"]["tool_calls"] == [
-            {"name": "list_service_cases", "arguments": {}}
-        ]
+        assert record["expected"]["tool_calls"] == [{"name": "list_service_cases", "arguments": {}}]
         final_text = record["messages"][-1]["content"]
         assert "2026-06-18" in final_text
         assert "address_update" in final_text
@@ -83,8 +81,7 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
     ]
     assert created_at_records
     assert all(
-        record["expected"]["grounding_facts"]
-        == ["case.created_at=2026-06-18T14:00:00Z"]
+        record["expected"]["grounding_facts"] == ["case.created_at=2026-06-18T14:00:00Z"]
         for record in created_at_records
     )
     ood_records = [
@@ -111,25 +108,53 @@ def test_exact_screenshot_currents_are_held_out_from_training() -> None:
     } <= test_currents
 
 
-def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None:
-    manifest = write_servicing_alignment_dataset(tmp_path)
+def test_v5_alignment_adds_policy_detour_resume_and_unique_targets() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    train = splits["train"]
+    families = {record["metadata"]["scenario_family"] for record in train}
+    assert {"policy_detour", "policy_resume"} <= families
 
-    assert manifest["name"] == "retail-bank-servicing-alignment-v4"
+    detour = next(
+        record for record in train if record["metadata"]["scenario_family"] == "policy_detour"
+    )
+    resume = next(
+        record for record in train if record["metadata"]["scenario_family"] == "policy_resume"
+    )
+    assert detour["expected"]["path"] == "retrieval_grounded_policy"
+    assert detour["expected"]["policy_citations"]
+    assert "[" in detour["messages"][-1]["content"]
+    assert any(
+        "continue" in str(message["content"]).lower()
+        for message in resume["messages"]
+        if message["role"] == "user"
+    )
+    assert resume["expected"]["requires_tool"] is True
+
+    finals = [
+        _normalize(str(record["messages"][-1]["content"]))
+        for records in splits.values()
+        for record in records
+    ]
+    assert len(finals) == len(set(finals))
+
+
+def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None:
+    base_dir = tmp_path / "base"
+    prepare(output_dir=base_dir, pilot_count=120)
+    manifest = write_servicing_alignment_dataset(tmp_path / "alignment", base_sft_dir=base_dir)
+
+    assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 320,
-        "validation": 80,
-        "test": 27,
+        "train": 384,
+        "validation": 96,
+        "test": 35,
     }
-    assert manifest["report"]["base_split_counts"] == {
-        "train": 6304,
-        "validation": 1349,
-        "test": 1347,
-    }
+    base_counts = manifest["report"]["base_split_counts"]
+    assert sum(base_counts.values()) == 120
     assert manifest["report"]["split_counts"] == {
-        "train": 6624,
-        "validation": 1429,
-        "test": 1374,
+        split: base_counts[split] + manifest["report"]["alignment_split_counts"][split]
+        for split in ("train", "validation", "test")
     }
     assert {entry["name"] for entry in manifest["tool_sft"]} == {
         "train",
@@ -137,27 +162,29 @@ def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None
         "test",
     }
     for entry in manifest["tool_sft"]:
-        path = tmp_path / entry["path"]
+        path = tmp_path / "alignment" / entry["path"]
         assert path.is_file()
         assert path.stat().st_size == entry["bytes"]
         assert len(path.read_text(encoding="utf-8").splitlines()) == entry["record_count"]
-    validate_banking_tool_sft_manifest(tmp_path / "manifest.json")
+    validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json")
 
-    report = json.loads((tmp_path / "preparation-report.json").read_text())
+    report = json.loads((tmp_path / "alignment" / "preparation-report.json").read_text())
     assert report["pii_matches"] == 0
     assert report["heldout_exact_currents_in_train"] == []
 
 
 def test_release_lock_detects_split_drift(tmp_path: Path) -> None:
     preparation = _load_preparation_module()
-    manifest = write_servicing_alignment_dataset(tmp_path / "dataset")
-    preparation.verify_release_lock(
-        manifest,
-        Path("data/sources/banking-servicing-alignment-v4.lock.json"),
-    )
-    lock = json.loads(
-        Path("data/sources/banking-servicing-alignment-v4.lock.json").read_text()
-    )
+    base_dir = tmp_path / "base"
+    prepare(output_dir=base_dir, pilot_count=120)
+    manifest = write_servicing_alignment_dataset(tmp_path / "dataset", base_sft_dir=base_dir)
+    lock = {
+        "base_manifest_sha256": manifest["report"]["base_manifest_sha256"],
+        "prepared_split_sha256": {entry["name"]: entry["sha256"] for entry in manifest["tool_sft"]},
+    }
+    good_lock = tmp_path / "good.lock.json"
+    good_lock.write_text(json.dumps(lock), encoding="utf-8")
+    preparation.verify_release_lock(manifest, good_lock)
     lock["prepared_split_sha256"]["train"] = "0" * 64
     bad_lock = tmp_path / "bad.lock.json"
     bad_lock.write_text(json.dumps(lock), encoding="utf-8")
