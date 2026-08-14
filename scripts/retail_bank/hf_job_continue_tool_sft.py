@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--dataset-revision", required=True)
+    parser.add_argument("--source-adapter-repo", default=ADAPTER_REPO)
     parser.add_argument("--source-adapter-revision", required=True)
     parser.add_argument("--destination-repo", required=True)
     parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-continuation")
@@ -79,7 +80,7 @@ def main() -> int:
     args = parse_args()
     require_exact_revision(args.dataset_revision, field="--dataset-revision")
     require_exact_revision(args.source_adapter_revision, field="--source-adapter-revision")
-    if args.destination_repo == ADAPTER_REPO:
+    if args.destination_repo == args.source_adapter_repo:
         raise ValueError("--destination-repo must differ from the source adapter repository")
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
@@ -117,7 +118,7 @@ def main() -> int:
             "--output-dir",
             args.output_dir,
             "--source-adapter-repo",
-            ADAPTER_REPO,
+            args.source_adapter_repo,
             "--source-adapter-revision",
             args.source_adapter_revision,
             "--hub-dest",

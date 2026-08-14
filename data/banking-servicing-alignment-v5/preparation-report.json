@@ -1,8 +1,8 @@
 {
   "alignment_split_counts": {
     "test": 35,
-    "train": 672,
-    "validation": 168
+    "train": 1440,
+    "validation": 232
   },
   "base_manifest_sha256": "1290c8787dcf06df9c594aed9d483588613ba86f7db1b72ccaef9f4cb5680fe9",
   "base_split_counts": {
@@ -12,8 +12,9 @@
   },
   "contract": "banking-servicing-alignment-sft-report",
   "created_at": "2026-07-31T00:00:00Z",
-  "generator_version": "banking-servicing-alignment-sft/v5.1-remediation",
+  "generator_version": "banking-servicing-alignment-sft/v5.2-coreference",
   "heldout_exact_currents_in_train": [],
+  "heldout_long_ngram_leaks_in_train": [],
   "path_counts": {
     "test": {
       "multi_turn": 26,
@@ -21,16 +22,16 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "clarification": 32,
-      "multi_turn": 448,
+      "clarification": 416,
+      "multi_turn": 832,
       "ood": 32,
       "retrieval_grounded_policy": 32,
       "tool_error": 64,
       "tool_success": 64
     },
     "validation": {
-      "clarification": 8,
-      "multi_turn": 112,
+      "clarification": 40,
+      "multi_turn": 144,
       "ood": 8,
       "retrieval_grounded_policy": 8,
       "tool_error": 16,
@@ -53,6 +54,8 @@
       "banking_topic_shift": 32,
       "card_anaphora_action": 64,
       "clarification_answer": 64,
+      "deictic_replace_action": 384,
+      "deictic_replace_ambiguity": 384,
       "external_topic_shift": 32,
       "history_entity_action": 128,
       "history_entity_ambiguity": 32,
@@ -66,6 +69,8 @@
       "banking_topic_shift": 8,
       "card_anaphora_action": 16,
       "clarification_answer": 16,
+      "deictic_replace_action": 32,
+      "deictic_replace_ambiguity": 32,
       "external_topic_shift": 8,
       "history_entity_action": 32,
       "history_entity_ambiguity": 8,
@@ -77,7 +82,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 1513,
-    "validation": 347
+    "train": 2281,
+    "validation": 411
   }
 }

@@ -83,8 +83,8 @@ def test_continuation_requires_exact_model_revision() -> None:
     config = WORKER.config_from_args(WORKER.parse_args([]))
     with pytest.raises(RuntimeError, match="base must be exactly"):
         WORKER.validate_pinned_model_inputs(replace(config, base_revision="0" * 40))
-    with pytest.raises(RuntimeError, match="source adapter repository must be exactly"):
-        WORKER.validate_pinned_model_inputs(replace(config, source_adapter_repo="example/other"))
+    with pytest.raises(RuntimeError, match="owner/name"):
+        WORKER.validate_pinned_model_inputs(replace(config, source_adapter_repo="invalid"))
 
 
 def test_continuation_mix_oversamples_sequential_and_safe_clarification() -> None:
@@ -244,6 +244,7 @@ def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> No
     assert "cloud_continue_tool_sft.py" in source
     assert "cloud_train_tool_sft.py" not in source
     assert "--source-adapter-revision" in source
+    assert "--source-adapter-repo" in source
     assert "--destination-repo" in source
     assert "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT" in source
 
@@ -254,6 +255,7 @@ def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_c
     assert "--timeout 5h" in launcher
     assert "--volume hf://buckets/spkc83/jobs-artifacts:/data" in launcher
     assert "SOURCE_ADAPTER_REVISION must be the exact 40-character lowercase Git commit" in launcher
+    assert "SOURCE_ADAPTER_REPO must be a Hugging Face repository id" in launcher
     assert "DESTINATION_REPO must differ from the source adapter repository" in launcher
     assert (
         "retail-bank-agent-9b-continuation-${source_commit:0:8}-"
@@ -339,6 +341,36 @@ def test_source_adapter_validation_checks_root_digest_and_pinned_base(
     (tmp_path / "training_result.json").write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(RuntimeError, match="pinned base"):
         WORKER.snapshot_source_adapter(config)
+
+
+def test_source_adapter_validation_accepts_prior_remediation_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in WORKER.ADAPTER_FILES:
+        (tmp_path / name).write_bytes(f"continued:{name}".encode())
+    adapter_sha = hashlib.sha256((tmp_path / "adapter_model.safetensors").read_bytes()).hexdigest()
+    (tmp_path / "training_result.json").write_text(
+        json.dumps(
+            {
+                "contract": "banking-v5-peft-remediation-result/v1",
+                "base_model": WORKER.BASE_MODEL,
+                "base_revision": WORKER.BASE_REVISION,
+                "adapter_sha256": adapter_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **_kwargs: str(tmp_path))
+    config = replace(
+        WORKER.config_from_args(WORKER.parse_args([])),
+        source_adapter_repo="spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation",
+        source_adapter_revision="d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+    )
+
+    assert WORKER.snapshot_source_adapter(config) == tmp_path
 
 
 def test_atomic_upload_creates_new_repo_and_places_adapter_at_root(

@@ -193,8 +193,9 @@ def require_sha256(value: object, *, field: str) -> str:
 
 
 def validate_pinned_model_inputs(config: ContinuationConfig) -> None:
-    if config.source_adapter_repo != ADAPTER_REPO:
-        raise RuntimeError(f"source adapter repository must be exactly {ADAPTER_REPO}")
+    owner, separator, name = config.source_adapter_repo.partition("/")
+    if not separator or not owner or not name or "/" in name:
+        raise RuntimeError("source adapter repository must use owner/name form")
     if config.base_model != BASE_MODEL or config.base_revision != BASE_REVISION:
         raise RuntimeError(f"base must be exactly {BASE_MODEL}@{BASE_REVISION}")
     require_exact_revision(config.source_adapter_revision, field="--source-adapter-revision")
@@ -447,13 +448,18 @@ def snapshot_source_adapter(config: ContinuationConfig) -> Path:
         raise RuntimeError(f"source adapter is missing root-level files: {missing}")
     release = read_json(snapshot / "training_result.json")
     base = release.get("base_model")
-    if not isinstance(base, Mapping):
-        raise RuntimeError("source adapter provenance is missing base_model")
-    if base.get("repository") != config.base_model or base.get("revision") != config.base_revision:
+    if isinstance(base, Mapping):
+        source_base_repo = base.get("repository")
+        source_base_revision = base.get("revision")
+    else:
+        source_base_repo = base
+        source_base_revision = release.get("base_revision")
+    if source_base_repo != config.base_model or source_base_revision != config.base_revision:
         raise RuntimeError("source adapter provenance does not match the pinned base")
-    expected_sha = require_sha256(
-        release.get("adapter_model_sha256"), field="source adapter_model_sha256"
-    )
+    recorded_adapter_sha = release.get("adapter_model_sha256")
+    if recorded_adapter_sha is None:
+        recorded_adapter_sha = release.get("adapter_sha256")
+    expected_sha = require_sha256(recorded_adapter_sha, field="source adapter SHA256")
     if sha256(snapshot / "adapter_model.safetensors") != expected_sha:
         raise RuntimeError("source adapter digest does not match its release provenance")
     return snapshot

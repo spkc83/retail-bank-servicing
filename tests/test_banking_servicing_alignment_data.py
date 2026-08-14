@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -11,6 +12,7 @@ from typing import Any
 from hello_slm.banking_servicing_alignment_data import (
     SCREENSHOT_HELDOUT_CURRENTS,
     build_servicing_alignment_splits,
+    load_base_sft_splits,
     validate_servicing_alignment_splits,
     write_servicing_alignment_dataset,
 )
@@ -47,8 +49,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 672,
-        "validation": 168,
+        "train": 1440,
+        "validation": 232,
         "test": 35,
     }
     train_families = Counter(record["metadata"]["scenario_family"] for record in splits["train"])
@@ -64,6 +66,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
         "tool_outcome_consistency": 128,
+        "deictic_replace_action": 384,
+        "deictic_replace_ambiguity": 384,
     }
     service_case_records = [
         record
@@ -179,6 +183,66 @@ def test_exact_screenshot_currents_are_held_out_from_training() -> None:
         "ok thats the one i want to replace",
         "what about the weather there",
     } <= test_currents
+    assert _normalize("ok, thats the one i want to replace") not in train_currents
+    assert _report["heldout_long_ngram_leaks_in_train"] == []
+
+
+def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    curricula = {
+        split: [
+            row
+            for row in splits[split]
+            if row["metadata"]["scenario_family"].startswith("deictic_replace_")
+        ]
+        for split in ("train", "validation")
+    }
+
+    assert len(curricula["train"]) == 768
+    assert len(curricula["validation"]) == 64
+    for split, rows in curricula.items():
+        action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
+        ambiguous = [row for row in rows if row["expected"]["path"] == "clarification"]
+        assert len(action) == len(ambiguous)
+        assert len({row["metadata"]["coreference_phrase_family"] for row in action}) >= (
+            12 if split == "train" else 4
+        )
+        assert {row["metadata"]["coreference_phrase_family"] for row in action} == {
+            row["metadata"]["coreference_phrase_family"] for row in ambiguous
+        }
+        assert all(row["expected"]["tool_calls"][0]["name"] == "replace_card" for row in action)
+        assert all(not row["expected"]["tool_calls"] for row in ambiguous)
+        assert all(
+            "last four digits" in str(row["messages"][-1]["content"]).lower() for row in ambiguous
+        )
+
+    train_entities = {row["metadata"]["coreference_entity_key"] for row in curricula["train"]}
+    validation_entities = {
+        row["metadata"]["coreference_entity_key"] for row in curricula["validation"]
+    }
+    assert train_entities.isdisjoint(validation_entities)
+    train_phrases = {row["metadata"]["coreference_prompt"] for row in curricula["train"]}
+    validation_phrases = {row["metadata"]["coreference_prompt"] for row in curricula["validation"]}
+    assert train_phrases.isdisjoint(validation_phrases)
+
+
+def test_candidate2_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
+    _base_manifest, base_splits = load_base_sft_splits()
+    alignment_splits, _report = build_servicing_alignment_splits()
+    rows = [*base_splits["test"], *alignment_splits["test"]]
+    behavioral_fields = ("messages", "expected", "split_keys", "metadata")
+    payload = [{field: row[field] for field in behavioral_fields} for row in rows]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    assert len(rows) == 215
+    assert hashlib.sha256(encoded).hexdigest() == (
+        "4ac64ad9177273edb19c0752f94b71da51337b388cffe8cd03b5a9d9718c186e"
+    )
 
 
 def test_v5_alignment_adds_policy_detour_resume_and_unique_targets() -> None:
@@ -219,8 +283,8 @@ def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 672,
-        "validation": 168,
+        "train": 1440,
+        "validation": 232,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
