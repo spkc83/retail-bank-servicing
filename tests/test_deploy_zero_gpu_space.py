@@ -23,6 +23,8 @@ deploy_module = _load_module()
 MODEL_REVISION = "1" * 40
 ROUTER_REVISION = "2" * 40
 SPACE_COMMIT = "3" * 40
+BASE_MODEL_REVISION = "4" * 40
+ADAPTER_REVISION = "5" * 40
 
 
 class FakeApi:
@@ -93,6 +95,11 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
     assert api.variables == {
         "RETAIL_BANK_MODEL_ID": "spkc83/model",
         "RETAIL_BANK_MODEL_REVISION": MODEL_REVISION,
+        "RETAIL_BANK_MODEL_DTYPE": "bf16",
+        "RETAIL_BANK_BASE_MODEL_ID": "spkc83/retail-bank-servicing-agent-9b",
+        "RETAIL_BANK_BASE_MODEL_REVISION": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+        "RETAIL_BANK_ADAPTER_ID": "spkc83/retail-bank-servicing-agent-9b-peft",
+        "RETAIL_BANK_ADAPTER_REVISION": "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
         "RETAIL_BANK_ROUTER_ID": "spkc83/router",
         "RETAIL_BANK_ROUTER_REVISION": ROUTER_REVISION,
         "SPACE_COMMIT_SHA": SPACE_COMMIT,
@@ -104,6 +111,47 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
 def test_deploy_requires_both_explicit_guards(tmp_path: Path) -> None:
     with pytest.raises(deploy_module.DeployError, match="requires"):
         deploy_module.deploy(_args(tmp_path, "--execute"), FakeApi())
+
+
+def test_peft_deploy_persists_exact_base_adapter_pins(tmp_path: Path) -> None:
+    args = _args(
+        tmp_path,
+        "--base-model-id",
+        "ibm-granite/base",
+        "--base-model-revision",
+        BASE_MODEL_REVISION,
+        "--adapter-id",
+        "spkc83/model",
+        "--adapter-revision",
+        ADAPTER_REVISION,
+        "--model-dtype",
+        "fp16",
+    )
+
+    pins = deploy_module.runtime_pins(args)
+
+    assert pins["RETAIL_BANK_BASE_MODEL_ID"] == "ibm-granite/base"
+    assert pins["RETAIL_BANK_BASE_MODEL_REVISION"] == BASE_MODEL_REVISION
+    assert pins["RETAIL_BANK_ADAPTER_ID"] == "spkc83/model"
+    assert pins["RETAIL_BANK_ADAPTER_REVISION"] == ADAPTER_REVISION
+    assert pins["RETAIL_BANK_MODEL_DTYPE"] == "fp16"
+
+
+def test_peft_deploy_rejects_partial_composition(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    args.base_model_revision = None
+
+    with pytest.raises(deploy_module.DeployError, match="requires"):
+        deploy_module.plan(args)
+
+
+def test_merged_only_deploy_clears_adapter_variables(tmp_path: Path) -> None:
+    pins = deploy_module.runtime_pins(_args(tmp_path, "--merged-model-only"))
+
+    assert pins["RETAIL_BANK_BASE_MODEL_ID"] == ""
+    assert pins["RETAIL_BANK_BASE_MODEL_REVISION"] == ""
+    assert pins["RETAIL_BANK_ADAPTER_ID"] == ""
+    assert pins["RETAIL_BANK_ADAPTER_REVISION"] == ""
 
 
 def test_invalid_revision_is_rejected_before_upload(tmp_path: Path) -> None:

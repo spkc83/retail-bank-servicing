@@ -6,6 +6,7 @@
 #   "bitsandbytes==0.50.0",
 #   "datasets==4.5.0",
 #   "huggingface-hub==1.22.0",
+#   "peft==0.18.1",
 #   "safetensors==0.8.0",
 #   "torch==2.12.1",
 #   "transformers==5.13.0",
@@ -52,7 +53,10 @@ from hello_slm.banking_tool_sft_data import public_tool_manifest
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.config import canonical_json_bytes
 
-DEFAULT_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
+DEFAULT_MODEL_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+DEFAULT_BASE_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 DEFAULT_OUTPUT_DIR = "artifacts/banking-v5-tool-eval"
 DEFAULT_FAMILY = "granite"
@@ -101,12 +105,21 @@ class EvalConfig:
     enforce_release_gates: bool
     token: str | None
     load_in_4bit: bool = False
+    base_model_repo: str | None = None
+    base_model_revision: str | None = None
+    adapter_repo: str | None = None
+    adapter_revision: str | None = None
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-repo", default=DEFAULT_MODEL_REPO)
-    parser.add_argument("--model-revision", required=True)
+    parser.add_argument("--model-revision", default=DEFAULT_MODEL_REVISION)
+    parser.add_argument("--base-model-repo", default=DEFAULT_BASE_MODEL_REPO)
+    parser.add_argument("--base-model-revision", default=DEFAULT_BASE_MODEL_REVISION)
+    parser.add_argument("--adapter-repo", default=DEFAULT_MODEL_REPO)
+    parser.add_argument("--adapter-revision", default=DEFAULT_MODEL_REVISION)
+    parser.add_argument("--merged-model-only", action="store_true")
     parser.add_argument("--dataset-repo", default=DEFAULT_DATASET_REPO)
     parser.add_argument("--dataset-revision", required=True)
     parser.add_argument("--manifest", type=Path)
@@ -116,7 +129,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--split", default="test")
     parser.add_argument("--family", choices=("granite",), default=DEFAULT_FAMILY)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="fp16")
+    parser.add_argument("--dtype", choices=("bf16", "fp16", "fp32"), default="bf16")
     parser.add_argument("--max-new-tokens-first", type=int, default=192)
     parser.add_argument("--max-new-tokens-final", type=int, default=220)
     parser.add_argument("--max-tool-passes", type=int, default=4)
@@ -158,6 +171,10 @@ def config_from_args(args: argparse.Namespace) -> EvalConfig:
         enforce_release_gates=bool(args.enforce_release_gates),
         token=args.token,
         load_in_4bit=bool(args.load_in_4bit),
+        base_model_repo=None if args.merged_model_only else args.base_model_repo,
+        base_model_revision=None if args.merged_model_only else args.base_model_revision,
+        adapter_repo=None if args.merged_model_only else args.adapter_repo,
+        adapter_revision=None if args.merged_model_only else args.adapter_revision,
     )
 
 
@@ -226,7 +243,7 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         records,
         model=StaticPredictionModel(load_predictions_jsonl(output_paths["predictions"])),
         adapter=TaggedJsonToolAdapter(template_hash=adapter.template_hash),
-        checkpoint_revision=config.model_revision,
+        checkpoint_revision=active_model_revision(config),
     )
     if is_counterfactual:
         gate_contract = COUNTERFACTUAL_GATE_CONTRACT
@@ -263,6 +280,22 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
 
 def validate_config(config: EvalConfig) -> None:
     validate_exact_revision(config.model_revision, field="--model-revision")
+    composition = (
+        config.base_model_repo,
+        config.base_model_revision,
+        config.adapter_repo,
+        config.adapter_revision,
+    )
+    if any(composition) and not all(composition):
+        raise ToolEvalGenerationError(
+            "PEFT evaluation requires --base-model-repo, --base-model-revision, "
+            "--adapter-repo, and --adapter-revision"
+        )
+    if config.adapter_repo is not None:
+        assert config.base_model_revision is not None
+        assert config.adapter_revision is not None
+        validate_exact_revision(config.base_model_revision, field="--base-model-revision")
+        validate_exact_revision(config.adapter_revision, field="--adapter-revision")
     if config.dataset_revision.startswith("sha256:"):
         if config.manifest is None:
             raise ToolEvalGenerationError("sha256 dataset identity requires a local --manifest")
@@ -316,7 +349,7 @@ def resolve_manifest(config: EvalConfig) -> Path:
 
 def output_paths_for(config: EvalConfig) -> dict[str, Path]:
     dataset_identity = config.dataset_revision.removeprefix("sha256:")
-    slug = f"{config.model_revision[:12]}-{dataset_identity[:12]}-{config.split}"
+    slug = f"{active_model_revision(config)[:12]}-{dataset_identity[:12]}-{config.split}"
     return {
         "predictions": config.predictions_jsonl or config.output_dir / f"predictions-{slug}.jsonl",
         "metadata": config.metadata_json or config.output_dir / f"metadata-{slug}.json",
@@ -636,14 +669,17 @@ class TransformersGenerationBackend:
     def _load(self) -> None:
         try:
             import torch
+            from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         except ImportError as exc:
             raise ToolEvalGenerationError("transformers and torch are required") from exc
         if self.config.device == "cuda" and not torch.cuda.is_available():
             raise ToolEvalGenerationError("CUDA device requested but unavailable")
+        load_repo = self.config.base_model_repo or self.config.model_repo
+        load_revision = self.config.base_model_revision or self.config.model_revision
         tokenizer = AutoTokenizer.from_pretrained(
-            self.config.model_repo,
-            revision=self.config.model_revision,
+            self.config.adapter_repo or load_repo,
+            revision=self.config.adapter_revision or load_revision,
             token=self.config.token,
             trust_remote_code=self.config.trust_remote_code,
         )
@@ -655,12 +691,23 @@ class TransformersGenerationBackend:
             torch_module=torch,
             quantization_config_factory=BitsAndBytesConfig,
         )
-        model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_repo,
-            revision=self.config.model_revision,
+        base_model = AutoModelForCausalLM.from_pretrained(
+            load_repo,
+            revision=load_revision,
             token=self.config.token,
             trust_remote_code=self.config.trust_remote_code,
             **load_kwargs,
+        )
+        model = (
+            PeftModel.from_pretrained(
+                base_model,
+                self.config.adapter_repo,
+                revision=self.config.adapter_revision,
+                token=self.config.token,
+                autocast_adapter_dtype=False,
+            )
+            if self.config.adapter_repo is not None
+            else base_model
         )
         if self.config.device != "cuda":
             model.to(self.config.device)
@@ -777,6 +824,23 @@ def build_metadata(
             "repo": config.model_repo,
             "revision": config.model_revision,
             "family": config.family,
+            "loading_mode": "peft_adapter" if config.adapter_repo else "merged",
+            "base": (
+                {
+                    "repo": config.base_model_repo,
+                    "revision": config.base_model_revision,
+                }
+                if config.adapter_repo
+                else None
+            ),
+            "adapter": (
+                {
+                    "repo": config.adapter_repo,
+                    "revision": config.adapter_revision,
+                }
+                if config.adapter_repo
+                else None
+            ),
         },
         "dataset": {
             "repo": config.dataset_repo,
@@ -813,7 +877,7 @@ def build_metadata(
             "new_rows_written": written,
             "hub_path_prefix": (
                 "evaluation/"
-                f"{config.model_revision[:12]}-"
+                f"{active_model_revision(config)[:12]}-"
                 f"{config.dataset_revision.removeprefix('sha256:')[:12]}"
             ),
         },
@@ -835,7 +899,8 @@ def publish_eval_artifacts(config: EvalConfig, output_paths: Mapping[str, Path])
             "huggingface-hub is required to publish evaluation artifacts"
         ) from exc
     dataset_identity = config.dataset_revision.removeprefix("sha256:")
-    path_prefix = f"evaluation/{config.model_revision[:12]}-{dataset_identity[:12]}"
+    active_revision = active_model_revision(config)
+    path_prefix = f"evaluation/{active_revision[:12]}-{dataset_identity[:12]}"
     operations = [
         CommitOperationAdd(
             path_in_repo=f"{path_prefix}/{path.name}",
@@ -853,9 +918,13 @@ def publish_eval_artifacts(config: EvalConfig, output_paths: Mapping[str, Path])
         operations=operations,
         commit_message="Add frozen banking-v3 tool-use evaluation",
         commit_description=(
-            f"Model revision {config.model_revision}; dataset revision {config.dataset_revision}."
+            f"Model revision {active_revision}; dataset revision {config.dataset_revision}."
         ),
     )
+
+
+def active_model_revision(config: EvalConfig) -> str:
+    return config.adapter_revision or config.model_revision
 
 
 def sha256_file(path: Path) -> str | None:

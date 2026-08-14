@@ -589,6 +589,132 @@ def test_four_bit_loader_rejects_cpu_device(tmp_path: Path) -> None:
         runner.validate_config(config)
 
 
+def test_peft_eval_requires_complete_exact_base_adapter_identity(tmp_path: Path) -> None:
+    base = _config(tmp_path)
+    partial = runner.EvalConfig(**{**base.__dict__, "adapter_repo": "spkc83/adapter"})
+    with pytest.raises(runner.ToolEvalGenerationError, match="requires"):
+        runner.validate_config(partial)
+
+    invalid = runner.EvalConfig(
+        **{
+            **base.__dict__,
+            "base_model_repo": "ibm-granite/base",
+            "base_model_revision": "main",
+            "adapter_repo": "spkc83/adapter",
+            "adapter_revision": "c" * 40,
+        }
+    )
+    with pytest.raises(runner.ToolEvalGenerationError, match="base-model-revision"):
+        runner.validate_config(invalid)
+
+
+def test_peft_eval_uses_adapter_revision_as_checkpoint_identity(tmp_path: Path) -> None:
+    config = runner.EvalConfig(
+        **{
+            **_config(tmp_path).__dict__,
+            "base_model_repo": "ibm-granite/base",
+            "base_model_revision": "c" * 40,
+            "adapter_repo": "spkc83/adapter",
+            "adapter_revision": "d" * 40,
+        }
+    )
+
+    metadata = runner.run_eval(config, backend=RecordingBackend())
+    report = json.loads(Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8"))
+
+    assert report["checkpoint_revision"] == "d" * 40
+    assert metadata["model"]["loading_mode"] == "peft_adapter"
+    assert metadata["model"]["base"]["revision"] == "c" * 40
+    assert metadata["model"]["adapter"]["revision"] == "d" * 40
+
+
+def test_transformers_backend_attaches_pinned_adapter_without_merging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = runner.EvalConfig(
+        **{
+            **_config(tmp_path).__dict__,
+            "base_model_repo": "ibm-granite/base",
+            "base_model_revision": "e" * 40,
+            "adapter_repo": "spkc83/adapter",
+            "adapter_revision": "f" * 40,
+        }
+    )
+    calls: dict[str, tuple[Any, ...]] = {}
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token = "<eos>"
+        padding_side = "right"
+
+    class FakeModel:
+        device = "cpu"
+
+        def to(self, device: str) -> None:
+            calls["device"] = (device,)
+
+        def eval(self) -> None:
+            calls["eval"] = ()
+
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(repo: str, **kwargs: Any) -> FakeTokenizer:
+            calls["tokenizer"] = (repo, kwargs)
+            return FakeTokenizer()
+
+    class FakeAutoModel:
+        @staticmethod
+        def from_pretrained(repo: str, **kwargs: Any) -> FakeModel:
+            calls["base"] = (repo, kwargs)
+            return FakeModel()
+
+    class FakePeftModel:
+        @staticmethod
+        def from_pretrained(model: FakeModel, repo: str, **kwargs: Any) -> FakeModel:
+            calls["adapter"] = (model, repo, kwargs)
+            return model
+
+    class FakeBitsAndBytesConfig:
+        pass
+
+    torch = ModuleType("torch")
+    torch.bfloat16 = "bf16"  # type: ignore[attr-defined]
+    torch.float16 = "fp16"  # type: ignore[attr-defined]
+    torch.float32 = "fp32"  # type: ignore[attr-defined]
+    torch.cuda = FakeCuda()  # type: ignore[attr-defined]
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = FakeAutoTokenizer  # type: ignore[attr-defined]
+    transformers.AutoModelForCausalLM = FakeAutoModel  # type: ignore[attr-defined]
+    transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig  # type: ignore[attr-defined]
+    peft = ModuleType("peft")
+    peft.PeftModel = FakePeftModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setitem(sys.modules, "peft", peft)
+
+    backend = runner.TransformersGenerationBackend(config)
+
+    assert calls["tokenizer"][0] == "spkc83/adapter"
+    assert calls["base"][0] == "ibm-granite/base"
+    adapter_call = calls["adapter"]
+    assert adapter_call[1:] == (
+        "spkc83/adapter",
+        {
+            "revision": "f" * 40,
+            "token": None,
+            "autocast_adapter_dtype": False,
+        },
+    )
+    assert backend.model is adapter_call[0]
+    assert not hasattr(backend.model, "merge_and_unload")
+
+
 def test_local_manifest_accepts_only_matching_sha256_identity(tmp_path: Path) -> None:
     base = _config(tmp_path)
     assert base.manifest is not None
@@ -608,12 +734,15 @@ def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:
 
     assert "# /// script" in source
     assert '"transformers==5.13.0"' in source
-    assert job.MODEL_REPO == "spkc83/retail-bank-servicing-agent-9b"
+    assert job.MODEL_REPO == "spkc83/retail-bank-servicing-agent-9b-peft"
     assert job.DATASET_REPO == "spkc83/retail-bank-servicing-alignment-sft"
     assert "cloud_generate_tool_eval.py" in source
     assert 'parser.add_argument("--model-repo", default=MODEL_REPO)' in source
     assert 'parser.add_argument("--dataset-repo", default=DATASET_REPO)' in source
-    assert 'parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")' in source
+    assert 'parser.add_argument("--dtype", choices=("fp16", "bf16"), default="bf16")' in source
+    assert '"peft==0.18.1"' in source
+    assert 'parser.add_argument("--base-model-revision", default=BASE_MODEL_REVISION)' in source
+    assert 'parser.add_argument("--adapter-revision", default=MODEL_REVISION)' in source
     assert '"--model-revision",' in source
     assert '"--dataset-revision",' in source
     assert '"--push-to-hub",' in source
@@ -633,9 +762,13 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert "hf_job_tool_eval.py" in source
     assert "--model-revision" in source
     assert "--dataset-revision" in source
-    assert 'model_repo="${MODEL_REPO:-spkc83/retail-bank-servicing-agent-9b}"' in source
+    assert 'model_repo="${MODEL_REPO:-spkc83/retail-bank-servicing-agent-9b-peft}"' in source
     assert 'dataset_repo="${DATASET_REPO:-spkc83/retail-bank-servicing-alignment-sft}"' in source
     assert '--model-repo "$model_repo"' in source
     assert '--dataset-repo "$dataset_repo"' in source
-    assert 'dtype="${4:-fp16}"' in source
+    assert 'dtype="${4:-bf16}"' in source
     assert '--dtype "$dtype"' in source
+    assert "1d56824995aa1adecfe20f62ca42fb1c0c443817" in source
+    assert "cc95e446af2b5e1d8d9df2751a8192613ad386e3" in source
+    assert '--base-model-revision "$base_model_revision"' in source
+    assert '--adapter-revision "$adapter_revision"' in source

@@ -5,13 +5,57 @@ from typing import Any
 
 MODEL_ID = os.environ.get(
     "RETAIL_BANK_MODEL_ID",
-    "spkc83/retail-bank-servicing-agent-9b",
+    "spkc83/retail-bank-servicing-agent-9b-peft",
 )
 MODEL_REVISION = os.environ.get(
     "RETAIL_BANK_MODEL_REVISION",
-    "1799d068906c0da2a8739668857b096d20fed549",
+    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
 )
+BASE_MODEL_ID = os.environ.get(
+    "RETAIL_BANK_BASE_MODEL_ID",
+    "spkc83/retail-bank-servicing-agent-9b",
+).strip()
+BASE_MODEL_REVISION = os.environ.get(
+    "RETAIL_BANK_BASE_MODEL_REVISION",
+    "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+).strip()
+ADAPTER_ID = os.environ.get(
+    "RETAIL_BANK_ADAPTER_ID",
+    "spkc83/retail-bank-servicing-agent-9b-peft",
+).strip()
+ADAPTER_REVISION = os.environ.get(
+    "RETAIL_BANK_ADAPTER_REVISION",
+    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+).strip()
+MODEL_DTYPE = os.environ.get("RETAIL_BANK_MODEL_DTYPE", "bf16").strip().lower()
 SKIP_MODEL_LOAD = os.environ.get("POC_SKIP_MODEL_LOAD") == "1"
+
+
+def _validate_model_configuration() -> bool:
+    adapter_values = (BASE_MODEL_ID, BASE_MODEL_REVISION, ADAPTER_ID, ADAPTER_REVISION)
+    if any(adapter_values) and not all(adapter_values):
+        raise ValueError(
+            "PEFT loading requires RETAIL_BANK_BASE_MODEL_ID, "
+            "RETAIL_BANK_BASE_MODEL_REVISION, RETAIL_BANK_ADAPTER_ID, and "
+            "RETAIL_BANK_ADAPTER_REVISION"
+        )
+    revisions = (
+        ("RETAIL_BANK_MODEL_REVISION", MODEL_REVISION),
+        ("RETAIL_BANK_BASE_MODEL_REVISION", BASE_MODEL_REVISION),
+        ("RETAIL_BANK_ADAPTER_REVISION", ADAPTER_REVISION),
+    )
+    for field, revision in revisions:
+        if revision and (
+            len(revision) != 40
+            or any(character not in "0123456789abcdef" for character in revision)
+        ):
+            raise ValueError(f"{field} must be an exact 40-character lowercase Git revision")
+    if MODEL_DTYPE not in {"bf16", "fp16"}:
+        raise ValueError("RETAIL_BANK_MODEL_DTYPE must be bf16 or fp16")
+    return bool(ADAPTER_ID)
+
+
+USE_PEFT_ADAPTER = _validate_model_configuration()
 
 if SKIP_MODEL_LOAD:
 
@@ -30,17 +74,34 @@ if SKIP_MODEL_LOAD:
 else:
     import spaces
     import torch
+    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     spaces_runtime = spaces
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
+    load_repo = BASE_MODEL_ID if USE_PEFT_ADAPTER else MODEL_ID
+    load_revision = BASE_MODEL_REVISION if USE_PEFT_ADAPTER else MODEL_REVISION
+    tokenizer = AutoTokenizer.from_pretrained(
+        ADAPTER_ID if USE_PEFT_ADAPTER else load_repo,
+        revision=ADAPTER_REVISION if USE_PEFT_ADAPTER else load_revision,
+    )
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
-        revision=MODEL_REVISION,
-        dtype=torch.float16,
+    dtype = torch.bfloat16 if MODEL_DTYPE == "bf16" else torch.float16
+    base_model = AutoModelForCausalLM.from_pretrained(
+        load_repo,
+        revision=load_revision,
+        dtype=dtype,
         low_cpu_mem_usage=True,
+    )
+    model = (
+        PeftModel.from_pretrained(
+            base_model,
+            ADAPTER_ID,
+            revision=ADAPTER_REVISION,
+            autocast_adapter_dtype=False,
+        )
+        if USE_PEFT_ADAPTER
+        else base_model
     )
     model.to("cuda")
     model.eval()
@@ -65,10 +126,24 @@ def count_tokens(
 
 
 def runtime_metadata() -> dict[str, str]:
+    composition = {
+        "model_loading_mode": "peft_adapter" if USE_PEFT_ADAPTER else "merged",
+        "model_dtype": MODEL_DTYPE,
+    }
+    if USE_PEFT_ADAPTER:
+        composition.update(
+            {
+                "base_model_id": BASE_MODEL_ID,
+                "base_model_revision": BASE_MODEL_REVISION,
+                "adapter_id": ADAPTER_ID,
+                "adapter_revision": ADAPTER_REVISION,
+            }
+        )
     if model is None:
         return {
             "runtime_device": "unavailable",
             "cuda_device_name": "unavailable",
+            **composition,
         }
     device = str(model.device)
     cuda_device_name = "unavailable"
@@ -80,6 +155,7 @@ def runtime_metadata() -> dict[str, str]:
     return {
         "runtime_device": device,
         "cuda_device_name": cuda_device_name,
+        **composition,
     }
 
 

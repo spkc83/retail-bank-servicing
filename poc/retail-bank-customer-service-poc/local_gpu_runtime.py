@@ -6,12 +6,53 @@ from typing import Any
 
 MODEL_ID = os.environ.get(
     "RETAIL_BANK_MODEL_ID",
-    "spkc83/retail-bank-servicing-agent-9b",
+    "spkc83/retail-bank-servicing-agent-9b-peft",
 )
 MODEL_REVISION = os.environ.get(
     "RETAIL_BANK_MODEL_REVISION",
-    "1799d068906c0da2a8739668857b096d20fed549",
+    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
 )
+BASE_MODEL_ID = os.environ.get(
+    "RETAIL_BANK_BASE_MODEL_ID",
+    "spkc83/retail-bank-servicing-agent-9b",
+).strip()
+BASE_MODEL_REVISION = os.environ.get(
+    "RETAIL_BANK_BASE_MODEL_REVISION",
+    "1d56824995aa1adecfe20f62ca42fb1c0c443817",
+).strip()
+ADAPTER_ID = os.environ.get(
+    "RETAIL_BANK_ADAPTER_ID",
+    "spkc83/retail-bank-servicing-agent-9b-peft",
+).strip()
+ADAPTER_REVISION = os.environ.get(
+    "RETAIL_BANK_ADAPTER_REVISION",
+    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+).strip()
+
+
+def validate_model_configuration() -> bool:
+    adapter_values = (BASE_MODEL_ID, BASE_MODEL_REVISION, ADAPTER_ID, ADAPTER_REVISION)
+    if any(adapter_values) and not all(adapter_values):
+        raise ValueError(
+            "PEFT loading requires RETAIL_BANK_BASE_MODEL_ID, "
+            "RETAIL_BANK_BASE_MODEL_REVISION, RETAIL_BANK_ADAPTER_ID, and "
+            "RETAIL_BANK_ADAPTER_REVISION"
+        )
+    revisions = (
+        ("RETAIL_BANK_MODEL_REVISION", MODEL_REVISION),
+        ("RETAIL_BANK_BASE_MODEL_REVISION", BASE_MODEL_REVISION),
+        ("RETAIL_BANK_ADAPTER_REVISION", ADAPTER_REVISION),
+    )
+    for field, revision in revisions:
+        if revision and (
+            len(revision) != 40
+            or any(character not in "0123456789abcdef" for character in revision)
+        ):
+            raise ValueError(f"{field} must be an exact 40-character lowercase Git revision")
+    return bool(ADAPTER_ID)
+
+
+USE_PEFT_ADAPTER = validate_model_configuration()
 
 
 class LocalGraniteRuntime:
@@ -50,6 +91,7 @@ class LocalGraniteRuntime:
 
         try:
             import torch
+            from peft import PeftModel
             from transformers import (
                 AutoModelForCausalLM,
                 AutoTokenizer,
@@ -61,9 +103,11 @@ class LocalGraniteRuntime:
             ) from error
 
         cuda_metadata = validate_cuda_runtime(torch)
+        load_repo = BASE_MODEL_ID if USE_PEFT_ADAPTER else MODEL_ID
+        load_revision = BASE_MODEL_REVISION if USE_PEFT_ADAPTER else MODEL_REVISION
         tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_ID,
-            revision=MODEL_REVISION,
+            ADAPTER_ID if USE_PEFT_ADAPTER else load_repo,
+            revision=ADAPTER_REVISION if USE_PEFT_ADAPTER else load_revision,
             token=os.environ.get("HF_TOKEN"),
             trust_remote_code=False,
         )
@@ -71,8 +115,8 @@ class LocalGraniteRuntime:
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
         model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
-            revision=MODEL_REVISION,
+            load_repo,
+            revision=load_revision,
             token=os.environ.get("HF_TOKEN"),
             trust_remote_code=False,
             **build_model_load_kwargs(
@@ -80,6 +124,14 @@ class LocalGraniteRuntime:
                 quantization_config_factory=BitsAndBytesConfig,
             ),
         )
+        if USE_PEFT_ADAPTER:
+            model = PeftModel.from_pretrained(
+                model,
+                ADAPTER_ID,
+                revision=ADAPTER_REVISION,
+                token=os.environ.get("HF_TOKEN"),
+                autocast_adapter_dtype=False,
+            )
         model.eval()
         return cls(
             tokenizer=tokenizer,
@@ -150,10 +202,20 @@ class LocalGraniteRuntime:
         metadata = {
             "model_id": MODEL_ID,
             "model_revision": MODEL_REVISION,
+            "model_loading_mode": "peft_adapter" if USE_PEFT_ADAPTER else "merged",
             "runtime_device": device,
             "weight_quantization": self.weight_quantization,
             **self.cuda_metadata,
         }
+        if USE_PEFT_ADAPTER:
+            metadata.update(
+                {
+                    "base_model_id": BASE_MODEL_ID,
+                    "base_model_revision": BASE_MODEL_REVISION,
+                    "adapter_id": ADAPTER_ID,
+                    "adapter_revision": ADAPTER_REVISION,
+                }
+            )
         if self.model is not None and self.torch is not None:
             allocated = self.torch.cuda.memory_allocated(0) / (1024**3)
             reserved = self.torch.cuda.memory_reserved(0) / (1024**3)

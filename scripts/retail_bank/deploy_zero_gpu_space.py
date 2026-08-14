@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SOURCE_DIR = Path("poc/retail-bank-customer-service-poc")
+DEFAULT_BASE_MODEL_ID = "spkc83/retail-bank-servicing-agent-9b"
+DEFAULT_BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
+DEFAULT_ADAPTER_ID = "spkc83/retail-bank-servicing-agent-9b-peft"
+DEFAULT_ADAPTER_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
 ALLOW_PATTERNS = ["*.py", "*.md", "*.txt", "*.toml", "*.lock", "*.json", "LICENSE"]
 IGNORE_PATTERNS = [
     "tests/**",
@@ -33,6 +37,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE_DIR)
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--model-revision", required=True)
+    parser.add_argument("--base-model-id", default=DEFAULT_BASE_MODEL_ID)
+    parser.add_argument("--base-model-revision", default=DEFAULT_BASE_MODEL_REVISION)
+    parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
+    parser.add_argument("--adapter-revision", default=DEFAULT_ADAPTER_REVISION)
+    parser.add_argument("--merged-model-only", action="store_true")
+    parser.add_argument("--model-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--router-id", required=True)
     parser.add_argument("--router-revision", required=True)
     parser.add_argument("--wait-timeout", type=float, default=600.0)
@@ -49,11 +59,39 @@ def exact_revision(value: str, *, field: str) -> str:
 
 
 def runtime_pins(args: argparse.Namespace, *, space_commit: str | None = None) -> dict[str, str]:
+    base_model_id = None if args.merged_model_only else args.base_model_id
+    base_model_revision = None if args.merged_model_only else args.base_model_revision
+    adapter_id = None if args.merged_model_only else args.adapter_id
+    adapter_revision = None if args.merged_model_only else args.adapter_revision
+    composition = (
+        base_model_id,
+        base_model_revision,
+        adapter_id,
+        adapter_revision,
+    )
+    if any(composition) and not all(composition):
+        raise DeployError(
+            "PEFT deployment requires --base-model-id, --base-model-revision, "
+            "--adapter-id, and --adapter-revision"
+        )
     pins = {
         "RETAIL_BANK_MODEL_ID": str(args.model_id),
         "RETAIL_BANK_MODEL_REVISION": exact_revision(
             str(args.model_revision),
             field="model revision",
+        ),
+        "RETAIL_BANK_MODEL_DTYPE": str(args.model_dtype),
+        "RETAIL_BANK_BASE_MODEL_ID": str(base_model_id or ""),
+        "RETAIL_BANK_BASE_MODEL_REVISION": (
+            exact_revision(str(base_model_revision), field="base model revision")
+            if base_model_revision
+            else ""
+        ),
+        "RETAIL_BANK_ADAPTER_ID": str(adapter_id or ""),
+        "RETAIL_BANK_ADAPTER_REVISION": (
+            exact_revision(str(adapter_revision), field="adapter revision")
+            if adapter_revision
+            else ""
         ),
         "RETAIL_BANK_ROUTER_ID": str(args.router_id),
         "RETAIL_BANK_ROUTER_REVISION": exact_revision(

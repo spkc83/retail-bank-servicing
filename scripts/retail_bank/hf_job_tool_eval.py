@@ -4,6 +4,7 @@
 #   "accelerate==1.12.0",
 #   "datasets==4.5.0",
 #   "huggingface-hub==1.22.0",
+#   "peft==0.18.1",
 #   "safetensors==0.8.0",
 #   "torch>=2.9,<3",
 #   "transformers==5.13.0",
@@ -24,7 +25,10 @@ import urllib.request
 from pathlib import Path
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
-MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
+MODEL_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+BASE_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
+BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 
 
@@ -32,13 +36,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--model-repo", default=MODEL_REPO)
-    parser.add_argument("--model-revision", required=True)
+    parser.add_argument("--model-revision", default=MODEL_REVISION)
+    parser.add_argument("--base-model-repo", default=BASE_MODEL_REPO)
+    parser.add_argument("--base-model-revision", default=BASE_MODEL_REVISION)
+    parser.add_argument("--adapter-repo", default=MODEL_REPO)
+    parser.add_argument("--adapter-revision", default=MODEL_REVISION)
+    parser.add_argument("--merged-model-only", action="store_true")
     parser.add_argument("--dataset-repo", default=DATASET_REPO)
     parser.add_argument("--dataset-revision", required=True)
     parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-tool-eval")
     parser.add_argument("--max-new-tokens-first", type=int, default=192)
     parser.add_argument("--max-new-tokens-final", type=int, default=220)
-    parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")
+    parser.add_argument("--dtype", choices=("fp16", "bf16"), default="bf16")
     return parser.parse_args()
 
 
@@ -64,8 +73,27 @@ def download_source(source_commit: str, destination: Path) -> Path:
 
 def main() -> int:
     args = parse_args()
+    if args.merged_model_only:
+        args.base_model_repo = None
+        args.base_model_revision = None
+        args.adapter_repo = None
+        args.adapter_revision = None
     validate_git_revision(args.model_revision, field="--model-revision")
     validate_git_revision(args.dataset_revision, field="--dataset-revision")
+    composition = (
+        args.base_model_repo,
+        args.base_model_revision,
+        args.adapter_repo,
+        args.adapter_revision,
+    )
+    if any(composition) and not all(composition):
+        raise ValueError(
+            "PEFT evaluation requires --base-model-repo, --base-model-revision, "
+            "--adapter-repo, and --adapter-revision"
+        )
+    if args.adapter_repo:
+        validate_git_revision(args.base_model_revision, field="--base-model-revision")
+        validate_git_revision(args.adapter_revision, field="--adapter-revision")
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
 
@@ -102,6 +130,19 @@ def main() -> int:
             "--push-to-hub",
             "--enforce-release-gates",
         ]
+        if args.adapter_repo:
+            command.extend(
+                [
+                    "--base-model-repo",
+                    args.base_model_repo,
+                    "--base-model-revision",
+                    args.base_model_revision,
+                    "--adapter-repo",
+                    args.adapter_repo,
+                    "--adapter-revision",
+                    args.adapter_revision,
+                ]
+            )
         subprocess.run(command, cwd=source_root, env=env, check=True)
     return 0
 

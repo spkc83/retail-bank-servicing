@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
+import local_gpu_runtime as runtime_module
 from local_gpu_runtime import (
     MODEL_ID,
     MODEL_REVISION,
@@ -48,8 +50,8 @@ def fake_torch(cuda: FakeCuda | None = None):
 
 
 def test_local_runtime_pins_released_model_identity() -> None:
-    assert MODEL_ID == "spkc83/retail-bank-servicing-agent-9b"
-    assert MODEL_REVISION == "1799d068906c0da2a8739668857b096d20fed549"
+    assert MODEL_ID == "spkc83/retail-bank-servicing-agent-9b-peft"
+    assert MODEL_REVISION == "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
 
 
 def test_nf4_load_configuration_uses_fp16_double_quantization_on_cuda_zero() -> None:
@@ -106,3 +108,80 @@ def test_explicit_test_skip_does_not_construct_a_model(
             [],
             16,
         )
+
+
+def test_local_runtime_attaches_adapter_to_quantized_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_revision = "3" * 40
+    adapter_revision = "4" * 40
+    calls: dict[str, tuple[object, ...]] = {}
+
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token = "<eos>"
+        padding_side = "right"
+
+    class FakeModel:
+        device = "cuda:0"
+
+        def eval(self) -> None:
+            calls["eval"] = ()
+
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(repo: str, **kwargs: object) -> FakeTokenizer:
+            calls["tokenizer"] = (repo, kwargs)
+            return FakeTokenizer()
+
+    class FakeAutoModel:
+        @staticmethod
+        def from_pretrained(repo: str, **kwargs: object) -> FakeModel:
+            calls["base"] = (repo, kwargs)
+            return FakeModel()
+
+    class FakePeftModel:
+        @staticmethod
+        def from_pretrained(model: FakeModel, repo: str, **kwargs: object) -> FakeModel:
+            calls["adapter"] = (model, repo, kwargs)
+            return model
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    torch = ModuleType("torch")
+    torch.float16 = "fp16"  # type: ignore[attr-defined]
+    torch.cuda = FakeCuda()  # type: ignore[attr-defined]
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = FakeAutoTokenizer  # type: ignore[attr-defined]
+    transformers.AutoModelForCausalLM = FakeAutoModel  # type: ignore[attr-defined]
+    transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig  # type: ignore[attr-defined]
+    peft = ModuleType("peft")
+    peft.PeftModel = FakePeftModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setitem(sys.modules, "peft", peft)
+    monkeypatch.setattr(runtime_module, "BASE_MODEL_ID", "ibm-granite/base")
+    monkeypatch.setattr(runtime_module, "BASE_MODEL_REVISION", base_revision)
+    monkeypatch.setattr(runtime_module, "ADAPTER_ID", "spkc83/adapter")
+    monkeypatch.setattr(runtime_module, "ADAPTER_REVISION", adapter_revision)
+    monkeypatch.setattr(runtime_module, "USE_PEFT_ADAPTER", True)
+    monkeypatch.delenv("LOCAL_POC_SKIP_MODEL_LOAD", raising=False)
+
+    runtime = LocalGraniteRuntime.load()
+
+    assert calls["tokenizer"][0] == "spkc83/adapter"
+    assert calls["tokenizer"][1]["revision"] == adapter_revision  # type: ignore[index]
+    assert calls["base"][0] == "ibm-granite/base"
+    adapter_call = calls["adapter"]
+    assert adapter_call[1:] == (
+        "spkc83/adapter",
+        {
+            "revision": adapter_revision,
+            "token": None,
+            "autocast_adapter_dtype": False,
+        },
+    )
+    assert runtime.model is adapter_call[0]
+    assert runtime.weight_quantization == "bitsandbytes-nf4-double"
