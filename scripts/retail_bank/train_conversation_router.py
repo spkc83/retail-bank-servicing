@@ -401,6 +401,8 @@ def evaluate_predictions(
     )
     metrics["trajectory_resume_rows"] = len(resume_indices)
     state_negative_kinds = {
+        "heldout_policy_followup_generalization",
+        "heldout_social_generalization",
         "state_intent_switch",
         "state_ood_detour",
         "state_policy_followup",
@@ -415,8 +417,7 @@ def evaluate_predictions(
     ]
     metrics["trajectory_state_route_error_rate"] = _safe_ratio(
         sum(
-            routes[index]
-            != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
+            routes[index] != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
             for index in state_negative_indices
         ),
         len(state_negative_indices),
@@ -442,8 +443,7 @@ def evaluate_predictions(
             "rows": len(kind_indices),
             "route_error_rate": _safe_ratio(
                 sum(
-                    routes[index]
-                    != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
+                    routes[index] != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
                     for index in kind_indices
                 ),
                 len(kind_indices),
@@ -480,9 +480,7 @@ def evaluate_predictions(
                 route=routes[index],
                 exposed_intent=exposed_intents[index],
                 expected_intent=(
-                    INTENT_LABELS[intent_labels[index]]
-                    if intent_labels[index] >= 0
-                    else None
+                    INTENT_LABELS[intent_labels[index]] if intent_labels[index] >= 0 else None
                 ),
                 resume_active=(
                     relation_probabilities[index][resume_relation_index]
@@ -493,6 +491,35 @@ def evaluate_predictions(
         ),
         len(trajectory_indices),
     )
+    for kind, metric_name in (
+        (
+            "heldout_social_generalization",
+            "heldout_social_generalization_error_rate",
+        ),
+        (
+            "heldout_policy_followup_generalization",
+            "heldout_policy_followup_generalization_error_rate",
+        ),
+    ):
+        kind_indices = [
+            index for index, example_kind in enumerate(example_kinds) if example_kind == kind
+        ]
+        metrics[metric_name] = _safe_ratio(
+            sum(
+                not _runtime_transition_matches(
+                    kind=kind,
+                    route=routes[index],
+                    exposed_intent=exposed_intents[index],
+                    expected_intent=INTENT_LABELS[intent_labels[index]],
+                    resume_active=(
+                        relation_probabilities[index][resume_relation_index]
+                        >= relation_thresholds["resume_previous_service"]
+                    ),
+                )
+                for index in kind_indices
+            ),
+            len(kind_indices),
+        )
     heldout_indices = [
         index for index, kind in enumerate(example_kinds) if kind == "heldout_screenshot_regression"
     ]
@@ -570,18 +597,10 @@ def _runtime_transition_matches(
 ) -> bool:
     """Mirror the observations that DialogueState.begin_turn will act on."""
     if kind == "resume_previous_service":
-        return (
-            route == "in_domain"
-            and exposed_intent == expected_intent
-            and resume_active
-        )
+        return route == "in_domain" and exposed_intent == expected_intent and resume_active
     if kind == "state_ood_detour":
         return route == "out_of_domain" and not resume_active
-    return (
-        route == "in_domain"
-        and exposed_intent == expected_intent
-        and not resume_active
-    )
+    return route == "in_domain" and exposed_intent == expected_intent and not resume_active
 
 
 def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
@@ -599,6 +618,8 @@ def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
         ("trajectory_state_intent_error_rate", "<=", 0.00),
         ("trajectory_non_resume_false_positive_rate", "<=", 0.00),
         ("trajectory_runtime_transition_error_rate", "<=", 0.00),
+        ("heldout_social_generalization_error_rate", "<=", 0.00),
+        ("heldout_policy_followup_generalization_error_rate", "<=", 0.00),
         ("heldout_regression_route_error_rate", "<=", 0.00),
         ("heldout_regression_intent_error_rate", "<=", 0.00),
         ("heldout_regression_relation_error_rate", "<=", 0.00),

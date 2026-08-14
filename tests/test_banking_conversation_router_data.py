@@ -144,6 +144,7 @@ def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
     assert test_kinds["external_topic_shift"] >= 1
     assert test_kinds["heldout_screenshot_regression"] == 7
     assert report["leakage"]["group_split_leak_count"] == 0
+    assert report["leakage"]["state_current_text_split_leak_count"] == 0
     assert report["pii_matches"] == 0
 
 
@@ -203,15 +204,18 @@ def test_state_conditioned_negatives_cover_switch_ood_policy_social_and_orphan()
         sft_records_by_split(), clinc_payload(), seed=7404
     )
     resume_index = RELATION_LABELS.index("resume_previous_service")
-    required_kinds = {
-        "state_intent_switch",
-        "state_ood_detour",
-        "state_policy_followup",
-        "state_social_detour",
-        "state_orphan_resume",
-    }
-
-    for rows in splits.values():
+    for split, rows in splits.items():
+        required_kinds = {
+            "state_intent_switch",
+            "state_ood_detour",
+            "state_orphan_resume",
+            (
+                "state_policy_followup"
+                if split == "train"
+                else "heldout_policy_followup_generalization"
+            ),
+            ("state_social_detour" if split == "train" else "heldout_social_generalization"),
+        }
         selected = [row for row in rows if row["example_kind"] in required_kinds]
         assert {row["example_kind"] for row in selected} == required_kinds
         assert all(row["relation_labels"][resume_index] == 0 for row in selected)
@@ -223,6 +227,100 @@ def test_state_conditioned_negatives_cover_switch_ood_policy_social_and_orphan()
             row["example_kind"] == "state_ood_detour" and row["domain_label"] == 0
             for row in selected
         )
+
+
+def test_state_social_generalization_spans_all_intents_and_policy_histories() -> None:
+    splits, report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    expected_intents = {
+        "view_accounts",
+        "view_cards",
+        "freeze_card",
+        "replace_card",
+        "view_transactions",
+        "dispute_transaction",
+        "view_transfers",
+        "cancel_transfer",
+        "view_service_cases",
+    }
+    social_kinds = {"state_social_detour", "heldout_social_generalization"}
+    current_by_split: dict[str, set[str]] = {}
+    for split, rows in splits.items():
+        social = [row for row in rows if row["example_kind"] in social_kinds]
+        current_by_split[split] = {
+            normalize_router_text(str(row["current_text"])) for row in social
+        }
+        assert {row["prior_dialogue_state"]["pending_servicing"]["intent"] for row in social} == (
+            expected_intents
+        )
+        assert len({row["history"][2]["content"] for row in social}) == 7
+        assert all(row["intent"] == "conversation" for row in social)
+        assert all(row["relation_labels"] == [0, 0, 0, 0, 0] for row in social)
+
+    assert current_by_split["train"].isdisjoint(current_by_split["validation"])
+    assert current_by_split["train"].isdisjoint(current_by_split["test"])
+    assert current_by_split["validation"].isdisjoint(current_by_split["test"])
+    assert current_by_split["test"] == {
+        normalize_router_text(text)
+        for text in (
+            "Thanks",
+            "Thank you",
+            "Okay, thanks",
+            "Got it",
+            "That helps",
+            "Hello",
+            "How are you?",
+            "Never mind",
+        )
+    }
+    assert report["leakage"]["state_current_text_split_leak_count"] == 0
+
+
+def test_implicit_policy_followups_span_all_canonical_topics_and_act_families() -> None:
+    splits, _report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    policy_kinds = {
+        "state_policy_followup",
+        "heldout_policy_followup_generalization",
+    }
+    current_by_split: dict[str, set[str]] = {}
+    for split, rows in splits.items():
+        policy = [row for row in rows if row["example_kind"] in policy_kinds]
+        current_by_split[split] = {
+            normalize_router_text(str(row["current_text"])) for row in policy
+        }
+        assert len({row["history"][2]["content"] for row in policy}) == 7
+        assert len(current_by_split[split]) == (10 if split == "train" else 5)
+        assert all(row["intent"] == "policy_knowledge" for row in policy)
+        assert all(row["relation_labels"][0] == 1 for row in policy)
+
+    assert current_by_split["train"].isdisjoint(current_by_split["validation"])
+    assert current_by_split["train"].isdisjoint(current_by_split["test"])
+    assert current_by_split["validation"].isdisjoint(current_by_split["test"])
+    assert normalize_router_text("What documents might you need?") in current_by_split["test"]
+
+
+def test_policy_history_rows_preserve_switch_ood_and_resume_behavior() -> None:
+    splits, _report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    resume_index = RELATION_LABELS.index("resume_previous_service")
+    for rows in splits.values():
+        switches = [
+            row for row in rows if str(row["trajectory_id"]).startswith("state-switch-policy|")
+        ]
+        ood = [row for row in rows if str(row["trajectory_id"]).startswith("state-ood-policy|")]
+        resumes = [
+            row for row in rows if str(row["trajectory_id"]).startswith("state-resume-policy|")
+        ]
+        assert len({row["history"][2]["content"] for row in switches}) == 7
+        assert len({row["history"][2]["content"] for row in ood}) == 7
+        assert len({row["history"][2]["content"] for row in resumes}) == 7
+        assert all(row["example_kind"] == "state_intent_switch" for row in switches)
+        assert all(row["domain_label"] == 0 for row in ood)
+        assert all(row["relation_labels"][resume_index] == 1 for row in resumes)
 
 
 def test_explicit_trajectory_cannot_cross_splits() -> None:

@@ -78,6 +78,10 @@ def main() -> int:
         raise ValueError("conversation router data has group leakage across splits")
     if report["leakage"]["trajectory_split_leak_count"] != 0:
         raise ValueError("conversation router data has trajectory leakage across splits")
+    if report["leakage"]["state_current_text_split_leak_count"] != 0:
+        raise ValueError("conversation router state current text leaks across splits")
+    if report["leakage"]["state_paraphrase_family_split_leak_count"] != 0:
+        raise ValueError("conversation router paraphrase families leak across splits")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     split_entries = []
