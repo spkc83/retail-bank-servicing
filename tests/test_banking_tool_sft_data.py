@@ -11,6 +11,7 @@ from hello_slm.banking_tool_sft_data import (
     export_teacher_realization_requests,
     generate_records,
     import_teacher_realizations,
+    load_canonical_policy_corpus,
     main,
     normalized_user_text,
     prepare,
@@ -140,9 +141,38 @@ def test_v5_customer_facing_contract_is_grounded_varied_and_preset_free() -> Non
     assert "sorry" in _final(emergency).lower()
 
 
+def test_v5_policy_rows_use_the_canonical_runtime_corpus_contract() -> None:
+    corpus = load_canonical_policy_corpus()
+    chunks = {chunk["chunk_id"]: chunk for chunk in corpus["chunks"]}
+    records = generate_records(pilot_count=1200, split_seed=711)
+    policy_rows = [
+        record for record in records if record["expected"]["path"] == "retrieval_grounded_policy"
+    ]
+
+    assert {
+        citation for row in policy_rows for citation in row["expected"]["policy_citations"]
+    } == {
+        "mortgage.opening.us.v1",
+        "deposit.opening.us.v1",
+        "deposit.overdraft.us.v1",
+        "savings.interest.us.v1",
+        "card.dispute.us.v1",
+        "card.replacement.us.v1",
+        "card.fraud.us.v1",
+    }
+    assert "mortgage.eligibility.age.us.v1" not in chunks
+    for record in policy_rows:
+        chunk_id = record["expected"]["policy_citations"][0]
+        chunk = chunks[chunk_id]
+        assert record["expected"]["policy_corpus_revision"] == corpus["corpus_revision"]
+        assert record["expected"]["grounding_facts"] == chunk["required_claims"]
+        assert record["expected"]["forbidden_facts"] == chunk["forbidden_claims"]
+        assert chunk["answer"] in _final(record)
+
+
 def test_tool_calls_have_stable_ids_typed_args_and_replay_hashes() -> None:
-    first = generate_records(pilot_count=27, split_seed=711)
-    second = generate_records(pilot_count=27, split_seed=711)
+    first = generate_records(pilot_count=30, split_seed=711)
+    second = generate_records(pilot_count=30, split_seed=711)
 
     assert second == first
     for record in first:
@@ -168,8 +198,8 @@ def test_tool_calls_have_stable_ids_typed_args_and_replay_hashes() -> None:
 
 
 def test_default_split_seed_matches_the_published_release() -> None:
-    assert generate_records(pilot_count=27) == generate_records(
-        pilot_count=27,
+    assert generate_records(pilot_count=30) == generate_records(
+        pilot_count=30,
         split_seed=711,
     )
 
@@ -177,7 +207,7 @@ def test_default_split_seed_matches_the_published_release() -> None:
 def test_multi_call_plan_is_serialized_as_causal_tool_steps() -> None:
     record = next(
         record
-        for record in generate_records(pilot_count=27, split_seed=711)
+        for record in generate_records(pilot_count=30, split_seed=711)
         if record["record_id"] == "multi_tool_freeze"
     )
 
@@ -221,7 +251,7 @@ def test_multi_call_plan_is_serialized_as_causal_tool_steps() -> None:
 def test_second_tool_call_arguments_are_observable_from_prior_tool_result() -> None:
     record = next(
         record
-        for record in generate_records(pilot_count=27, split_seed=711)
+        for record in generate_records(pilot_count=30, split_seed=711)
         if record["record_id"] == "multi_tool_freeze"
     )
     first_tool_result = record["messages"][3]["content"]
@@ -287,7 +317,7 @@ def test_faq_and_conversation_templates_cover_out_of_template_live_prompts() -> 
 
     for marker in (
         "mortgage",
-        "at least 18",
+        "underwriting",
         "open a new savings account",
         "savings interest",
         "hello harbor",
@@ -340,7 +370,7 @@ def test_servicing_targets_include_requested_balances_without_canned_prefixes() 
 def test_each_sequential_assistant_emission_restarts_tool_index_at_zero() -> None:
     record = next(
         record
-        for record in generate_records(pilot_count=27, split_seed=711)
+        for record in generate_records(pilot_count=30, split_seed=711)
         if record["record_id"] == "multi_tool_freeze"
     )
     invalid = json.loads(json.dumps(record))
@@ -488,7 +518,9 @@ def test_pilot_realizer_uses_natural_text_and_varied_state_slots() -> None:
     faq_template_markers = {
         "faq-overdraft-v1": "overdraft",
         "faq-mortgage-opening-v1": "mortgage",
-        "faq-mortgage-age-v1": "at least 18",
+        "faq-card-dispute-v1": "dispute",
+        "faq-card-replacement-v1": "card",
+        "faq-card-fraud-v1": "card",
         "faq-deposit-opening-v1": "account",
         "faq-savings-interest-v1": "interest",
     }
@@ -503,7 +535,7 @@ def test_pilot_realizer_uses_natural_text_and_varied_state_slots() -> None:
 
 
 def test_teacher_realization_round_trip_allows_only_wording_changes(tmp_path: Path) -> None:
-    records = generate_records(pilot_count=27, split_seed=711)
+    records = generate_records(pilot_count=30, split_seed=711)
     request_path = tmp_path / "teacher-requests.jsonl"
     response_path = tmp_path / "teacher-responses.jsonl"
 
@@ -553,7 +585,7 @@ def test_cli_exports_and_applies_teacher_realizations(tmp_path: Path) -> None:
                 "--output-dir",
                 str(output_dir),
                 "--pilot-count",
-                "27",
+                "30",
                 "--export-teacher-requests",
                 str(request_path),
             ]
@@ -573,7 +605,7 @@ def test_cli_exports_and_applies_teacher_realizations(tmp_path: Path) -> None:
                 "--output-dir",
                 str(output_dir),
                 "--pilot-count",
-                "27",
+                "30",
                 "--teacher-responses",
                 str(response_path),
                 "--teacher-model",
@@ -596,7 +628,7 @@ def test_cli_exports_and_applies_teacher_realizations(tmp_path: Path) -> None:
 
 
 def test_validator_rejects_private_or_unknown_tool_arguments() -> None:
-    record = generate_records(pilot_count=27)[0]
+    record = generate_records(pilot_count=30)[0]
     assistant = next(message for message in record["messages"] if message.get("tool_calls"))
     assistant["tool_calls"][0]["function"]["arguments"]["customer_id"] = "cust_alex"
 
@@ -605,7 +637,7 @@ def test_validator_rejects_private_or_unknown_tool_arguments() -> None:
 
 
 def test_validator_rejects_semantically_empty_final_response() -> None:
-    record = generate_records(pilot_count=27)[0]
+    record = generate_records(pilot_count=30)[0]
     record["messages"][-1]["content"] = "Done."
 
     with pytest.raises(BankingToolSftDataError, match="missing semantic content"):
@@ -613,7 +645,7 @@ def test_validator_rejects_semantically_empty_final_response() -> None:
 
 
 def test_validator_rejects_untrainable_final_assistant_response() -> None:
-    record = generate_records(pilot_count=27)[0]
+    record = generate_records(pilot_count=30)[0]
     record["messages"][-1]["loss"] = False
 
     with pytest.raises(BankingToolSftDataError, match="must be trainable"):
@@ -621,12 +653,12 @@ def test_validator_rejects_untrainable_final_assistant_response() -> None:
 
 
 def test_validator_rejects_internal_language_in_customer_facing_messages() -> None:
-    record = generate_records(pilot_count=27)[0]
+    record = generate_records(pilot_count=30)[0]
     record["messages"][0]["content"] = "You are an assistant for a demo bank."
     with pytest.raises(BankingToolSftDataError, match="system prompt leaks"):
         validate_records([record])
 
-    record = generate_records(pilot_count=27)[0]
+    record = generate_records(pilot_count=30)[0]
     record["messages"][-1]["content"] = (
         "The backend completed this request using an internal tool call successfully."
     )

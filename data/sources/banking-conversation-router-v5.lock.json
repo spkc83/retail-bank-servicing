@@ -1,12 +1,12 @@
 {
   "clinc_member_sha256": "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f",
   "contract": "banking-conversation-router-v5-source-lock",
-  "created_at": "2026-08-14T19:14:36.150869+00:00",
+  "created_at": "2026-08-14T20:17:52.075894+00:00",
   "format_version": 2,
   "prepared_split_sha256": {
-    "test": "dffeb9712b97486770a59197b690cda05fa2cedbc6bb302174407dac4ae5bfb8",
-    "train": "3b003aeb80cd1547216c3964dc87d8d15808916f76a10e45a6cfc2d14fa646c7",
-    "validation": "8741662312af4884e73ca8ddd994f83ba333222e7ce2527315f07b2beff14be5"
+    "test": "ddab9e5a73a88b2c6bd32d267b14ae147cd026fa73e41531f245b05ce267b3ba",
+    "train": "dde8ebd4e047eafdba7dcd7c14349a881cc9a5458242e6f3f0936b1186f6b025",
+    "validation": "c093590b9aef36326a3e2295e7c7fdf464ab76537d630f089d01d011d46459db"
   },
   "sources": {
     "UCI/clinc150": {
@@ -66,12 +66,12 @@
       "allowed_use": [
         "conversation-router-domain-intent-training"
       ],
-      "manifest_sha256": "65333b5d12239b3374078e50c6ad67d12c26df83035e7cd2b55cc9f14f5f205e",
+      "manifest_sha256": "6c0f8c6bb8d0e1d646c4d43226aef9fba369a891c9ea7a3bb58764e07d6e9bbe",
       "path": "data/banking-servicing-alignment-v5",
       "split_sha256": {
-        "test": "6c7ee71e4d7cfcc156f0825da2b70cf6020f655cb1eff053d57b97478aca8c3a",
-        "train": "89114ce3a23f19f297d38f72de76047d91e5ef83e3da7644c56b7caca064627b",
-        "validation": "e48e69ddd4d56e9b3d66bb282c0a398b67f097bd48018a8e4cbcc5582f0c80d5"
+        "test": "4ddcd617025b2599b782b42386b1b1712ecf3a8dc954f2101f370290a56af78f",
+        "train": "52283e28d99872eae6d61bf0d0cf097192b54770417995a66c6c8d25cd350e9b",
+        "validation": "24ff8f1e7e304f27ebdadee78542b2d6c44e46208b30ba6e2d9174ec2fba0fea"
       }
     }
   }

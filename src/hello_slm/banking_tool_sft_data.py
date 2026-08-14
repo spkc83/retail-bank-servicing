@@ -15,6 +15,37 @@ from typing import Any
 
 from hello_slm.config import canonical_json_bytes, file_sha256
 
+DEFAULT_POLICY_CORPUS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "poc"
+    / "retail-bank-customer-service-poc"
+    / "policy_knowledge.json"
+)
+
+
+def load_canonical_policy_corpus(
+    path: Path = DEFAULT_POLICY_CORPUS_PATH,
+) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != 1 or not isinstance(payload.get("chunks"), list):
+        raise ValueError("canonical policy corpus has an unsupported schema")
+    digest_chunks = [
+        {key: value for key, value in chunk.items() if key != "corpus_revision"}
+        for chunk in payload["chunks"]
+    ]
+    revision_payload = {"schema_version": 1, "chunks": digest_chunks}
+    revision = f"sha256:{hashlib.sha256(canonical_json_bytes(revision_payload)).hexdigest()}"
+    if payload.get("corpus_revision") != revision:
+        raise ValueError("canonical policy corpus revision mismatch")
+    for chunk in payload["chunks"]:
+        if chunk.get("corpus_revision") != revision:
+            raise ValueError("canonical policy chunk revision mismatch")
+        for field in ("answer", "required_claims", "forbidden_claims"):
+            if field not in chunk:
+                raise ValueError(f"canonical policy chunk is missing {field}")
+    return payload
+
+
 BANKING_TOOL_SFT_CONTRACT = "banking-tool-sft/v1"
 BANKING_TOOL_SFT_MANIFEST_CONTRACT = "banking-tool-sft-manifest"
 CREATED_AT = "2026-07-29T00:00:00Z"
@@ -223,53 +254,27 @@ REALIZER_FINAL_CLOSERS = (
 )
 FAQ_REQUIRED_MARKERS = {
     "faq-overdraft-v1": ("overdraft",),
-    "faq-mortgage-opening-v1": ("mortgage", "approved mortgage channel"),
-    "faq-mortgage-age-v1": ("mortgage", "18", "eligibility"),
+    "faq-mortgage-opening-v1": ("mortgage", "underwriting", "not guaranteed"),
     "faq-deposit-opening-v1": ("account", "identity verification"),
     "faq-savings-interest-v1": ("interest",),
+    "faq-card-dispute-v1": ("dispute", "identify the transaction"),
+    "faq-card-replacement-v1": ("card", "reported promptly"),
+    "faq-card-fraud-v1": ("card", "report the transaction promptly"),
 }
+POLICY_TEMPLATE_CHUNK_IDS = {
+    "faq-overdraft-v1": "deposit.overdraft.us.v1",
+    "faq-mortgage-opening-v1": "mortgage.opening.us.v1",
+    "faq-deposit-opening-v1": "deposit.opening.us.v1",
+    "faq-savings-interest-v1": "savings.interest.us.v1",
+    "faq-card-dispute-v1": "card.dispute.us.v1",
+    "faq-card-replacement-v1": "card.replacement.us.v1",
+    "faq-card-fraud-v1": "card.fraud.us.v1",
+}
+_POLICY_CORPUS = load_canonical_policy_corpus()
+_POLICY_CHUNKS_BY_ID = {chunk["chunk_id"]: chunk for chunk in _POLICY_CORPUS["chunks"]}
 POLICY_CHUNKS = {
-    "faq-overdraft-v1": {
-        "chunk_id": "deposit.overdraft.fees.us.v1",
-        "title": "Overdraft fee basics",
-        "text": (
-            "An overdraft may occur when a transaction exceeds the available balance. "
-            "Whether a fee applies depends on the account disclosures and settings."
-        ),
-    },
-    "faq-mortgage-opening-v1": {
-        "chunk_id": "mortgage.application.overview.us.v1",
-        "title": "Mortgage application overview",
-        "text": (
-            "Harborlight Bank can explain mortgage products and application steps in chat, "
-            "but a mortgage application must be started through an approved mortgage channel."
-        ),
-    },
-    "faq-mortgage-age-v1": {
-        "chunk_id": "mortgage.eligibility.age.us.v1",
-        "title": "Mortgage applicant age",
-        "text": (
-            "A mortgage applicant must be a legal adult, generally at least 18 in the "
-            "United States. Harborlight Bank cannot determine eligibility from age alone."
-        ),
-    },
-    "faq-deposit-opening-v1": {
-        "chunk_id": "deposit.account.opening.us.v1",
-        "title": "Deposit account opening",
-        "text": (
-            "Opening a checking or savings account requires selecting a product, reviewing "
-            "disclosures, completing identity verification, and providing opening funds "
-            "when required."
-        ),
-    },
-    "faq-savings-interest-v1": {
-        "chunk_id": "deposit.savings.interest.us.v1",
-        "title": "Savings interest",
-        "text": (
-            "Savings interest uses the account balance and disclosed annual percentage yield. "
-            "The account disclosure states the compounding method and crediting schedule."
-        ),
-    },
+    template_id: _POLICY_CHUNKS_BY_ID[chunk_id]
+    for template_id, chunk_id in POLICY_TEMPLATE_CHUNK_IDS.items()
 }
 POC_PRESET_KEYS = frozenset(
     normalized
@@ -464,6 +469,7 @@ def prepare(
         "contract": BANKING_TOOL_SFT_MANIFEST_CONTRACT,
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "tool_manifest_hash": _tool_manifest_hash(),
+        "policy_corpus_revision": _POLICY_CORPUS["corpus_revision"],
         "tool_sft": entries,
         "source_roles": {
             "self-authored-synthetic": {
@@ -665,6 +671,26 @@ def validate_records(
                     raise BankingToolSftDataError(
                         f"{record_id} cites a chunk absent from policy context"
                     )
+            policy = _POLICY_CHUNKS_BY_ID.get(str(citations[0]))
+            expected = record.get("expected", {})
+            if policy is None or expected.get("policy_corpus_revision") != _POLICY_CORPUS.get(
+                "corpus_revision"
+            ):
+                raise BankingToolSftDataError(f"{record_id} has stale policy corpus metadata")
+            if expected.get("grounding_facts") != policy["required_claims"]:
+                raise BankingToolSftDataError(f"{record_id} has incorrect required policy claims")
+            if expected.get("forbidden_facts") != policy["forbidden_claims"]:
+                raise BankingToolSftDataError(f"{record_id} has incorrect forbidden policy claims")
+            for claim in policy["required_claims"]:
+                if normalized_user_text(str(claim)) not in normalized_final:
+                    raise BankingToolSftDataError(
+                        f"{record_id} final assistant response omits policy claim: {claim}"
+                    )
+            for claim in policy["forbidden_claims"]:
+                if normalized_user_text(str(claim)) in normalized_final:
+                    raise BankingToolSftDataError(
+                        f"{record_id} final assistant response includes forbidden claim: {claim}"
+                    )
         tool_call_ids: list[str] = []
         context_tool_call_ids: list[str] = []
         all_tool_call_ids: set[str] = set()
@@ -809,6 +835,9 @@ def validate_banking_tool_sft_manifest(path: Path) -> dict[str, Any]:
         raise BankingToolSftDataError("not a banking-v3 tool SFT manifest")
     if manifest.get("schema_version") != BANKING_TOOL_SFT_CONTRACT:
         raise BankingToolSftDataError("manifest schema_version mismatch")
+    policy_revision = manifest.get("policy_corpus_revision")
+    if policy_revision is not None and policy_revision != _POLICY_CORPUS["corpus_revision"]:
+        raise BankingToolSftDataError("manifest policy_corpus_revision mismatch")
     base = path.parent
     all_records: list[dict[str, Any]] = []
     for entry in manifest.get("tool_sft", []):
@@ -840,6 +869,15 @@ def _tool(name: str, description: str, properties: dict[str, Any] | None = None)
             },
         },
     }
+
+
+def _policy_answer(template_id: str) -> str:
+    chunk = POLICY_CHUNKS[template_id]
+    return f"{chunk['answer']} [Policy: {chunk['chunk_id']}]."
+
+
+def _policy_required(template_id: str) -> tuple[str, ...]:
+    return tuple(str(claim) for claim in POLICY_CHUNKS[template_id]["required_claims"])
 
 
 def _base_scenarios() -> tuple[Scenario, ...]:
@@ -1060,11 +1098,9 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "How do overdraft fees usually work?",
-            "Overdraft fees can apply when a transaction exceeds your available "
-            "balance; your account disclosures and settings provide the exact terms "
-            "[Policy: deposit.overdraft.fees.us.v1].",
+            _policy_answer("faq-overdraft-v1"),
             "retrieval_grounded_policy",
-            grounding_facts=("policy.chunk_id=deposit.overdraft.fees.us.v1",),
+            grounding_facts=_policy_required("faq-overdraft-v1"),
         ),
         Scenario(
             "mortgage_opening_faq",
@@ -1075,26 +1111,9 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-alex",
             "state-alex-001",
             "Can you help me open a mortgage account?",
-            "Harborlight Bank can explain mortgage products here, but an application "
-            "must be started through an approved mortgage channel "
-            "[Policy: mortgage.application.overview.us.v1].",
+            _policy_answer("faq-mortgage-opening-v1"),
             "retrieval_grounded_policy",
-            grounding_facts=("policy.chunk_id=mortgage.application.overview.us.v1",),
-        ),
-        Scenario(
-            "mortgage_age_faq",
-            "faq_mortgage_age",
-            "faq-mortgage-age-v1",
-            "realization-000",
-            "alex.demo",
-            "synthetic-customer-alex",
-            "state-alex-001",
-            "How old do I need to be to apply for a mortgage?",
-            "Mortgage applicants must be legal adults—generally at least 18 in the "
-            "United States. Age alone does not determine eligibility "
-            "[Policy: mortgage.eligibility.age.us.v1].",
-            "retrieval_grounded_policy",
-            grounding_facts=("policy.chunk_id=mortgage.eligibility.age.us.v1",),
+            grounding_facts=_policy_required("faq-mortgage-opening-v1"),
         ),
         Scenario(
             "deposit_account_opening_faq",
@@ -1105,11 +1124,9 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-maya",
             "state-maya-001",
             "How would I open a new savings account?",
-            "To open a Harborlight Bank checking or savings account, choose the product, "
-            "review its disclosures, complete identity verification, and provide opening "
-            "funds when required [Policy: deposit.account.opening.us.v1].",
+            _policy_answer("faq-deposit-opening-v1"),
             "retrieval_grounded_policy",
-            grounding_facts=("policy.chunk_id=deposit.account.opening.us.v1",),
+            grounding_facts=_policy_required("faq-deposit-opening-v1"),
         ),
         Scenario(
             "savings_interest_faq",
@@ -1120,12 +1137,48 @@ def _base_scenarios() -> tuple[Scenario, ...]:
             "synthetic-customer-maya",
             "state-maya-001",
             "How does interest on a savings account work?",
-            "Savings interest is generally calculated from the balance and stated "
-            "annual percentage yield, then credited on the bank’s schedule. Exact "
-            "rates and compounding rules are in the account disclosures "
-            "[Policy: deposit.savings.interest.us.v1].",
+            _policy_answer("faq-savings-interest-v1"),
             "retrieval_grounded_policy",
-            grounding_facts=("policy.chunk_id=deposit.savings.interest.us.v1",),
+            grounding_facts=_policy_required("faq-savings-interest-v1"),
+        ),
+        Scenario(
+            "card_dispute_policy",
+            "faq_card_dispute",
+            "faq-card-dispute-v1",
+            "realization-000",
+            "alex.demo",
+            "synthetic-customer-alex",
+            "state-alex-001",
+            "What is the policy for disputing a card purchase?",
+            _policy_answer("faq-card-dispute-v1"),
+            "retrieval_grounded_policy",
+            grounding_facts=_policy_required("faq-card-dispute-v1"),
+        ),
+        Scenario(
+            "card_replacement_policy",
+            "faq_card_replacement",
+            "faq-card-replacement-v1",
+            "realization-000",
+            "maya.demo",
+            "synthetic-customer-maya",
+            "state-maya-001",
+            "What should I know about replacing a lost card?",
+            _policy_answer("faq-card-replacement-v1"),
+            "retrieval_grounded_policy",
+            grounding_facts=_policy_required("faq-card-replacement-v1"),
+        ),
+        Scenario(
+            "card_fraud_policy",
+            "faq_card_fraud",
+            "faq-card-fraud-v1",
+            "realization-000",
+            "alex.demo",
+            "synthetic-customer-alex",
+            "state-alex-001",
+            "What should I do if I see card fraud?",
+            _policy_answer("faq-card-fraud-v1"),
+            "retrieval_grounded_policy",
+            grounding_facts=_policy_required("faq-card-fraud-v1"),
         ),
         Scenario(
             "small_talk_greeting",
@@ -1741,6 +1794,9 @@ def _scenario_to_record(scenario: Scenario, *, bank_path: Path) -> dict[str, Any
     }
     if policy is not None:
         expected["policy_citations"] = [str(policy["chunk_id"])]
+        expected["policy_corpus_revision"] = str(policy["corpus_revision"])
+        expected["grounding_facts"] = list(policy["required_claims"])
+        expected["forbidden_facts"] = list(policy["forbidden_claims"])
     return {
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "record_id": record_id,
@@ -1898,6 +1954,7 @@ def _build_report(
             "license": "MIT",
             "trainable": True,
         },
+        "policy_corpus_revision": _POLICY_CORPUS["corpus_revision"],
     }
 
 
@@ -2014,7 +2071,7 @@ def _message(role: str, content: str, *, loss: bool) -> dict[str, Any]:
     return {"role": role, "content": content, "loss": loss}
 
 
-def _policy_context_message(policy: dict[str, str]) -> dict[str, Any]:
+def _policy_context_message(policy: dict[str, Any]) -> dict[str, Any]:
     return _message(
         "system",
         "Authoritative Harborlight Bank policy context. Answer only from this context "
@@ -2268,17 +2325,6 @@ def _user_stems(template: Scenario) -> tuple[str, ...]:
             "can you start a mortgage for me",
             "what should I expect when applying for a home loan",
         )
-    if family == "faq_mortgage_age":
-        return (
-            "how old do I need to be to apply for a mortgage",
-            "what is the minimum age for a home loan",
-            "do mortgage applicants need to be at least 18",
-            "can someone under 18 apply for a mortgage",
-            "explain the usual age requirement for a mortgage",
-            "what age must a borrower be for a home loan",
-            "is there a legal adult requirement for mortgages",
-            "tell me the typical minimum mortgage application age",
-        )
     if family == "faq_deposit_opening":
         return (
             "how would I open a new savings account",
@@ -2300,6 +2346,39 @@ def _user_stems(template: Scenario) -> tuple[str, ...]:
             "help me understand interest and compounding",
             "what affects the interest earned on savings",
             "give me a general explanation of savings rates",
+        )
+    if family == "faq_card_dispute":
+        return (
+            "what is the policy for disputing a card purchase",
+            "how does a card purchase dispute work",
+            "what information is needed for a card dispute",
+            "explain the card transaction dispute process",
+            "what happens after I dispute a card purchase",
+            "when can a posted card purchase be disputed",
+            "what should I provide for a card dispute",
+            "tell me about disputing a debit card purchase",
+        )
+    if family == "faq_card_replacement":
+        return (
+            "what should I know about replacing a lost card",
+            "explain the replacement policy for a stolen card",
+            "what happens when a debit card is replaced",
+            "how is delivery handled for a replacement card",
+            "what should I do before replacing a lost card",
+            "tell me about replacement card timing",
+            "what is the policy for a damaged card replacement",
+            "explain replacing an expiring debit card",
+        )
+    if family == "faq_card_fraud":
+        return (
+            "what should I do if I see card fraud",
+            "explain how to report an unauthorized card purchase",
+            "what is the policy for suspected debit card fraud",
+            "how should I respond to a fraudulent card charge",
+            "what should I protect when reporting card fraud",
+            "tell me the first steps for an unauthorized purchase",
+            "what happens after I report a fraudulent card transaction",
+            "how do I safely report card fraud",
         )
     if family == "small_talk_greeting":
         return (

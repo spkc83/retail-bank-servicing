@@ -14,6 +14,7 @@ from hello_slm.banking_tool_sft_data import (
     NO_TOOL_OOD_RESPONSE,
     POLICY_CHUNKS,
     SYSTEM_PROMPT,
+    load_canonical_policy_corpus,
     validate_banking_tool_sft_manifest,
     validate_records,
 )
@@ -155,6 +156,9 @@ def write_servicing_alignment_dataset(
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
     base_manifest, base_splits = load_base_sft_splits(base_sft_dir)
+    policy_revision = load_canonical_policy_corpus()["corpus_revision"]
+    if base_manifest.get("policy_corpus_revision") != policy_revision:
+        raise ValueError("base SFT policy corpus revision is missing or stale")
     splits = {split: [*base_splits[split], *alignment_splits[split]] for split in SPLITS}
     validate_servicing_alignment_splits(splits)
     if _heldout_exact_currents_in_train(splits):
@@ -193,6 +197,7 @@ def write_servicing_alignment_dataset(
         "contract": "banking-tool-sft-manifest",
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "generator_version": GENERATOR_VERSION,
+        "policy_corpus_revision": policy_revision,
         "tool_sft": entries,
         "source_roles": {
             "released-retail-bank-agent-sft": {
@@ -464,9 +469,7 @@ def _policy_detour_and_resume(split: str) -> list[dict[str, Any]]:
     suffix = _suffix(split)
     chunk = POLICY_CHUNKS["faq-savings-interest-v1"]
     policy_answer = (
-        "Savings interest uses the account balance and disclosed annual percentage "
-        "yield; the account disclosure gives the compounding and crediting schedule "
-        f"[Policy: {chunk['chunk_id']}]."
+        f"Before returning to your dispute, {chunk['answer']} [Policy: {chunk['chunk_id']}]."
     )
     pending_history = [
         _user(f"I need to dispute the North Harbor Market debit{suffix}."),
@@ -483,7 +486,7 @@ def _policy_detour_and_resume(split: str) -> list[dict[str, Any]]:
             current=f"First, how does savings interest work{suffix}?",
             final=policy_answer,
             tool_plan=[],
-            grounding_facts=[f"policy.chunk_id={chunk['chunk_id']}"],
+            grounding_facts=list(chunk["required_claims"]),
             path="retrieval_grounded_policy",
             pre_messages=pending_history,
             policy=chunk,
@@ -680,6 +683,9 @@ def _record(
     }
     if policy is not None:
         expected["policy_citations"] = [str(policy["chunk_id"])]
+        expected["policy_corpus_revision"] = str(policy["corpus_revision"])
+        expected["grounding_facts"] = list(policy["required_claims"])
+        expected["forbidden_facts"] = list(policy["forbidden_claims"])
     return {
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "record_id": record_id,

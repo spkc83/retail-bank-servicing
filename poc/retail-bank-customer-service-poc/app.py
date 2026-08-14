@@ -51,7 +51,7 @@ from model_service import (
     ToolCall,
     canonical_conversation,
 )
-from dialogue_state import DialogueState, begin_turn, finish_turn
+from dialogue_state import DialogueState, begin_turn, commit_operations, finish_turn
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
 from responses import (
     MODEL_FAILURE_RESPONSE,
@@ -217,9 +217,8 @@ def run_model_turn(
                 pinned_exchange=pinned_exchange,
             )
     except AgentExecutionError as error:
-        failed_state = finish_turn(
+        failed_state = commit_operations(
             transition.state,
-            MODEL_FAILURE_RESPONSE,
             tuple(call.name for call in error.tool_calls),
             error.tool_results,
         )

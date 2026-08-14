@@ -14,13 +14,29 @@ def test_streamlit_is_available_for_the_local_app() -> None:
     assert importlib.util.find_spec("streamlit") is not None
 
 
-def test_local_streamlit_prefers_the_verified_release_router_artifact() -> None:
+def test_local_streamlit_prefers_the_strict_gate_router_candidate() -> None:
     artifact = resolve_local_router_artifact()
 
     assert artifact is not None
-    assert artifact.name == "banking-conversation-router-v5"
+    assert artifact.name == "banking-conversation-router-v5-strict-gate-candidate2"
     assert (artifact / "classifier_heads.safetensors").is_file()
     assert (artifact / "router_config.json").is_file()
+
+
+def test_local_streamlit_does_not_fall_back_to_obsolete_local_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("LOCAL_ROUTER_ARTIFACT_DIR", raising=False)
+    monkeypatch.setattr(
+        "streamlit_app.DEFAULT_LOCAL_ROUTER_ARTIFACT",
+        tmp_path / "missing-published-final",
+    )
+    obsolete = tmp_path / "banking-conversation-router-v5"
+    obsolete.mkdir()
+    (obsolete / "manifest.json").write_text("{}", encoding="utf-8")
+
+    assert resolve_local_router_artifact() is None
 
 
 def test_streamlit_app_renders_local_login_without_loading_model(
@@ -62,6 +78,9 @@ def test_experiment_diagnostics_use_an_on_demand_sidebar_popover() -> None:
     source = (APP_ROOT / "streamlit_app.py").read_text(encoding="utf-8")
 
     assert 'st.sidebar.popover("Experiment diagnostics"' in source
+    assert "router_manifest_sha256=" in source
+    assert "router_data_sha256=" in source
+    assert "router_artifact=" in source
     assert 'st.expander("Model, router, tool-call, and raw-output diagnostics"' not in source
 
 

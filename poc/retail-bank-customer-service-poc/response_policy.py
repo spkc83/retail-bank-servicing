@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 READ_VIEWS = {
@@ -27,7 +28,45 @@ INTERNAL_LANGUAGE_PATTERNS = {
     "tool": re.compile(r"\btool(?: call| result|ing|s)?\b", re.IGNORECASE),
 }
 POLICY_CITATION = re.compile(r"\[Policy:\s*([^\]]+?)\s*\]", re.IGNORECASE)
-FACTUAL_NUMBER = re.compile(r"(?<![\w.])\$?\d[\d,]*(?:\.\d+)?%?(?![\w.])")
+FACTUAL_NUMBER = re.compile(
+    r"(?<![\w.])(?P<currency>\$)?"
+    r"(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
+    r"(?P<percent>%)?(?![\w.])"
+)
+NUMBER_WORD_VALUES = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+FACTUAL_NUMBER_WORD = re.compile(
+    rf"\b(?:{'|'.join(NUMBER_WORD_VALUES)})\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -76,18 +115,42 @@ def validate_policy_answer(
         str(match.get(field, ""))
         for match in matches
         for field in ("title", "text", "effective_from", "effective_to")
-    ).casefold()
+    )
     answer_without_citations = POLICY_CITATION.sub("", answer)
+    evidence_quantities = {normalized for _, normalized in _quantities(evidence_text)}
     unsupported_numbers = {
-        value
-        for value in FACTUAL_NUMBER.findall(answer_without_citations)
-        if value.casefold() not in evidence_text
+        displayed
+        for displayed, normalized in _quantities(answer_without_citations)
+        if normalized not in evidence_quantities
     }
     if unsupported_numbers:
         errors.append(
             f"policy answer contains unsupported numeric claims: {sorted(unsupported_numbers)}"
         )
     return GroundingValidation(not errors, tuple(errors))
+
+
+def _quantities(text: str) -> set[tuple[str, str]]:
+    """Return displayed and canonical quantities without substring matching."""
+
+    quantities = {
+        (match.group(0), _normalize_numeric_quantity(match))
+        for match in FACTUAL_NUMBER.finditer(text)
+    }
+    quantities.update(
+        (match.group(0), str(NUMBER_WORD_VALUES[match.group(0).casefold()]))
+        for match in FACTUAL_NUMBER_WORD.finditer(text)
+    )
+    return quantities
+
+
+def _normalize_numeric_quantity(match: re.Match[str]) -> str:
+    raw_number = match.group("number").replace(",", "")
+    try:
+        number = format(Decimal(raw_number).normalize(), "f")
+    except InvalidOperation:
+        number = raw_number
+    return f"{match.group('currency') or ''}{number}{match.group('percent') or ''}"
 
 
 def build_customer_experience_repair_messages(

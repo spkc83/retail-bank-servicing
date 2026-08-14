@@ -3,6 +3,7 @@
   "created_at": "2026-07-29T00:00:00Z",
   "format_version": 1,
   "name": "retail-bank-servicing-v5-tool-sft",
+  "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "schema_version": "banking-tool-sft/v1",
   "source_roles": {
     "self-authored-synthetic": {
@@ -14,40 +15,40 @@
   "tool_manifest_hash": "sha256:1eb463390ad06a0b31bf3954a794c25015730285bde913fd3df7980cda9c568d",
   "tool_sft": [
     {
-      "bytes": 2358272,
+      "bytes": 2446567,
       "licenses": [
         "MIT"
       ],
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 838,
+      "record_count": 841,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "86667b1bbaa63cd612dd5b608c7ab50c99d924d6f4452f3b06c2882569c53feb"
+      "sha256": "185538db0fdd0b2323de17daa34fdfe0d8d1e20f1bb9ae88d68721ea604b299a"
     },
     {
-      "bytes": 507815,
+      "bytes": 514291,
       "licenses": [
         "MIT"
       ],
       "name": "validation",
       "path": "validation.jsonl",
-      "record_count": 181,
+      "record_count": 179,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "c1f09ffc780f7a91332d33fc91d2ac27e2b1f3642a111bde86bc863fd42b04ba"
+      "sha256": "0b49ce3f944a85f37122869954676c7981b2d52c8d5d6ba97dec895413c34572"
     },
     {
-      "bytes": 491329,
+      "bytes": 504230,
       "licenses": [
         "MIT"
       ],
       "name": "test",
       "path": "test.jsonl",
-      "record_count": 181,
+      "record_count": 180,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "52c7f9c91f2106e188a7e652d09cbd4d78343ccbf8b9faed66770615d950ef9b"
+      "sha256": "b61d2d11fe9e6bf5af0fcba61cecda5c14ca73abf8f6a4c70f83d35acfdf0341"
     }
   ]
 }

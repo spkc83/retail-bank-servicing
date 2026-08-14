@@ -1,16 +1,16 @@
 {
   "checks": {
     "accepted_records": 1200,
-    "error_tool_messages": 88,
+    "error_tool_messages": 82,
     "paths": {
-      "clarification": 44,
-      "conversation": 132,
-      "hard_negative": 44,
-      "multi_turn": 223,
-      "ood": 44,
-      "retrieval_grounded_policy": 220,
-      "tool_error": 88,
-      "tool_success": 405
+      "clarification": 41,
+      "conversation": 123,
+      "hard_negative": 41,
+      "multi_turn": 207,
+      "ood": 41,
+      "retrieval_grounded_policy": 287,
+      "tool_error": 82,
+      "tool_success": 378
     },
     "required_tool_names": [
       "cancel_transfer",
@@ -23,7 +23,7 @@
       "list_transfers",
       "replace_card"
     ],
-    "success_tool_messages": 719,
+    "success_tool_messages": 669,
     "tool_names_covered": [
       "cancel_transfer",
       "dispute_transaction",
@@ -39,6 +39,7 @@
   "created_at": "2026-07-29T00:00:00Z",
   "format_version": 1,
   "name": "retail-bank-servicing-v5-tool-sft",
+  "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "source": {
     "license": "MIT",
     "name": "self-authored-synthetic",
@@ -47,45 +48,45 @@
   "splits": {
     "test": {
       "paths": {
-        "clarification": 6,
+        "clarification": 5,
         "conversation": 24,
         "hard_negative": 3,
         "multi_turn": 30,
         "ood": 6,
-        "retrieval_grounded_policy": 40,
+        "retrieval_grounded_policy": 46,
         "tool_error": 9,
-        "tool_success": 63
+        "tool_success": 57
       },
-      "records": 181
+      "records": 180
     },
     "train": {
       "paths": {
-        "clarification": 38,
-        "conversation": 84,
-        "hard_negative": 35,
-        "multi_turn": 155,
-        "ood": 29,
-        "retrieval_grounded_policy": 157,
-        "tool_error": 58,
-        "tool_success": 282
+        "clarification": 36,
+        "conversation": 77,
+        "hard_negative": 32,
+        "multi_turn": 142,
+        "ood": 26,
+        "retrieval_grounded_policy": 215,
+        "tool_error": 52,
+        "tool_success": 261
       },
-      "records": 838
+      "records": 841
     },
     "validation": {
       "paths": {
-        "conversation": 24,
+        "conversation": 22,
         "hard_negative": 6,
-        "multi_turn": 38,
+        "multi_turn": 35,
         "ood": 9,
-        "retrieval_grounded_policy": 23,
+        "retrieval_grounded_policy": 26,
         "tool_error": 21,
         "tool_success": 60
       },
-      "records": 181
+      "records": 179
     }
   },
   "summary": {
-    "corpus_fingerprint": "11f46022c528fefda50aaf07cc97e6bebe0fcc3be2f4c44728c27d834634601d",
+    "corpus_fingerprint": "665d48ed2b2e0c377416ae99f5c5abc2146dd84713669ebee818aa580487cd09",
     "split_seed": 711,
     "total_records": 1200
   }

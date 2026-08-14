@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from hello_slm.banking_tool_sft_data import load_canonical_policy_corpus
+
 PUBLIC_TOOL_ARGUMENTS: dict[str, frozenset[str]] = {
     "list_accounts": frozenset(),
     "list_cards": frozenset(),
@@ -411,6 +413,36 @@ def dry_run_records_and_predictions() -> tuple[list[dict[str, Any]], dict[str, s
     return records, predictions
 
 
+def canonical_policy_eval_records() -> list[dict[str, Any]]:
+    corpus = load_canonical_policy_corpus()
+    return [
+        {
+            "schema_version": "banking-tool-eval/v1",
+            "record_id": f"policy_{str(chunk['chunk_id']).replace('.', '_')}",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Authoritative Harborlight Bank policy context. Answer only from "
+                        "this context and cite the bracketed policy chunk ID.\n"
+                        f"[Policy: {chunk['chunk_id']}] {chunk['title']}: {chunk['text']}"
+                    ),
+                },
+                {"role": "user", "content": str(chunk["title"])},
+            ],
+            "expected": {
+                "requires_tool": False,
+                "response_path": "retrieval_grounded_policy",
+                "policy_citations": [str(chunk["chunk_id"])],
+                "policy_corpus_revision": str(corpus["corpus_revision"]),
+                "grounding_facts": list(chunk["required_claims"]),
+                "forbidden_facts": list(chunk["forbidden_claims"]),
+            },
+        }
+        for chunk in corpus["chunks"]
+    ]
+
+
 def run_cli(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate frozen banking-v3 tool-use outputs.")
     parser.add_argument("--records", type=Path, help="Canonical eval records JSONL.")
@@ -620,6 +652,11 @@ def _policy_pass(
         and bool(expected_citations)
         and observed_citations == expected_citations
         and len(semantic_words) >= 7
+        and _grounding_pass(
+            prediction.content,
+            expected.get("grounding_facts", ()),
+            expected.get("forbidden_facts", ()),
+        )
     )
 
 

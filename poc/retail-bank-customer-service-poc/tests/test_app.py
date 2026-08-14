@@ -376,7 +376,7 @@ def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics
     monkeypatch.setattr(
         app_module,
         "route_query",
-        lambda *_args: route(capability="cards"),
+        lambda *_args: route(capability="cards", intent="freeze_card"),
     )
 
     result = app_module.run_model_turn("Freeze card 4821.", [], [], {}, request())
@@ -391,6 +391,31 @@ def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics
     assert "success" in result[5]
     assert "`frozen`" in result[3]
     assert result[1][-1]["content"] == app_module.MODEL_FAILURE_RESPONSE
+    assert result[-1]["pending_servicing"] is None
+
+
+def test_second_pass_failure_does_not_complete_undelivered_read(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = iter(
+        [
+            '<tool_call>{"name": "list_accounts", "arguments": {}}</tool_call>',
+            "",
+        ]
+    )
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", lambda *_args: next(outputs))
+    monkeypatch.setattr(
+        app_module,
+        "route_query",
+        lambda *_args: route(capability="accounts"),
+    )
+
+    result = app_module.run_model_turn("Show my accounts.", [], [], {}, request())
+
+    assert result[1][-1]["content"] == app_module.MODEL_FAILURE_RESPONSE
+    assert result[-1]["pending_servicing"]["intent"] == "view_accounts"
 
 
 def test_credential_like_text_reaches_router_and_model(

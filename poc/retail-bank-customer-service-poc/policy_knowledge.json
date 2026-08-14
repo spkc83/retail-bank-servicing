@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3",
+  "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "chunks": [
     {
       "chunk_id": "mortgage.opening.us.v1",
@@ -10,7 +10,18 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "Customers may begin a mortgage application online or with a mortgage specialist. Eligibility and approval depend on verified identity, income, employment, assets, debts, credit history, the property, and applicable underwriting. Starting an application does not guarantee approval or a particular rate. A specialist can explain required documents and available loan options.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "A mortgage application can begin online or with a mortgage specialist. Approval depends on underwriting and is not guaranteed.",
+      "required_claims": [
+        "begin online or with a mortgage specialist",
+        "approval depends on underwriting",
+        "not guaranteed"
+      ],
+      "forbidden_claims": [
+        "approval is automatic",
+        "guaranteed rate",
+        "must be at least 18"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "deposit.opening.us.v1",
@@ -20,7 +31,18 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "To apply to open a checking or savings deposit account, a customer provides legal name, date of birth, residential address, taxpayer identification information, and a government-issued identity document. The bank verifies identity and may request additional information. Account availability and any opening deposit requirement depend on the selected product and completed review.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "Opening a checking or savings account requires a legal name, date of birth, residential address, and identity verification. Product review determines availability and any opening deposit.",
+      "required_claims": [
+        "legal name",
+        "date of birth",
+        "residential address",
+        "identity verification"
+      ],
+      "forbidden_claims": [
+        "guaranteed approval",
+        "no identification is required"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "deposit.overdraft.us.v1",
@@ -30,7 +52,16 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "An overdraft occurs when a checking account lacks enough available funds for a transaction. The bank may decline or return the transaction, or may pay it according to the account's overdraft settings. Fees and eligibility vary by account product and transaction type. Customers can review their account terms and overdraft choices before authorizing optional coverage.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "When available funds are insufficient, Harborlight Bank may decline or return the transaction or handle it under the account's overdraft settings. Fees vary by account product and transaction type.",
+      "required_claims": [
+        "may decline or return the transaction",
+        "fees vary by account product"
+      ],
+      "forbidden_claims": [
+        "every overdraft is paid",
+        "every overdraft has a fee"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "savings.interest.us.v1",
@@ -40,7 +71,17 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "Savings interest is calculated using the account's stated annual percentage yield and applicable balance method, then credited on the schedule in the account terms. The rate may be variable and can change after account opening. Balance tiers, minimum balances, withdrawals, fees, and the timing of deposits can affect interest earned.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "Savings interest uses the stated annual percentage yield and balance method, then follows the schedule in the account terms. The rate may be variable.",
+      "required_claims": [
+        "annual percentage yield",
+        "account terms",
+        "rate may be variable"
+      ],
+      "forbidden_claims": [
+        "rate never changes",
+        "interest is credited daily"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "card.dispute.us.v1",
@@ -50,7 +91,17 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "A customer can dispute a posted debit or credit card purchase when there is a problem with the amount, goods, service, or merchant resolution. The customer should identify the transaction and explain the issue promptly. The bank may request receipts or communications and will provide the applicable investigation timeline and provisional-credit information after the dispute is submitted.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "To dispute a posted card purchase, identify the transaction and explain the issue promptly. Harborlight Bank may request receipts or communications after submission.",
+      "required_claims": [
+        "posted card purchase",
+        "identify the transaction",
+        "may request receipts or communications"
+      ],
+      "forbidden_claims": [
+        "guaranteed provisional credit",
+        "fixed investigation timeline"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "card.replacement.us.v1",
@@ -60,7 +111,16 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "A lost, stolen, damaged, or expiring debit or credit card can be replaced. A lost or stolen card should be locked or reported promptly to prevent further use. Delivery timing, expedited delivery availability, and any replacement charge are disclosed when the request is made. Recurring merchants may need updated card details.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "A lost or stolen card should be locked or reported promptly. Delivery timing is disclosed when the request is made, and recurring merchants may need updated card details.",
+      "required_claims": [
+        "lost or stolen card should be locked or reported promptly",
+        "delivery timing is disclosed when the request is made"
+      ],
+      "forbidden_claims": [
+        "always arrives within 3 days",
+        "replacement is always free"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     },
     {
       "chunk_id": "card.fraud.us.v1",
@@ -70,7 +130,17 @@
       "effective_from": "2026-01-01",
       "effective_to": null,
       "text": "A customer who sees an unauthorized or fraudulent debit or credit card purchase should lock the card and report the transaction promptly. The bank will review the fraud report, explain the investigation process, and determine whether the card should be replaced. Customers should not share a password, security code, or one-time verification code with anyone contacting them.",
-      "corpus_revision": "sha256:da9282b6ca8dc326fd1d8920937566de553aab8e861d33bf300ff990b27fc0d3"
+      "answer": "If you see an unauthorized card purchase, lock the card and report the transaction promptly. Do not share a password, security code, or one-time verification code.",
+      "required_claims": [
+        "lock the card",
+        "report the transaction promptly",
+        "do not share a password, security code, or one-time verification code"
+      ],
+      "forbidden_claims": [
+        "share your verification code",
+        "wait for another fraudulent purchase"
+      ],
+      "corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a"
     }
   ]
 }

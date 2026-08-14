@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 DEFAULT_POLICY_PATH = Path(__file__).with_name("policy_knowledge.json")
 DEFAULT_MIN_SCORE = 0.30
@@ -80,7 +80,7 @@ _INTENT_TERMS = frozenset(
         "unauthorized",
     }
 )
-_CHUNK_FIELDS = (
+_CHUNK_REQUIRED_FIELDS = (
     "chunk_id",
     "title",
     "product",
@@ -90,6 +90,7 @@ _CHUNK_FIELDS = (
     "text",
     "corpus_revision",
 )
+_CHUNK_OPTIONAL_FIELDS = ("answer", "required_claims", "forbidden_claims")
 _ROOT_FIELDS = {"schema_version", "corpus_revision", "chunks"}
 
 
@@ -103,6 +104,9 @@ class PolicyChunk:
     effective_to: str | None
     text: str
     corpus_revision: str
+    answer: str
+    required_claims: tuple[str, ...]
+    forbidden_claims: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,6 +122,9 @@ class PolicyMatch:
     effective_to: str | None
     text: str
     corpus_revision: str
+    answer: str
+    required_claims: tuple[str, ...]
+    forbidden_claims: tuple[str, ...]
     score: float
     citation: str
 
@@ -244,11 +251,17 @@ def retrieve_policy(query: str, *, limit: int = 3) -> PolicyLookupResult:
 
 
 def _parse_chunk(value: object, corpus_revision: str) -> PolicyChunk:
-    if not isinstance(value, dict) or set(value) != set(_CHUNK_FIELDS):
-        raise ValueError(f"policy chunk fields must be exactly: {', '.join(_CHUNK_FIELDS)}")
+    if not isinstance(value, dict):
+        raise ValueError("each policy chunk must be a JSON object")
+    missing = set(_CHUNK_REQUIRED_FIELDS) - set(value)
+    extras = set(value) - set(_CHUNK_REQUIRED_FIELDS) - set(_CHUNK_OPTIONAL_FIELDS)
+    if missing or extras:
+        raise ValueError(
+            f"policy chunk fields are invalid: missing={sorted(missing)}, extras={sorted(extras)}"
+        )
     if value["corpus_revision"] != corpus_revision:
         raise ValueError("all policy chunks must use the corpus revision")
-    for field in _CHUNK_FIELDS:
+    for field in _CHUNK_REQUIRED_FIELDS:
         if field == "effective_to":
             continue
         if not isinstance(value[field], str) or not value[field].strip():
@@ -264,7 +277,30 @@ def _parse_chunk(value: object, corpus_revision: str) -> PolicyChunk:
         raise ValueError("policy chunk effective dates must use ISO YYYY-MM-DD") from exc
     if effective_to is not None and effective_to < effective_from:
         raise ValueError("policy chunk effective_to cannot precede effective_from")
-    return PolicyChunk(**value)
+    answer = value.get("answer", value["text"])
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("policy chunk answer must be a non-empty string")
+    claims: dict[str, tuple[str, ...]] = {}
+    for field in ("required_claims", "forbidden_claims"):
+        raw_claims = value.get(field, ())
+        if not isinstance(raw_claims, list | tuple) or not all(
+            isinstance(claim, str) and claim.strip() for claim in raw_claims
+        ):
+            raise ValueError(f"policy chunk {field} must be a list of non-empty strings")
+        claims[field] = tuple(raw_claims)
+    return PolicyChunk(
+        chunk_id=cast(str, value["chunk_id"]),
+        title=cast(str, value["title"]),
+        product=cast(str, value["product"]),
+        jurisdiction=cast(str, value["jurisdiction"]),
+        effective_from=cast(str, value["effective_from"]),
+        effective_to=cast(str | None, value["effective_to"]),
+        text=cast(str, value["text"]),
+        corpus_revision=cast(str, value["corpus_revision"]),
+        answer=answer,
+        required_claims=claims["required_claims"],
+        forbidden_claims=claims["forbidden_claims"],
+    )
 
 
 def _corpus_revision(schema_version: int, chunks: list[object]) -> str:
@@ -285,7 +321,9 @@ def _corpus_revision(schema_version: int, chunks: list[object]) -> str:
 
 
 def _search_text(chunk: PolicyChunk) -> str:
-    return " ".join((chunk.chunk_id.replace(".", " "), chunk.title, chunk.product, chunk.text))
+    return " ".join(
+        (chunk.chunk_id.replace(".", " "), chunk.title, chunk.product, chunk.text, chunk.answer)
+    )
 
 
 def _terms(text: str) -> tuple[str, ...]:

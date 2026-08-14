@@ -5,6 +5,7 @@ from pathlib import Path
 
 from local_app_service import LocalBankingController
 from mock_bank import SessionBankRegistry
+from responses import MODEL_FAILURE_RESPONSE
 
 
 class StaticRouter:
@@ -288,3 +289,55 @@ def test_reset_clears_dialogue_state(tmp_path: Path) -> None:
     controller.reset("alex.demo", "local-browser")
 
     assert controller.dialogue_state("alex.demo", "local-browser")["pending_servicing"] is None
+
+
+def test_failed_read_follow_up_keeps_pending_task_until_result_delivery(
+    tmp_path: Path,
+) -> None:
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(
+            [
+                '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>',
+                "",
+            ]
+        ),
+        router=SequenceRouter([routed("view_accounts")]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my accounts.",
+        conversation=[],
+    )
+
+    assert result.response == MODEL_FAILURE_RESPONSE
+    assert result.dialogue_state["pending_servicing"]["intent"] == "view_accounts"
+
+
+def test_failed_mutation_follow_up_commits_action_without_pending_retry(
+    tmp_path: Path,
+) -> None:
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(
+            [
+                '<tool_call>{"name":"freeze_card","arguments":{"last4":"4821"}}</tool_call>',
+                "",
+            ]
+        ),
+        router=SequenceRouter([routed("freeze_card")]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Freeze card 4821.",
+        conversation=[],
+    )
+
+    assert result.snapshot["cards"][0]["status"] == "frozen"
+    assert result.dialogue_state["pending_servicing"] is None

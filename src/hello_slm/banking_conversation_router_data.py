@@ -5,7 +5,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 ROUTER_SPLITS = ("train", "validation", "test")
 
@@ -789,7 +789,7 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
         "cancel_transfer": "When can a scheduled transfer still be cancelled?",
         "view_service_cases": "How long are closed service cases retained?",
     }
-    switch_prompts = {
+    switch_prompts = cast(Mapping[str, tuple[str, ...]], ({
         "train": {
             "view_accounts": (
                 "Actually, show my account balances instead.",
@@ -859,7 +859,7 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
             "cancel_transfer": ("Do not continue that; cancel my pending transfer.",),
             "view_service_cases": ("Put that on hold and show my support cases.",),
         },
-    }[split]
+    })[split])
     ood_prompts = {
         "train": (
             "What is the weather tomorrow?",
@@ -914,7 +914,14 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
         ),
     }[split]
     social_prompts = {
-        "train": ("Thanks for explaining that.", "That makes sense.", "Hello again."),
+        "train": (
+            "Thanks for explaining that.",
+            "That makes sense.",
+            "Hello again.",
+            "I follow your explanation, thank you.",
+            "Everything is clear now.",
+            "I understand the policy you described.",
+        ),
         "validation": ("Appreciate the explanation.", "Understood, thanks.", "Good morning."),
         "test": ("Got it, thank you.", "Okay, that is clear.", "Hope you are doing well."),
     }[split]
@@ -923,6 +930,12 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
             "Let's continue the request from before.",
             "Go back to the task we paused.",
             "Resume the original issue.",
+            "Continue the unfinished banking matter.",
+            "Take me back to the earlier service request.",
+            "Finish the task that was left open.",
+            "Return to the work we stopped.",
+            "Pick up the previous request again.",
+            "Carry on with the unresolved issue.",
         ),
         "validation": (
             "Pick up where we stopped earlier.",

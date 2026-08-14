@@ -51,7 +51,7 @@ DEFAULT_DESTINATION_ID = "spkc83/retail-bank-conversation-router"
 SEED = 7401
 MAX_LENGTH = 256
 BATCH_SIZE = 32
-EPOCHS = 1
+EPOCHS = 2
 LEARNING_RATE = 3e-5
 WEIGHT_DECAY = 0.01
 WARMUP_RATIO = 0.10
@@ -63,10 +63,11 @@ TARGETED_SOURCES = frozenset(
     {
         "self-authored-router-v5-use-case-alignment",
         "self-authored-router-v5-state-negatives",
+        "self-authored-router-v5-resume-trajectory",
     }
 )
 RELATION_F1_CALIBRATION_TOLERANCE = 0.005
-RELATION_THRESHOLD_CEILINGS = {"agent_repair": 0.85}
+RELATION_THRESHOLD_CEILINGS = {"agent_repair": 0.75}
 IN_DOMAIN_THRESHOLD = 0.50
 
 
@@ -306,6 +307,10 @@ def evaluate_predictions(
         relation_rescue_threshold=relation_rescue_threshold,
     )
     accepted = [route != "out_of_domain" for route in routes]
+    exposed_intents = [
+        INTENT_LABELS[prediction] if route == "in_domain" else None
+        for route, prediction in zip(routes, intent_predictions, strict=True)
+    ]
     domain_counts = _domain_counts(accepted, domain_labels)
     intent_pairs = [
         (prediction, label)
@@ -376,7 +381,7 @@ def evaluate_predictions(
     resume_relation_index = RELATION_LABELS.index("resume_previous_service")
     metrics["trajectory_resume_intent_error_rate"] = _safe_ratio(
         sum(
-            intent_predictions[index] != intent_labels[index]
+            exposed_intents[index] != INTENT_LABELS[intent_labels[index]]
             for index in resume_indices
             if intent_labels[index] >= 0
         ),
@@ -384,7 +389,8 @@ def evaluate_predictions(
     )
     metrics["trajectory_resume_relation_error_rate"] = _safe_ratio(
         sum(
-            (
+            routes[index] != "in_domain"
+            or (
                 relation_probabilities[index][resume_relation_index]
                 >= relation_thresholds["resume_previous_service"]
             )
@@ -408,12 +414,16 @@ def evaluate_predictions(
         index for index in state_negative_indices if intent_labels[index] >= 0
     ]
     metrics["trajectory_state_route_error_rate"] = _safe_ratio(
-        sum(accepted[index] != bool(domain_labels[index]) for index in state_negative_indices),
+        sum(
+            routes[index]
+            != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
+            for index in state_negative_indices
+        ),
         len(state_negative_indices),
     )
     metrics["trajectory_state_intent_error_rate"] = _safe_ratio(
         sum(
-            intent_predictions[index] != intent_labels[index]
+            exposed_intents[index] != INTENT_LABELS[intent_labels[index]]
             for index in state_negative_intent_indices
         ),
         len(state_negative_intent_indices),
@@ -431,12 +441,16 @@ def evaluate_predictions(
         kind: {
             "rows": len(kind_indices),
             "route_error_rate": _safe_ratio(
-                sum(accepted[index] != bool(domain_labels[index]) for index in kind_indices),
+                sum(
+                    routes[index]
+                    != ("in_domain" if domain_labels[index] == 1 else "out_of_domain")
+                    for index in kind_indices
+                ),
                 len(kind_indices),
             ),
             "intent_error_rate": _safe_ratio(
                 sum(
-                    intent_predictions[index] != intent_labels[index]
+                    exposed_intents[index] != INTENT_LABELS[intent_labels[index]]
                     for index in kind_indices
                     if intent_labels[index] >= 0
                 ),
@@ -458,6 +472,27 @@ def evaluate_predictions(
             ]
         )
     }
+    trajectory_indices = [*resume_indices, *state_negative_indices]
+    metrics["trajectory_runtime_transition_error_rate"] = _safe_ratio(
+        sum(
+            not _runtime_transition_matches(
+                kind=example_kinds[index],
+                route=routes[index],
+                exposed_intent=exposed_intents[index],
+                expected_intent=(
+                    INTENT_LABELS[intent_labels[index]]
+                    if intent_labels[index] >= 0
+                    else None
+                ),
+                resume_active=(
+                    relation_probabilities[index][resume_relation_index]
+                    >= relation_thresholds["resume_previous_service"]
+                ),
+            )
+            for index in trajectory_indices
+        ),
+        len(trajectory_indices),
+    )
     heldout_indices = [
         index for index, kind in enumerate(example_kinds) if kind == "heldout_screenshot_regression"
     ]
@@ -525,6 +560,30 @@ def evaluate_predictions(
     return metrics
 
 
+def _runtime_transition_matches(
+    *,
+    kind: str,
+    route: str,
+    exposed_intent: str | None,
+    expected_intent: str | None,
+    resume_active: bool,
+) -> bool:
+    """Mirror the observations that DialogueState.begin_turn will act on."""
+    if kind == "resume_previous_service":
+        return (
+            route == "in_domain"
+            and exposed_intent == expected_intent
+            and resume_active
+        )
+    if kind == "state_ood_detour":
+        return route == "out_of_domain" and not resume_active
+    return (
+        route == "in_domain"
+        and exposed_intent == expected_intent
+        and not resume_active
+    )
+
+
 def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
     gates = (
         ("intent_macro_f1", ">=", 0.85),
@@ -536,9 +595,10 @@ def release_gate_failures(metrics: dict[str, Any]) -> list[str]:
         ("topic_shift_ood_false_accept_rate", "<=", 0.05),
         ("trajectory_resume_intent_error_rate", "<=", 0.00),
         ("trajectory_resume_relation_error_rate", "<=", 0.00),
-        ("trajectory_state_route_error_rate", "<=", 0.01),
-        ("trajectory_state_intent_error_rate", "<=", 0.05),
+        ("trajectory_state_route_error_rate", "<=", 0.00),
+        ("trajectory_state_intent_error_rate", "<=", 0.00),
         ("trajectory_non_resume_false_positive_rate", "<=", 0.00),
+        ("trajectory_runtime_transition_error_rate", "<=", 0.00),
         ("heldout_regression_route_error_rate", "<=", 0.00),
         ("heldout_regression_intent_error_rate", "<=", 0.00),
         ("heldout_regression_relation_error_rate", "<=", 0.00),

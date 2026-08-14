@@ -197,6 +197,69 @@ def test_policy_answer_accepts_number_present_in_evidence() -> None:
     assert validation.valid
 
 
+def test_policy_answer_requires_exact_numeric_quantity_not_substring() -> None:
+    matches = (
+        {
+            "chunk_id": "card.replace",
+            "title": "Replacement cards",
+            "text": "Replacement cards can take up to 30 days to arrive.",
+        },
+    )
+
+    numeric = validate_policy_answer(
+        "A replacement card can take up to 3 days. [Policy: card.replace]",
+        matches,
+    )
+    word_form = validate_policy_answer(
+        "A replacement card can take up to three days. [Policy: card.replace]",
+        matches,
+    )
+
+    assert not numeric.valid
+    assert "unsupported numeric claims" in " ".join(numeric.errors)
+    assert not word_form.valid
+    assert "unsupported numeric claims" in " ".join(word_form.errors)
+
+
+def test_policy_answer_compares_date_components_independently() -> None:
+    validation = validate_policy_answer(
+        "This policy is effective January 1, 2026. [Policy: card.replace]",
+        (
+            {
+                "chunk_id": "card.replace",
+                "title": "Replacement cards",
+                "text": "This policy applies to replacement cards.",
+                "effective_from": "2026-01-01",
+            },
+        ),
+    )
+
+    assert validation.valid
+
+
+def test_policy_answer_normalizes_number_words_and_formatted_quantities() -> None:
+    matches = (
+        {
+            "chunk_id": "card.replace",
+            "title": "Replacement cards",
+            "text": "One replacement is allowed and the fee is $1,000.00.",
+        },
+    )
+
+    validation = validate_policy_answer(
+        "You may request 1 replacement, and the fee is $1000. [Policy: card.replace]",
+        matches,
+    )
+    unsupported = validate_policy_answer(
+        "You may request three replacements. [Policy: card.replace]",
+        matches,
+    )
+
+    assert validation.valid
+    assert not unsupported.valid
+    assert "unsupported numeric claims" in " ".join(unsupported.errors)
+
+
 def test_customer_experience_repair_receives_authoritative_evidence() -> None:
     repair = build_customer_experience_repair_messages(
         user_message="Can I apply for a mortgage?",

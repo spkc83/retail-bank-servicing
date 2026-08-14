@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from huggingface_hub import snapshot_download
@@ -79,6 +79,7 @@ class LearnedBankingRouter:
         relation_thresholds: Mapping[str, float] | None = None,
         max_length: int,
         max_exchanges: int,
+        artifact_identity: Mapping[str, str] | None = None,
     ) -> None:
         labels = intent_labels if intent_labels is not None else capability_labels
         if not labels or not relation_labels:
@@ -100,6 +101,7 @@ class LearnedBankingRouter:
         }
         self.max_length = max_length
         self.max_exchanges = max_exchanges
+        self.artifact_identity = dict(artifact_identity or {})
 
     @classmethod
     def from_hub(cls) -> LearnedBankingRouter:
@@ -108,15 +110,36 @@ class LearnedBankingRouter:
                 "RETAIL_BANK_ROUTER_REVISION must pin the published V5 router commit"
             )
         root = Path(snapshot_download(ROUTER_REPO_ID, revision=ROUTER_REVISION))
-        return cls.from_artifact_dir(root)
+        return cls.from_artifact_dir(
+            root,
+            artifact_identity={
+                "router_source": "hub",
+                "router_repo_id": ROUTER_REPO_ID,
+                "router_revision": ROUTER_REVISION,
+            },
+        )
 
     @classmethod
     def from_artifact_dir(
         cls,
         artifact_dir: str | Path,
+        *,
+        artifact_identity: Mapping[str, str] | None = None,
     ) -> LearnedBankingRouter:
         root = Path(artifact_dir)
         config = verify_artifact(root)
+        manifest_sha256 = _sha256(root / "manifest.json")
+        identity = {
+            "router_source": "local",
+            "router_artifact_path": str(root.resolve()),
+            "router_manifest_sha256": manifest_sha256,
+            "router_revision": f"local-sha256:{manifest_sha256}",
+            "router_config_sha256": _sha256(root / "router_config.json"),
+            "router_data_manifest_sha256": str(
+                config.get("data_manifest_sha256", "unavailable")
+            ),
+            **dict(artifact_identity or {}),
+        }
         tokenizer = AutoTokenizer.from_pretrained(
             root,
             local_files_only=True,
@@ -164,7 +187,11 @@ class LearnedBankingRouter:
             relation_thresholds=config.get("relation_thresholds"),
             max_length=int(config["max_length"]),
             max_exchanges=int(config.get("max_exchanges", 3)),
+            artifact_identity=identity,
         )
+
+    def artifact_metadata(self) -> dict[str, str]:
+        return dict(self.artifact_identity)
 
     def classify(
         self,
@@ -245,7 +272,11 @@ class LearnedBankingRouter:
                 strict=True,
             )
         ]
-        intent = intent_candidates[0]["intent"] if route == "in_domain" else None
+        intent = (
+            cast(str, intent_candidates[0]["intent"])
+            if route == "in_domain"
+            else None
+        )
         intent_confidence = float(candidate_probabilities[0])
         capability_candidates = [
             {"capability": item["intent"], "probability": item["probability"]}
@@ -277,8 +308,12 @@ class LearnedBankingRouter:
             "ood_banking_threshold": self.ood_banking_threshold,
             "in_domain_threshold": self.in_domain_threshold,
             "relation_rescue_threshold": self.relation_rescue_threshold,
-            "router_revision": ROUTER_REVISION,
+            "router_revision": self.artifact_identity.get(
+                "router_revision",
+                ROUTER_REVISION,
+            ),
             "router_architecture": "history-and-state-aware-cross-encoder-v5",
+            "router_artifact": dict(self.artifact_identity),
         }
 
 

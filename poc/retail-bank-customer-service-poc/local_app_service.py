@@ -141,10 +141,9 @@ class LocalBankingController:
                     pinned_exchange=pinned_exchange,
                 )
         except AgentExecutionError as error:
-            dialogue_state = self.dialogue_states.finish_turn(
+            dialogue_state = self.dialogue_states.commit_operations(
                 username,
                 session_hash,
-                MODEL_FAILURE_RESPONSE,
                 tuple(call.name for call in error.tool_calls),
                 error.tool_results,
             ).as_dict()

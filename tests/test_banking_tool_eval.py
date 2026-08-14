@@ -8,6 +8,7 @@ from pathlib import Path
 from hello_slm.banking_tool_eval import (
     StaticPredictionModel,
     TaggedJsonToolAdapter,
+    canonical_policy_eval_records,
     evaluate_records,
     fingerprint_records,
     release_gate_failures,
@@ -194,6 +195,8 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
                 "requires_tool": False,
                 "response_path": "retrieval_grounded_policy",
                 "policy_citations": ["card.dispute.us.v1"],
+                "grounding_facts": ["supporting information after submission"],
+                "forbidden_facts": ["approval is guaranteed"],
             },
         ),
         _record(
@@ -233,8 +236,8 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
 
     assert report["metrics"]["executable_tool_success"]["numerator"] == 1
     assert report["metrics"]["executable_tool_success"]["denominator"] == 1
-    assert report["metrics"]["grounded_final_factuality"]["numerator"] == 1
-    assert report["metrics"]["grounded_final_factuality"]["denominator"] == 1
+    assert report["metrics"]["grounded_final_factuality"]["numerator"] == 2
+    assert report["metrics"]["grounded_final_factuality"]["denominator"] == 2
     assert report["metrics"]["no_tool_faq_quality"]["numerator"] == 1
     assert report["metrics"]["no_tool_faq_quality"]["denominator"] == 1
     assert report["metrics"]["grounded_policy_quality"]["numerator"] == 1
@@ -245,6 +248,36 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
     assert report["metrics"]["ood_small_talk_response_path"]["denominator"] == 1
     assert report["metrics"]["credential_request_rate"]["numerator"] == 0
     assert report["metrics"]["credential_request_rate"]["denominator"] == 5
+
+
+def test_canonical_policy_eval_rejects_correct_citation_with_wrong_fact() -> None:
+    records = canonical_policy_eval_records()
+    card = next(
+        record
+        for record in records
+        if record["expected"]["policy_citations"] == ["card.replacement.us.v1"]
+    )
+    correct = (
+        "A lost or stolen card should be locked or reported promptly, and delivery timing "
+        "is disclosed when the request is made. [Policy: card.replacement.us.v1]"
+    )
+    wrong = "A replacement always arrives within 3 days. [Policy: card.replacement.us.v1]"
+
+    correct_report = evaluate_records(
+        [card],
+        model=StaticPredictionModel({card["record_id"]: correct}),
+        adapter=TaggedJsonToolAdapter(),
+    )
+    wrong_report = evaluate_records(
+        [card],
+        model=StaticPredictionModel({card["record_id"]: wrong}),
+        adapter=TaggedJsonToolAdapter(),
+    )
+
+    assert len(records) == 7
+    assert correct_report["metrics"]["grounded_policy_quality"]["score"] == 1.0
+    assert wrong_report["metrics"]["grounded_policy_quality"]["score"] == 0.0
+    assert wrong_report["records"][card["record_id"]]["grounded_policy_quality"] is False
 
 
 def test_report_includes_fingerprints_and_record_parse_failure_details() -> None:

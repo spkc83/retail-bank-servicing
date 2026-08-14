@@ -19,6 +19,12 @@ SERVICING_TOOLS = {
     "cancel_transfer": "cancel_transfer",
     "view_service_cases": "list_service_cases",
 }
+MUTATION_INTENTS = {
+    "freeze_card",
+    "replace_card",
+    "dispute_transaction",
+    "cancel_transfer",
+}
 
 
 @dataclass(frozen=True)
@@ -165,7 +171,8 @@ def finish_turn(
     executed_tool_names: Sequence[str],
     tool_results: Mapping[str, Any] | Sequence[Any],
 ) -> DialogueState:
-    """Record the first assistant anchor and clear only verified completed work."""
+    """Commit customer-visible delivery and record the first assistant anchor."""
+    state = commit_operations(state, executed_tool_names, tool_results)
     pending = state.pending_servicing
     if pending is None:
         return state
@@ -183,6 +190,21 @@ def finish_turn(
                 phase="awaiting_user",
             ),
         )
+    return state
+
+
+def commit_operations(
+    state: DialogueState,
+    executed_tool_names: Sequence[str],
+    tool_results: Mapping[str, Any] | Sequence[Any],
+) -> DialogueState:
+    """Commit successful mutations independently of response delivery."""
+    pending = state.pending_servicing
+    if pending is None or pending.intent not in MUTATION_INTENTS:
+        return state
+    expected_tool = SERVICING_TOOLS[pending.intent]
+    if _tool_succeeded(expected_tool, executed_tool_names, tool_results):
+        return DialogueState()
     return state
 
 
@@ -232,6 +254,23 @@ class DialogueStateRegistry:
             state = finish_turn(
                 self._states.get(key, DialogueState()),
                 assistant_message,
+                executed_tool_names,
+                tool_results,
+            )
+            self._states[key] = state
+            return state
+
+    def commit_operations(
+        self,
+        username: str,
+        session_id: str,
+        executed_tool_names: Sequence[str],
+        tool_results: Mapping[str, Any] | Sequence[Any],
+    ) -> DialogueState:
+        key = (username, session_id)
+        with self._lock:
+            state = commit_operations(
+                self._states.get(key, DialogueState()),
                 executed_tool_names,
                 tool_results,
             )

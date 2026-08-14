@@ -31,6 +31,11 @@ LOCAL_AUTH_DEFAULT_JSON = json.dumps(
         "maya.demo": "maya-local-demo",
     }
 )
+DEFAULT_LOCAL_ROUTER_ARTIFACT = (
+    Path(__file__).resolve().parents[2]
+    / "artifacts"
+    / "banking-conversation-router-v5-strict-gate-candidate2"
+)
 
 PRESETS = (
     "Hello, how are you?",
@@ -80,7 +85,7 @@ def resolve_local_router_artifact() -> Path | None:
     candidate = (
         Path(configured).expanduser()
         if configured
-        else Path(__file__).resolve().parents[2] / "artifacts" / "banking-conversation-router-v5"
+        else DEFAULT_LOCAL_ROUTER_ARTIFACT
     )
     return candidate if (candidate / "manifest.json").is_file() else None
 
@@ -174,6 +179,9 @@ def _render_sidebar(
     snapshot = controller.snapshot(username, session_hash)
     customer = snapshot["customer"]
     metadata = controller.runtime_metadata()
+    router = get_local_router()
+    if router is not None:
+        metadata.update(router.artifact_metadata())
     with st.sidebar:
         st.caption(BANK_NAME)
         st.header(str(customer["display_name"]))
@@ -207,7 +215,14 @@ def _render_experiment_diagnostics(metadata: dict[str, str]) -> None:
                 (
                     f"model={metadata.get('model_id', MODEL_ID)}",
                     f"revision={metadata.get('model_revision', MODEL_REVISION)}",
-                    f"router={ROUTER_REVISION}",
+                    f"router_source={metadata.get('router_source', 'hub')}",
+                    f"router_repo={metadata.get('router_repo_id', 'local')}",
+                    f"router_revision={metadata.get('router_revision', ROUTER_REVISION)}",
+                    f"router_artifact={metadata.get('router_artifact_path', 'hub snapshot')}",
+                    "router_manifest_sha256="
+                    f"{metadata.get('router_manifest_sha256', 'hub-verified')}",
+                    "router_data_sha256="
+                    f"{metadata.get('router_data_manifest_sha256', 'unavailable')}",
                     f"device={metadata.get('runtime_device', 'unavailable')}",
                     f"gpu={metadata.get('cuda_device_name', 'unavailable')}",
                     f"quantization={metadata.get('weight_quantization', 'unavailable')}",

@@ -20,6 +20,12 @@ def load_training_module() -> ModuleType:
     return module
 
 
+def test_default_training_recipe_uses_verified_two_epoch_run() -> None:
+    training = load_training_module()
+
+    assert training.EPOCHS == 2
+
+
 def test_runtime_route_policy_rescues_context_but_not_topic_shift() -> None:
     training = load_training_module()
     routes = training.route_predictions(
@@ -89,6 +95,7 @@ def test_metrics_cover_intent_and_each_relation_slice() -> None:
     assert metrics["trajectory_state_route_error_rate"] == 0.0
     assert metrics["trajectory_state_intent_error_rate"] == 0.0
     assert metrics["trajectory_non_resume_false_positive_rate"] == 0.0
+    assert metrics["trajectory_runtime_transition_error_rate"] == 0.0
     assert metrics["heldout_regression_route_error_rate"] == 0.0
     assert metrics["heldout_regression_intent_error_rate"] == 0.0
     assert metrics["heldout_regression_relation_error_rate"] == 0.0
@@ -115,13 +122,14 @@ def test_release_gate_reports_use_case_regressions() -> None:
             "trajectory_state_route_error_rate": 0.10,
             "trajectory_state_intent_error_rate": 0.10,
             "trajectory_non_resume_false_positive_rate": 0.10,
+            "trajectory_runtime_transition_error_rate": 0.10,
             "heldout_regression_route_error_rate": 0.10,
             "heldout_regression_intent_error_rate": 0.10,
             "heldout_regression_relation_error_rate": 0.10,
         }
     )
 
-    assert len(failures) == 15
+    assert len(failures) == 16
 
 
 def test_state_negative_metrics_reject_prior_state_override() -> None:
@@ -178,6 +186,34 @@ def test_resume_trajectory_metrics_require_exact_intent_and_relation() -> None:
     assert metrics["trajectory_resume_relation_error_rate"] == 1.0
 
 
+def test_uncertain_route_fails_resume_and_switch_runtime_metrics() -> None:
+    training = load_training_module()
+    metrics = training.evaluate_predictions(
+        domain_probabilities=[0.30, 0.30],
+        domain_labels=[1, 1],
+        intent_predictions=[0, 1],
+        intent_labels=[0, 1],
+        relation_probabilities=[
+            [0.9, 0.1, 0.1, 0.1, 0.9],
+            [0.1, 0.1, 0.9, 0.1, 0.1],
+        ],
+        relation_labels=[
+            [1, 0, 0, 0, 1],
+            [0, 0, 1, 0, 0],
+        ],
+        example_kinds=["resume_previous_service", "state_intent_switch"],
+        ood_banking_threshold=0.2,
+        in_domain_threshold=0.5,
+        relation_rescue_threshold=0.5,
+        num_intents=2,
+    )
+
+    assert metrics["trajectory_resume_intent_error_rate"] == 1.0
+    assert metrics["trajectory_state_route_error_rate"] == 1.0
+    assert metrics["trajectory_state_intent_error_rate"] == 1.0
+    assert metrics["trajectory_runtime_transition_error_rate"] == 1.0
+
+
 def test_relation_positive_weights_are_capped_for_rare_labels() -> None:
     training = load_training_module()
     rows = [
@@ -229,11 +265,16 @@ def test_state_negative_rows_receive_targeted_training_weight() -> None:
     batch = collate(
         [
             {**common, "source": "self-authored-router-v5-state-negatives"},
+            {**common, "source": "self-authored-router-v5-resume-trajectory"},
             {**common, "source": "unweighted-source"},
         ]
     )
 
-    assert batch["row_weights"].tolist() == [training.TARGETED_ROW_WEIGHT, 1.0]
+    assert batch["row_weights"].tolist() == [
+        training.TARGETED_ROW_WEIGHT,
+        training.TARGETED_ROW_WEIGHT,
+        1.0,
+    ]
 
 
 def test_relation_calibration_uses_lowest_exact_optimum_for_other_labels() -> None:
@@ -274,4 +315,4 @@ def test_relation_calibration_caps_agent_repair_threshold_for_recall() -> None:
 
     thresholds = training.calibrate_relation_thresholds(probabilities, labels)
 
-    assert thresholds["agent_repair"] == 0.85
+    assert thresholds["agent_repair"] == 0.75

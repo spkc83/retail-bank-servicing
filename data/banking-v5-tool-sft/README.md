@@ -20,10 +20,10 @@ tool-using model.
 
 ## Splits
 
-- Train: 838
-- Validation: 181
-- Test: 181
-- Corpus fingerprint: `11f46022c528fefda50aaf07cc97e6bebe0fcc3be2f4c44728c27d834634601d`
+- Train: 841
+- Validation: 179
+- Test: 180
+- Corpus fingerprint: `665d48ed2b2e0c377416ae99f5c5abc2146dd84713669ebee818aa580487cd09`
 - Split seed: `711`
 
 ## Coverage
@@ -33,14 +33,14 @@ tool results, clarification, general banking FAQ, hard-negative private-field
 requests, out-of-domain refusal, multi-turn context, and ordered multi-tool
 calls.
 
-- `clarification`: 44
-- `conversation`: 132
-- `hard_negative`: 44
-- `multi_turn`: 223
-- `ood`: 44
-- `retrieval_grounded_policy`: 220
-- `tool_error`: 88
-- `tool_success`: 405
+- `clarification`: 41
+- `conversation`: 123
+- `hard_negative`: 41
+- `multi_turn`: 207
+- `ood`: 41
+- `retrieval_grounded_policy`: 287
+- `tool_error`: 82
+- `tool_success`: 378
 
 Every tool-bearing record was replayed against an isolated synthetic bank state
 before inclusion. Assistant tool-call and final-response tokens are trainable;

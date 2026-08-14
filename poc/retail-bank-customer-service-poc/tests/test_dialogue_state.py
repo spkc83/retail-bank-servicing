@@ -9,6 +9,7 @@ from dialogue_state import (
     DialogueStateRegistry,
     PendingServicing,
     begin_turn,
+    commit_operations,
     finish_turn,
 )
 
@@ -150,6 +151,27 @@ def test_ood_uncertain_social_and_classifier_failure_do_not_mutate_state() -> No
         assert begin_turn(state, observation, "message").state == state
 
 
+def test_uncertain_resume_observation_cannot_resume_pending_service() -> None:
+    state = DialogueState(
+        pending_servicing=pending_state().pending_servicing,
+        knowledge_detour_active=True,
+    )
+
+    transition = begin_turn(
+        state,
+        route(
+            "dispute_transaction",
+            route_name="uncertain",
+            relations=("resume_previous_service",),
+        ),
+        "Continue the dispute.",
+    )
+
+    assert transition.state == state
+    assert transition.resumed is False
+    assert transition.lane == "unchanged"
+
+
 def test_low_confidence_intent_does_not_mutate_state() -> None:
     state = pending_state()
 
@@ -197,6 +219,30 @@ def test_successful_matching_read_completes_view_task() -> None:
     )
 
     assert completed == DialogueState()
+
+
+def test_successful_read_is_not_committed_before_response_delivery() -> None:
+    state = pending_state("view_accounts")
+
+    committed = commit_operations(
+        state,
+        ("list_accounts",),
+        ({"accounts": []},),
+    )
+
+    assert committed == state
+
+
+def test_successful_mutation_is_committed_before_response_delivery() -> None:
+    state = pending_state("freeze_card")
+
+    committed = commit_operations(
+        state,
+        ("freeze_card",),
+        ({"card": {"status": "frozen"}},),
+    )
+
+    assert committed == DialogueState()
 
 
 def test_registry_isolated_by_username_and_session_and_serializes_diagnostics() -> None:

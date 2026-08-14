@@ -93,6 +93,25 @@ def test_loaded_policy_schema_is_immutable_and_single_revision(
         knowledge_base.chunks[0].title = "Changed"  # type: ignore[misc]
 
 
+def test_policy_chunks_expose_factual_grounding_contract(
+    knowledge_base: PolicyKnowledgeBase,
+) -> None:
+    assert len(knowledge_base.chunks) == 7
+    assert all(chunk.answer for chunk in knowledge_base.chunks)
+    assert all(chunk.required_claims for chunk in knowledge_base.chunks)
+    assert all(chunk.forbidden_claims for chunk in knowledge_base.chunks)
+    assert {chunk.chunk_id for chunk in knowledge_base.chunks} >= {
+        "card.dispute.us.v1",
+        "card.replacement.us.v1",
+        "card.fraud.us.v1",
+    }
+    assert all(
+        claim.casefold() in chunk.answer.casefold()
+        for chunk in knowledge_base.chunks
+        for claim in chunk.required_claims
+    )
+
+
 def test_corpus_digest_rejects_tampered_policy_text(tmp_path: Path) -> None:
     payload = json.loads(DEFAULT_POLICY_PATH.read_text(encoding="utf-8"))
     payload["chunks"][0]["text"] += " Tampered."

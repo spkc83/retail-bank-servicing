@@ -1,6 +1,6 @@
 {
   "contract": "banking-conversation-router-data",
-  "created_at": "2026-08-14T19:14:36.150869+00:00",
+  "created_at": "2026-08-14T20:17:52.075894+00:00",
   "format_version": 2,
   "intent_labels": [
     "view_accounts",
@@ -26,63 +26,63 @@
   ],
   "report": {
     "contract": "banking-conversation-router-data-report",
-    "cross_split_duplicates_removed": 4479,
+    "cross_split_duplicates_removed": 4408,
     "domain_counts": {
       "test": {
-        "0": 2408,
-        "1": 2064
+        "0": 2407,
+        "1": 2054
       },
       "train": {
-        "0": 5322,
-        "1": 10271
+        "0": 5324,
+        "1": 10412
       },
       "validation": {
-        "0": 1188,
-        "1": 2156
+        "0": 1186,
+        "1": 2160
       }
     },
     "intent_counts": {
       "test": {
-        "None": 2408,
+        "None": 2407,
         "cancel_transfer": 135,
         "conversation": 190,
-        "dispute_transaction": 165,
-        "freeze_card": 283,
+        "dispute_transaction": 195,
+        "freeze_card": 253,
         "other_banking": 126,
-        "policy_knowledge": 443,
-        "replace_card": 102,
+        "policy_knowledge": 383,
+        "replace_card": 192,
         "view_accounts": 75,
-        "view_cards": 129,
+        "view_cards": 119,
         "view_service_cases": 326,
-        "view_transactions": 75,
+        "view_transactions": 45,
         "view_transfers": 15
       },
       "train": {
-        "None": 5322,
-        "cancel_transfer": 670,
-        "conversation": 676,
-        "dispute_transaction": 888,
-        "freeze_card": 1080,
-        "other_banking": 714,
-        "policy_knowledge": 1759,
-        "replace_card": 1046,
-        "view_accounts": 320,
-        "view_cards": 430,
-        "view_service_cases": 1898,
+        "None": 5324,
+        "cancel_transfer": 610,
+        "conversation": 669,
+        "dispute_transaction": 1176,
+        "freeze_card": 1066,
+        "other_banking": 638,
+        "policy_knowledge": 1719,
+        "replace_card": 1216,
+        "view_accounts": 290,
+        "view_cards": 400,
+        "view_service_cases": 1868,
         "view_transactions": 440,
-        "view_transfers": 350
+        "view_transfers": 320
       },
       "validation": {
-        "None": 1188,
+        "None": 1186,
         "cancel_transfer": 165,
-        "conversation": 212,
-        "dispute_transaction": 237,
+        "conversation": 192,
+        "dispute_transaction": 263,
         "freeze_card": 219,
         "other_banking": 138,
-        "policy_knowledge": 281,
-        "replace_card": 183,
+        "policy_knowledge": 231,
+        "replace_card": 233,
         "view_accounts": 135,
-        "view_cards": 111,
+        "view_cards": 109,
         "view_service_cases": 295,
         "view_transactions": 15,
         "view_transfers": 165
@@ -104,20 +104,20 @@
     ],
     "kind_counts": {
       "test": {
-        "agent_repair": 330,
-        "banking_topic_shift": 203,
-        "clarification": 6,
-        "clarification_answer": 330,
+        "agent_repair": 328,
+        "banking_topic_shift": 202,
+        "clarification": 5,
+        "clarification_answer": 328,
         "clinc_external_ood": 2140,
-        "contextual_followup": 353,
+        "contextual_followup": 351,
         "conversation": 24,
-        "external_topic_shift": 203,
+        "external_topic_shift": 202,
         "hard_negative": 3,
         "heldout_screenshot_regression": 7,
         "multi_turn": 12,
         "ood": 6,
         "resume_previous_service": 63,
-        "retrieval_grounded_policy": 40,
+        "retrieval_grounded_policy": 46,
         "state_intent_switch": 72,
         "state_ood_detour": 54,
         "state_orphan_resume": 3,
@@ -129,52 +129,52 @@
         "targeted_service_case": 12,
         "targeted_wrong_topic_repair": 40,
         "tool_error": 9,
-        "tool_success": 63,
-        "typo_contextual_followup": 330,
+        "tool_success": 57,
+        "typo_contextual_followup": 328,
         "visible_multiturn": 27
       },
       "train": {
-        "agent_repair": 1538,
-        "banking_topic_shift": 1161,
-        "clarification": 38,
-        "clarification_answer": 1475,
+        "agent_repair": 1562,
+        "banking_topic_shift": 1167,
+        "clarification": 36,
+        "clarification_answer": 1499,
         "clinc_external_ood": 4048,
-        "contextual_followup": 1733,
-        "conversation": 84,
-        "external_topic_shift": 1159,
-        "hard_negative": 35,
-        "multi_turn": 60,
-        "ood": 29,
+        "contextual_followup": 1756,
+        "conversation": 77,
+        "external_topic_shift": 1164,
+        "hard_negative": 32,
+        "multi_turn": 54,
+        "ood": 26,
         "resume_previous_service": 234,
-        "retrieval_grounded_policy": 157,
+        "retrieval_grounded_policy": 215,
         "state_intent_switch": 216,
         "state_ood_detour": 54,
-        "state_orphan_resume": 3,
+        "state_orphan_resume": 9,
         "state_policy_followup": 117,
-        "state_social_detour": 27,
+        "state_social_detour": 54,
         "targeted_agent_repair": 512,
         "targeted_clarification_answer": 192,
         "targeted_contextual_followup": 192,
         "targeted_service_case": 48,
         "targeted_wrong_topic_repair": 512,
-        "tool_error": 58,
-        "tool_success": 282,
-        "typo_contextual_followup": 1474,
-        "visible_multiturn": 155
+        "tool_error": 52,
+        "tool_success": 261,
+        "typo_contextual_followup": 1498,
+        "visible_multiturn": 149
       },
       "validation": {
-        "agent_repair": 342,
-        "banking_topic_shift": 260,
-        "clarification_answer": 326,
+        "agent_repair": 344,
+        "banking_topic_shift": 258,
+        "clarification_answer": 328,
         "clinc_external_ood": 858,
-        "contextual_followup": 417,
-        "conversation": 24,
-        "external_topic_shift": 259,
+        "contextual_followup": 418,
+        "conversation": 22,
+        "external_topic_shift": 257,
         "hard_negative": 6,
         "multi_turn": 18,
         "ood": 9,
         "resume_previous_service": 63,
-        "retrieval_grounded_policy": 23,
+        "retrieval_grounded_policy": 26,
         "state_intent_switch": 72,
         "state_ood_detour": 54,
         "state_orphan_resume": 3,
@@ -187,8 +187,8 @@
         "targeted_wrong_topic_repair": 40,
         "tool_error": 21,
         "tool_success": 60,
-        "typo_contextual_followup": 326,
-        "visible_multiturn": 9
+        "typo_contextual_followup": 328,
+        "visible_multiturn": 7
       }
     },
     "leakage": {
@@ -207,9 +207,9 @@
     ],
     "seed": 7404,
     "split_counts": {
-      "test": 4472,
-      "train": 15593,
-      "validation": 3344
+      "test": 4461,
+      "train": 15736,
+      "validation": 3346
     }
   },
   "review_status": "automated-policy-pass",
@@ -280,12 +280,12 @@
       "allowed_use": [
         "conversation-router-domain-intent-training"
       ],
-      "manifest_sha256": "65333b5d12239b3374078e50c6ad67d12c26df83035e7cd2b55cc9f14f5f205e",
+      "manifest_sha256": "6c0f8c6bb8d0e1d646c4d43226aef9fba369a891c9ea7a3bb58764e07d6e9bbe",
       "path": "data/banking-servicing-alignment-v5",
       "split_sha256": {
-        "test": "6c7ee71e4d7cfcc156f0825da2b70cf6020f655cb1eff053d57b97478aca8c3a",
-        "train": "89114ce3a23f19f297d38f72de76047d91e5ef83e3da7644c56b7caca064627b",
-        "validation": "e48e69ddd4d56e9b3d66bb282c0a398b67f097bd48018a8e4cbcc5582f0c80d5"
+        "test": "4ddcd617025b2599b782b42386b1b1712ecf3a8dc954f2101f370290a56af78f",
+        "train": "52283e28d99872eae6d61bf0d0cf097192b54770417995a66c6c8d25cd350e9b",
+        "validation": "24ff8f1e7e304f27ebdadee78542b2d6c44e46208b30ba6e2d9174ec2fba0fea"
       }
     }
   },
@@ -294,31 +294,31 @@
       "allowed_use": [
         "conversation-router-training"
       ],
-      "bytes": 13492052,
+      "bytes": 13650788,
       "name": "train",
       "path": "train.jsonl",
-      "rows": 15593,
-      "sha256": "3b003aeb80cd1547216c3964dc87d8d15808916f76a10e45a6cfc2d14fa646c7"
+      "rows": 15736,
+      "sha256": "dde8ebd4e047eafdba7dcd7c14349a881cc9a5458242e6f3f0936b1186f6b025"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 2979522,
+      "bytes": 2985665,
       "name": "validation",
       "path": "validation.jsonl",
-      "rows": 3344,
-      "sha256": "8741662312af4884e73ca8ddd994f83ba333222e7ce2527315f07b2beff14be5"
+      "rows": 3346,
+      "sha256": "c093590b9aef36326a3e2295e7c7fdf464ab76537d630f089d01d011d46459db"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 3324750,
+      "bytes": 3314983,
       "name": "test",
       "path": "test.jsonl",
-      "rows": 4472,
-      "sha256": "dffeb9712b97486770a59197b690cda05fa2cedbc6bb302174407dac4ae5bfb8"
+      "rows": 4461,
+      "sha256": "ddab9e5a73a88b2c6bd32d267b14ae147cd026fa73e41531f245b05ce267b3ba"
     }
   ]
 }
