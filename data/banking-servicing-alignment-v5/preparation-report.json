@@ -1,8 +1,8 @@
 {
   "alignment_split_counts": {
     "test": 35,
-    "train": 384,
-    "validation": 96
+    "train": 672,
+    "validation": 168
   },
   "base_manifest_sha256": "1290c8787dcf06df9c594aed9d483588613ba86f7db1b72ccaef9f4cb5680fe9",
   "base_split_counts": {
@@ -12,7 +12,7 @@
   },
   "contract": "banking-servicing-alignment-sft-report",
   "created_at": "2026-07-31T00:00:00Z",
-  "generator_version": "banking-servicing-alignment-sft/v5",
+  "generator_version": "banking-servicing-alignment-sft/v5.1-remediation",
   "heldout_exact_currents_in_train": [],
   "path_counts": {
     "test": {
@@ -21,14 +21,20 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "multi_turn": 320,
+      "clarification": 32,
+      "multi_turn": 448,
       "ood": 32,
-      "retrieval_grounded_policy": 32
+      "retrieval_grounded_policy": 32,
+      "tool_error": 64,
+      "tool_success": 64
     },
     "validation": {
-      "multi_turn": 80,
+      "clarification": 8,
+      "multi_turn": 112,
       "ood": 8,
-      "retrieval_grounded_policy": 8
+      "retrieval_grounded_policy": 8,
+      "tool_error": 16,
+      "tool_success": 16
     }
   },
   "pii_matches": 0,
@@ -48,9 +54,12 @@
       "card_anaphora_action": 64,
       "clarification_answer": 64,
       "external_topic_shift": 32,
+      "history_entity_action": 128,
+      "history_entity_ambiguity": 32,
       "policy_detour": 32,
       "policy_resume": 32,
-      "service_case_context": 64
+      "service_case_context": 64,
+      "tool_outcome_consistency": 128
     },
     "validation": {
       "agent_repair": 16,
@@ -58,14 +67,17 @@
       "card_anaphora_action": 16,
       "clarification_answer": 16,
       "external_topic_shift": 8,
+      "history_entity_action": 32,
+      "history_entity_ambiguity": 8,
       "policy_detour": 8,
       "policy_resume": 8,
-      "service_case_context": 16
+      "service_case_context": 16,
+      "tool_outcome_consistency": 32
     }
   },
   "split_counts": {
     "test": 215,
-    "train": 1225,
-    "validation": 275
+    "train": 1513,
+    "validation": 347
   }
 }
