@@ -12,7 +12,7 @@
 #   "trl==0.26.2",
 # ]
 # ///
-"""Bootstrap pinned continuation SFT source inside a Hugging Face GPU Job."""
+"""Bootstrap exact V5 PEFT-remediation inputs inside a Hugging Face GPU Job."""
 
 from __future__ import annotations
 
@@ -29,21 +29,21 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
-DATASET_REPO = "spkc83/retail-bank-agent-sft"
-MODEL_REPO = "spkc83/retail-bank-agent-9b"
-BASE_MODEL = "ibm-granite/granite-4.1-8b"
-BASE_REVISION = "1504002f650e656a0a3789d99574df12e3e94ed0"
+DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
+ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
+BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
+BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--dataset-revision", required=True)
-    parser.add_argument("--source-model-revision", required=True)
-    parser.add_argument("--manifest")
+    parser.add_argument("--source-adapter-revision", required=True)
+    parser.add_argument("--destination-repo", required=True)
     parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-continuation")
-    parser.add_argument("--max-steps", type=int, default=600)
-    parser.add_argument("--max-train-seconds", type=int, default=9_000)
+    parser.add_argument("--max-steps", type=int, default=250)
+    parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=100)
     parser.add_argument("--sequential-multiplier", type=int, default=5)
@@ -78,7 +78,9 @@ def download_source(source_commit: str, destination: Path) -> Path:
 def main() -> int:
     args = parse_args()
     require_exact_revision(args.dataset_revision, field="--dataset-revision")
-    require_exact_revision(args.source_model_revision, field="--source-model-revision")
+    require_exact_revision(args.source_adapter_revision, field="--source-adapter-revision")
+    if args.destination_repo == ADAPTER_REPO:
+        raise ValueError("--destination-repo must differ from the source adapter repository")
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-continuation-") as temp_dir:
@@ -93,13 +95,13 @@ def main() -> int:
                 token=os.environ["HF_TOKEN"],
             )
         )
-        manifest = Path(args.manifest) if args.manifest else dataset_root / "manifest.json"
+        manifest = dataset_root / "manifest.json"
         if not manifest.is_file():
             raise RuntimeError(f"dataset manifest is unavailable: {manifest}")
         env = {
             **os.environ,
             "PYTHONPATH": str(source_root / "src"),
-            "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT": "banking-v3-continuation-sft",
+            "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT": "banking-v5-peft-remediation",
             "RETAIL_BANK_SOURCE_COMMIT": args.source_commit,
             "RETAIL_BANK_TOOL_SFT_DATASET_REPO": DATASET_REPO,
             "RETAIL_BANK_TOOL_SFT_DATASET_REVISION": args.dataset_revision,
@@ -114,12 +116,12 @@ def main() -> int:
             str(manifest),
             "--output-dir",
             args.output_dir,
-            "--source-model-repo",
-            MODEL_REPO,
-            "--source-model-revision",
-            args.source_model_revision,
+            "--source-adapter-repo",
+            ADAPTER_REPO,
+            "--source-adapter-revision",
+            args.source_adapter_revision,
             "--hub-dest",
-            MODEL_REPO,
+            args.destination_repo,
             "--base-model",
             BASE_MODEL,
             "--base-revision",
@@ -137,7 +139,7 @@ def main() -> int:
             "--max-seq-len",
             "2048",
             "--learning-rate",
-            "5e-5",
+            "1e-5",
             "--checkpoint-every",
             str(args.checkpoint_every),
             "--sequential-multiplier",
@@ -147,9 +149,9 @@ def main() -> int:
             "--servicing-quality-multiplier",
             str(args.servicing_quality_multiplier),
             "--trackio-project",
-            "retail-bank-agent-v3",
+            "retail-bank-agent-v5-remediation",
             "--trackio-run-name",
-            f"granite-tool-sft-continuation-{args.source_commit[:8]}",
+            f"granite-peft-remediation-{args.source_commit[:8]}",
         ]
         subprocess.run(command, cwd=source_root, env=env, check=True)
     return 0

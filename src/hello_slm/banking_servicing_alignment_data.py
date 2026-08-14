@@ -22,7 +22,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v5"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.1-remediation"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -236,6 +236,9 @@ def _train_records() -> list[dict[str, Any]]:
     records.extend(_agent_repairs("train"))
     records.extend(_topic_shifts("train"))
     records.extend(_policy_detour_and_resume("train"))
+    records.extend(_history_entity_actions("train"))
+    records.extend(_history_entity_ambiguity("train"))
+    records.extend(_tool_outcome_consistency("train"))
     return _expand_records(records, split="train")
 
 
@@ -247,6 +250,9 @@ def _validation_records() -> list[dict[str, Any]]:
     records.extend(_agent_repairs("validation"))
     records.extend(_topic_shifts("validation"))
     records.extend(_policy_detour_and_resume("validation"))
+    records.extend(_history_entity_actions("validation"))
+    records.extend(_history_entity_ambiguity("validation"))
+    records.extend(_tool_outcome_consistency("validation"))
     return _expand_records(records, split="validation")
 
 
@@ -522,6 +528,263 @@ def _policy_detour_and_resume(split: str) -> list[dict[str, Any]]:
     ]
 
 
+def _remediation_entities(split: str) -> dict[str, str]:
+    if split == "train":
+        return {
+            "card_name": "Everyday Rewards Debit",
+            "card_last4": "6158",
+            "other_card_name": "Travel Visa",
+            "other_card_last4": "2046",
+            "outcome_card_name": "Cashback Debit",
+            "outcome_card_last4": "7742",
+            "missing_card_last4": "9307",
+            "recipient": "Summit Plumbing",
+            "missing_recipient": "Cedar Mobile",
+            "merchant": "Silver Pine Books",
+        }
+    if split == "validation":
+        return {
+            "card_name": "Essentials Debit",
+            "card_last4": "3074",
+            "other_card_name": "Reserve Credit",
+            "other_card_last4": "8662",
+            "outcome_card_name": "Neighborhood Debit",
+            "outcome_card_last4": "5413",
+            "missing_card_last4": "1289",
+            "recipient": "Juniper Internet",
+            "missing_recipient": "Granite Wireless",
+            "merchant": "Copper Trail Pharmacy",
+        }
+    raise ValueError(f"unsupported remediation split: {split}")
+
+
+def _history_entity_actions(split: str) -> list[dict[str, Any]]:
+    entity = _remediation_entities(split)
+    suffix = _suffix(split)
+    card_history = [
+        _user(f"Which card did you find {suffix}?"),
+        _assistant(
+            f"I found your active {entity['card_name']} ending in {entity['card_last4']}.",
+            loss=False,
+        ),
+    ]
+    return [
+        _record(
+            record_id=f"history_replace_card_{split}",
+            split=split,
+            scenario_family="history_entity_action",
+            current=f"Replace the one identified in your last message {suffix}.",
+            final=(
+                f"Replacement is pending for your {entity['card_name']} ending in "
+                f"{entity['card_last4']}."
+            ),
+            tool_plan=[("replace_card", {"last4": entity["card_last4"]})],
+            grounding_facts=[
+                f"card.last4={entity['card_last4']}",
+                "card.status=replacement_pending",
+            ],
+            path="multi_turn",
+            pre_messages=card_history,
+            tool_envelopes=[
+                _success_envelope(
+                    card={
+                        "name": entity["card_name"],
+                        "last4": entity["card_last4"],
+                        "status": "replacement_pending",
+                    }
+                )
+            ],
+        ),
+        _record(
+            record_id=f"history_freeze_card_{split}",
+            split=split,
+            scenario_family="history_entity_action",
+            current=f"Freeze that card for me {suffix}.",
+            final=(f"Your {entity['card_name']} ending in {entity['card_last4']} is now frozen."),
+            tool_plan=[("freeze_card", {"last4": entity["card_last4"]})],
+            grounding_facts=[
+                f"card.last4={entity['card_last4']}",
+                "card.status=frozen",
+            ],
+            path="multi_turn",
+            pre_messages=card_history,
+            tool_envelopes=[
+                _success_envelope(
+                    card={
+                        "name": entity["card_name"],
+                        "last4": entity["card_last4"],
+                        "status": "frozen",
+                    }
+                )
+            ],
+        ),
+        _record(
+            record_id=f"history_cancel_transfer_{split}",
+            split=split,
+            scenario_family="history_entity_action",
+            current=f"Cancel the pending payment you identified {suffix}.",
+            final=(
+                f"The cancellation completed successfully for the pending transfer to "
+                f"{entity['recipient']}."
+            ),
+            tool_plan=[("cancel_transfer", {"recipient": entity["recipient"]})],
+            grounding_facts=[
+                f"transfer.recipient={entity['recipient']}",
+                "transfer.status=cancelled",
+            ],
+            path="multi_turn",
+            pre_messages=[
+                _user(f"Summarize my transfers {suffix}."),
+                _assistant(
+                    f"You have a pending transfer to {entity['recipient']} and no other "
+                    "pending transfers.",
+                    loss=False,
+                ),
+            ],
+            tool_envelopes=[
+                _success_envelope(
+                    transfer={"recipient": entity["recipient"], "status": "cancelled"}
+                )
+            ],
+        ),
+        _record(
+            record_id=f"history_dispute_transaction_{split}",
+            split=split,
+            scenario_family="history_entity_action",
+            current=f"Open a dispute for the merchant charge you identified above {suffix}.",
+            final=f"I opened a dispute for the {entity['merchant']} transaction.",
+            tool_plan=[("dispute_transaction", {"description": entity["merchant"]})],
+            grounding_facts=[
+                f"transaction.description={entity['merchant']}",
+                "transaction.disputed=true",
+            ],
+            path="multi_turn",
+            pre_messages=[
+                _user(f"What was my latest card purchase {suffix}?"),
+                _assistant(
+                    f"Your latest posted card purchase was at {entity['merchant']}.",
+                    loss=False,
+                ),
+            ],
+            tool_envelopes=[
+                _success_envelope(
+                    transaction={
+                        "description": entity["merchant"],
+                        "status": "posted",
+                        "disputed": True,
+                    }
+                )
+            ],
+        ),
+    ]
+
+
+def _history_entity_ambiguity(split: str) -> list[dict[str, Any]]:
+    entity = _remediation_entities(split)
+    suffix = _suffix(split)
+    return [
+        _record(
+            record_id=f"history_ambiguous_card_{split}",
+            split=split,
+            scenario_family="history_entity_ambiguity",
+            current=f"Replace the card we were discussing {suffix}.",
+            final=(
+                "I found two cards in our conversation. Which should I replace? Please share "
+                "the last four digits shown in the app."
+            ),
+            tool_plan=[],
+            grounding_facts=[],
+            path="clarification",
+            pre_messages=[
+                _user(f"Show the cards on my profile {suffix}."),
+                _assistant(
+                    f"I found {entity['card_name']} ending in {entity['card_last4']} and "
+                    f"{entity['other_card_name']} ending in {entity['other_card_last4']}.",
+                    loss=False,
+                ),
+            ],
+        )
+    ]
+
+
+def _tool_outcome_consistency(split: str) -> list[dict[str, Any]]:
+    entity = _remediation_entities(split)
+    suffix = _suffix(split)
+    return [
+        _record(
+            record_id=f"outcome_replace_success_{split}",
+            split=split,
+            scenario_family="tool_outcome_consistency",
+            current=f"Replace my card ending in {entity['outcome_card_last4']} {suffix}.",
+            final=(
+                f"Replacement is pending for your {entity['outcome_card_name']} ending in "
+                f"{entity['outcome_card_last4']}."
+            ),
+            tool_plan=[("replace_card", {"last4": entity["outcome_card_last4"]})],
+            grounding_facts=["card.status=replacement_pending"],
+            path="tool_success",
+            pre_messages=[],
+            tool_envelopes=[
+                _success_envelope(
+                    card={
+                        "name": entity["outcome_card_name"],
+                        "last4": entity["outcome_card_last4"],
+                        "status": "replacement_pending",
+                    }
+                )
+            ],
+        ),
+        _record(
+            record_id=f"outcome_replace_error_{split}",
+            split=split,
+            scenario_family="tool_outcome_consistency",
+            current=f"Replace my card ending in {entity['missing_card_last4']} {suffix}.",
+            final=(
+                f"I could not replace a card ending in {entity['missing_card_last4']} because "
+                "no matching card was found. No card status was changed."
+            ),
+            tool_plan=[("replace_card", {"last4": entity["missing_card_last4"]})],
+            grounding_facts=["error.code=card_not_found"],
+            path="tool_error",
+            pre_messages=[],
+            tool_envelopes=[_error_envelope("card_not_found", "No matching card was found.")],
+        ),
+        _record(
+            record_id=f"outcome_cancel_success_{split}",
+            split=split,
+            scenario_family="tool_outcome_consistency",
+            current=f"Cancel the pending transfer to {entity['recipient']} {suffix}.",
+            final=f"The pending transfer to {entity['recipient']} is now cancelled.",
+            tool_plan=[("cancel_transfer", {"recipient": entity["recipient"]})],
+            grounding_facts=["transfer.status=cancelled"],
+            path="tool_success",
+            pre_messages=[],
+            tool_envelopes=[
+                _success_envelope(
+                    transfer={"recipient": entity["recipient"], "status": "cancelled"}
+                )
+            ],
+        ),
+        _record(
+            record_id=f"outcome_cancel_error_{split}",
+            split=split,
+            scenario_family="tool_outcome_consistency",
+            current=f"Cancel the transfer to {entity['missing_recipient']} {suffix}.",
+            final=(
+                f"I could not cancel a transfer to {entity['missing_recipient']} because no "
+                "matching pending transfer was found. The transfer status was not changed."
+            ),
+            tool_plan=[("cancel_transfer", {"recipient": entity["missing_recipient"]})],
+            grounding_facts=["error.code=transfer_not_pending"],
+            path="tool_error",
+            pre_messages=[],
+            tool_envelopes=[
+                _error_envelope("transfer_not_pending", "No matching pending transfer was found.")
+            ],
+        ),
+    ]
+
+
 def _heldout_regression_records() -> list[dict[str, Any]]:
     return [
         _record(
@@ -634,7 +897,10 @@ def _record(
     path: str,
     pre_messages: Sequence[dict[str, Any]],
     policy: Mapping[str, str] | None = None,
+    tool_envelopes: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if tool_envelopes is not None and len(tool_envelopes) != len(tool_plan):
+        raise ValueError("tool_envelopes must align one-to-one with tool_plan")
     messages = [_message("system", SYSTEM_PROMPT, loss=False), *pre_messages]
     if policy is not None:
         messages.append(
@@ -671,7 +937,8 @@ def _record(
                 ],
             }
         )
-        messages.append(_tool_result(call_id, tool_name))
+        envelope = tool_envelopes[index] if tool_envelopes is not None else None
+        messages.append(_tool_result(call_id, tool_name, envelope=envelope))
     messages.append(_assistant(final, loss=True))
     expected = {
         "requires_tool": bool(tool_plan),
@@ -754,12 +1021,27 @@ def _card_history(split: str) -> list[dict[str, Any]]:
     ]
 
 
-def _tool_result(call_id: str, tool_name: str) -> dict[str, Any]:
+def _success_envelope(**result: Any) -> dict[str, Any]:
+    return {"ok": True, "result": result}
+
+
+def _error_envelope(code: str, message: str) -> dict[str, Any]:
+    return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def _tool_result(
+    call_id: str,
+    tool_name: str,
+    *,
+    envelope: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "role": "tool",
         "tool_call_id": call_id,
         "name": tool_name,
-        "content": {"ok": True, "result": _result_for_tool(tool_name)},
+        "content": dict(envelope)
+        if envelope is not None
+        else _success_envelope(**_result_for_tool(tool_name)),
         "loss": False,
     }
 

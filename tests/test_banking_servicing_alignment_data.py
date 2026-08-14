@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from types import ModuleType
@@ -46,8 +47,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 384,
-        "validation": 96,
+        "train": 672,
+        "validation": 168,
         "test": 35,
     }
     train_families = Counter(record["metadata"]["scenario_family"] for record in splits["train"])
@@ -60,6 +61,9 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "banking_topic_shift": 32,
         "policy_detour": 32,
         "policy_resume": 32,
+        "history_entity_action": 128,
+        "history_entity_ambiguity": 32,
+        "tool_outcome_consistency": 128,
     }
     service_case_records = [
         record
@@ -92,6 +96,75 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
     ]
     assert ood_records
     assert all(record["expected"]["grounding_facts"] == [] for record in ood_records)
+
+
+def test_remediation_examples_cover_coreference_ambiguity_and_tool_outcomes() -> None:
+    splits, _report = build_servicing_alignment_splits()
+
+    for split in ("train", "validation"):
+        history_actions = [
+            record
+            for record in splits[split]
+            if record["metadata"]["scenario_family"] == "history_entity_action"
+        ]
+        assert history_actions
+        assert {
+            call["name"] for row in history_actions for call in row["expected"]["tool_calls"]
+        } >= {
+            "replace_card",
+            "freeze_card",
+            "cancel_transfer",
+            "dispute_transaction",
+        }
+        history_text = json.dumps(history_actions, ensure_ascii=False).lower()
+        assert "bright meadow" not in history_text
+        assert "4821" not in history_text
+
+        ambiguous = [
+            record
+            for record in splits[split]
+            if record["metadata"]["scenario_family"] == "history_entity_ambiguity"
+        ]
+        assert ambiguous
+        assert all(row["expected"]["path"] == "clarification" for row in ambiguous)
+        assert all(not row["expected"]["tool_calls"] for row in ambiguous)
+        assert all(
+            "last four digits" in str(row["messages"][-1]["content"]).lower() for row in ambiguous
+        )
+
+        outcomes = [
+            record
+            for record in splits[split]
+            if record["metadata"]["scenario_family"] == "tool_outcome_consistency"
+        ]
+        assert outcomes
+        assert {row["expected"]["path"] for row in outcomes} == {"tool_success", "tool_error"}
+        for row in outcomes:
+            envelopes = [
+                message["content"] for message in row["messages"] if message["role"] == "tool"
+            ]
+            assert envelopes
+            final = str(row["messages"][-1]["content"]).lower()
+            if row["expected"]["path"] == "tool_error":
+                assert all(envelope["ok"] is False for envelope in envelopes)
+                assert any(token in final for token in ("could not", "was not"))
+                assert any(token in final for token in ("no ", "not ", "unchanged"))
+            else:
+                assert all(envelope["ok"] is True for envelope in envelopes)
+
+    train_remediation = [
+        row
+        for row in splits["train"]
+        if row["metadata"]["scenario_family"].startswith(("history_entity", "tool_outcome"))
+    ]
+    validation_remediation = [
+        row
+        for row in splits["validation"]
+        if row["metadata"]["scenario_family"].startswith(("history_entity", "tool_outcome"))
+    ]
+    train_last4 = set(re.findall(r"\b\d{4}\b", json.dumps(train_remediation)))
+    validation_last4 = set(re.findall(r"\b\d{4}\b", json.dumps(validation_remediation)))
+    assert train_last4.isdisjoint(validation_last4)
 
 
 def test_exact_screenshot_currents_are_held_out_from_training() -> None:
@@ -146,8 +219,8 @@ def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 384,
-        "validation": 96,
+        "train": 672,
+        "validation": 168,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
