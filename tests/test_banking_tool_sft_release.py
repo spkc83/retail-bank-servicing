@@ -20,6 +20,37 @@ def load_finalizer() -> ModuleType:
 FINALIZER = load_finalizer()
 
 
+def test_finalizer_accepts_versioned_step_and_artifact_subdirectories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "hf_job_finalize_tool_sft.py",
+            "--source-commit",
+            "a" * 40,
+            "--training-job",
+            "training-job",
+            "--remerge-job",
+            "merge-job",
+            "--parity-job",
+            "parity-job",
+            "--selected-step",
+            "750",
+            "--merged-subdir",
+            "merged",
+            "--adapter-subdir",
+            "adapter",
+        ],
+    )
+
+    args = FINALIZER.parse_args()
+
+    assert args.selected_step == 750
+    assert args.merged_subdir == "merged"
+    assert args.adapter_subdir == "adapter"
+
+
 def parity_report(**overrides: object) -> dict[str, object]:
     metrics: dict[str, object] = {
         "all_logit_differences_finite": True,

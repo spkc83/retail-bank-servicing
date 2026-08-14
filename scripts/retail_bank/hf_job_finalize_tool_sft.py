@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--merged-subdir", default="merged-fp16")
+    parser.add_argument("--adapter-subdir", default="adapter")
+    parser.add_argument("--selected-step", type=int, default=3_000)
     parser.add_argument(
         "--parity-report",
         default="merge_parity_diagnostics_merged-fp16_float16.json",
@@ -159,7 +161,7 @@ tags:
 - peft
 ---
 
-# Retail Bank Agent 9B
+# Retail Bank Servicing Agent 9B
 
 Merged FP16 LoRA adaptation for the synthetic retail-bank customer-service POC.
 
@@ -189,9 +191,16 @@ def main() -> int:
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
 
+    if args.selected_step < 1:
+        raise ValueError("--selected-step must be positive")
     merged_dir = args.output_root / args.merged_subdir
-    adapter_dir = args.output_root / "adapter"
-    metadata_path = args.output_root / "checkpoints" / "step-003000" / "metadata.json"
+    adapter_dir = args.output_root / args.adapter_subdir
+    metadata_path = (
+        args.output_root
+        / "checkpoints"
+        / f"step-{args.selected_step:06d}"
+        / "metadata.json"
+    )
     parity_path = args.output_root / args.parity_report
     require_files(merged_dir, MERGED_ALLOWLIST)
     require_files(adapter_dir, ADAPTER_ALLOWLIST)
@@ -203,8 +212,11 @@ def main() -> int:
         maximum_logit_difference=args.maximum_logit_difference,
         maximum_p999_difference=args.maximum_p999_difference,
     )
-    if metadata.get("step") != 3_000:
-        raise RuntimeError("training metadata does not represent step 3000")
+    if metadata.get("step") != args.selected_step:
+        raise RuntimeError(
+            "training metadata does not represent selected step "
+            f"{args.selected_step}"
+        )
 
     model_sha256 = sha256(merged_dir / "model.safetensors")
     adapter_sha256 = sha256(adapter_dir / "adapter_model.safetensors")
@@ -220,7 +232,7 @@ def main() -> int:
         repo_type="model",
         folder_path=merged_dir,
         allow_patterns=list(MERGED_ALLOWLIST),
-        commit_message="Publish merged banking-v3 SFT weights",
+        commit_message="Publish merged retail-bank SFT weights",
     )
     weights_revision = str(weights_commit.oid)
     require_exact_revision(weights_revision, field="weights revision")
@@ -230,12 +242,12 @@ def main() -> int:
         folder_path=adapter_dir,
         path_in_repo="adapter",
         allow_patterns=list(ADAPTER_ALLOWLIST),
-        commit_message="Retain banking-v3 LoRA adapter",
+        commit_message="Retain retail-bank LoRA adapter",
     )
 
     release = {
         "contract": "banking-v3-tool-sft-release/v1",
-        "steps": 3_000,
+        "steps": args.selected_step,
         "source_commit": args.source_commit,
         "training_job": args.training_job,
         "remerge_job": args.remerge_job,
@@ -275,7 +287,7 @@ def main() -> int:
         repo_type="model",
         path_or_fileobj=metadata_path,
         path_in_repo="training_metadata.json",
-        commit_message="Add banking-v3 training provenance",
+        commit_message="Add retail-bank training provenance",
     )
     api.upload_file(
         repo_id=args.model_repo,
@@ -289,7 +301,7 @@ def main() -> int:
         repo_type="model",
         path_or_fileobj=release_path,
         path_in_repo="training_result.json",
-        commit_message="Add banking-v3 training result",
+        commit_message="Add retail-bank training result",
     )
     api.upload_file(
         repo_id=args.model_repo,
