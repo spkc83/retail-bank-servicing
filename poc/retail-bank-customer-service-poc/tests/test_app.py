@@ -176,8 +176,7 @@ def test_zero_gpu_probe_reports_exact_runtime_identity(app_module) -> None:
         "model_id": app_module.MODEL_ID,
         "model_revision": app_module.MODEL_REVISION,
         "router_revision": app_module.ROUTER_REVISION,
-        "runtime_device": "unavailable",
-        "cuda_device_name": "unavailable",
+        **app_module.runtime_metadata(),
     }
 
 
