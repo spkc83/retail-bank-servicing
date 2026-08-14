@@ -10,10 +10,9 @@ import pytest
 
 WORKER_PATH = Path("scripts/retail_bank/cloud_recover_continuation_export.py")
 REMERGE_PATH = Path("scripts/retail_bank/hf_job_remerge_tool_sft.py")
+PARITY_PATH = Path("scripts/retail_bank/hf_job_merge_parity.py")
 JOB_PATH = Path("scripts/retail_bank/hf_job_recover_continuation_export.py")
-LAUNCHER_PATH = Path(
-    "scripts/retail_bank/run_remote_continuation_export_recovery.sh"
-)
+LAUNCHER_PATH = Path("scripts/retail_bank/run_remote_continuation_export_recovery.sh")
 
 
 def _load_worker() -> ModuleType:
@@ -40,17 +39,13 @@ def test_recovery_uses_unchanged_parity_gates() -> None:
 
 def test_recovery_candidate_order_starts_with_fp16_native() -> None:
     source = WORKER_PATH.read_text(encoding="utf-8")
-    fp16_position = source.index(
-        '"merged_subdir": f"merged-{step_label}-fp16-native"'
-    )
-    fp32_position = source.index(
-        '"merged_subdir": f"merged-{step_label}-fp32-fp16"'
-    )
+    fp16_position = source.index('"merged_subdir": f"merged-{step_label}-fp16-native"')
+    fp32_position = source.index('"merged_subdir": f"merged-{step_label}-fp32-fp16"')
 
     assert fp16_position < fp32_position
     assert '"merge_dtype": "float16"' in source[fp16_position:fp32_position]
     assert '"inference_dtype": "float16"' in source[fp16_position:fp32_position]
-    assert 'args.recovery_source_commit[:8]' in source
+    assert "args.recovery_source_commit[:8]" in source
 
 
 def test_recovery_publishes_only_after_validate_parity() -> None:
@@ -88,6 +83,13 @@ def test_remerge_dtype_defaults_preserve_existing_release_path() -> None:
     assert 'default="float32"' in source
     assert 'default="float16"' in source
     assert 'default="fp16_remerge.json"' in source
+
+
+def test_parity_preserves_trained_adapter_dtype() -> None:
+    source = PARITY_PATH.read_text(encoding="utf-8")
+
+    assert "autocast_adapter_dtype=False" in source
+    assert '"adapter_autocast_dtype": False' in source
 
 
 def test_recovery_launcher_is_export_only_and_capped() -> None:
@@ -135,7 +137,7 @@ def test_recovery_cross_checks_persisted_and_job_provenance() -> None:
             },
             "base_model": "base",
             "base_revision": "c" * 40,
-        }
+        },
     }
     job = SimpleNamespace(
         id="job-123",
@@ -196,7 +198,7 @@ def test_recovery_rejects_job_metadata_provenance_mismatch() -> None:
             },
             "base_model": "base",
             "base_revision": "c" * 40,
-        }
+        },
     }
     job = SimpleNamespace(
         id="job-123",

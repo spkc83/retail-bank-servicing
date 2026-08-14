@@ -130,9 +130,7 @@ def run_model(
                 use_cache=True,
             )
         logits.append(output.logits.detach().float().cpu())
-        generations.append(
-            generated[:, on_device["input_ids"].shape[-1] :].detach().cpu()
-        )
+        generations.append(generated[:, on_device["input_ids"].shape[-1] :].detach().cpu())
     return logits, generations
 
 
@@ -158,12 +156,8 @@ def compare_outputs(
             )
         ]
     )
-    adapter_argmax = torch.cat(
-        [logits.argmax(dim=-1).reshape(-1) for logits in adapter_logits]
-    )
-    merged_argmax = torch.cat(
-        [logits.argmax(dim=-1).reshape(-1) for logits in merged_logits]
-    )
+    adapter_argmax = torch.cat([logits.argmax(dim=-1).reshape(-1) for logits in adapter_logits])
+    merged_argmax = torch.cat([logits.argmax(dim=-1).reshape(-1) for logits in merged_logits])
     generation_matches = [
         bool(torch.equal(adapter, merged))
         for adapter, merged in zip(
@@ -211,9 +205,7 @@ def compare_outputs(
                 )
             )
         ),
-        "argmax_token_agreement": float(
-            (adapter_argmax == merged_argmax).float().mean().item()
-        ),
+        "argmax_token_agreement": float((adapter_argmax == merged_argmax).float().mean().item()),
         "greedy_generation_equal_by_prompt": generation_matches,
         "all_greedy_generations_equal": all(generation_matches),
     }
@@ -260,7 +252,11 @@ def main() -> int:
         dtype=inference_dtype,
         device_map={"": torch.cuda.current_device()},
     )
-    adapter_model = PeftModel.from_pretrained(base, adapter_dir)
+    adapter_model = PeftModel.from_pretrained(
+        base,
+        adapter_dir,
+        autocast_adapter_dtype=False,
+    )
     adapter_logits, adapter_generations = run_model(
         adapter_model,
         batches,
@@ -292,6 +288,7 @@ def main() -> int:
         "adapter_dir": str(adapter_dir),
         "merged_dir": str(merged_dir),
         "dtype": args.inference_dtype,
+        "adapter_autocast_dtype": False,
         "cuda_device": torch.cuda.get_device_name(torch.cuda.current_device()),
         "max_input_tokens": args.max_input_tokens,
         "max_new_tokens": args.max_new_tokens,
