@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-tool-eval")
     parser.add_argument("--max-new-tokens-first", type=int, default=192)
     parser.add_argument("--max-new-tokens-final", type=int, default=220)
+    parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")
     return parser.parse_args()
 
 
@@ -97,7 +98,7 @@ def main() -> int:
             "--max-new-tokens-final",
             str(args.max_new_tokens_final),
             "--dtype",
-            "fp16",
+            args.dtype,
             "--push-to-hub",
             "--enforce-release-gates",
         ]

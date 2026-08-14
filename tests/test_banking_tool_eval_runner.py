@@ -613,6 +613,7 @@ def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:
     assert "cloud_generate_tool_eval.py" in source
     assert 'parser.add_argument("--model-repo", default=MODEL_REPO)' in source
     assert 'parser.add_argument("--dataset-repo", default=DATASET_REPO)' in source
+    assert 'parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")' in source
     assert '"--model-revision",' in source
     assert '"--dataset-revision",' in source
     assert '"--push-to-hub",' in source
@@ -636,3 +637,5 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert 'dataset_repo="${DATASET_REPO:-spkc83/retail-bank-servicing-alignment-sft}"' in source
     assert '--model-repo "$model_repo"' in source
     assert '--dataset-repo "$dataset_repo"' in source
+    assert 'dtype="${4:-fp16}"' in source
+    assert '--dtype "$dtype"' in source
