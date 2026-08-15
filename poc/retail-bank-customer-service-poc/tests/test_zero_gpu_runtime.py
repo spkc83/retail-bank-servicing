@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib
 import sys
-from types import ModuleType
+from contextlib import contextmanager
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import torch
 
 
 def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract(
@@ -24,6 +26,7 @@ def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract
         "cuda_device_name": "unavailable",
         "model_loading_mode": "peft_adapter",
         "model_dtype": "bf16",
+        "activation_observer_mode": "unavailable",
         "base_model_id": "spkc83/retail-bank-servicing-agent-9b",
         "base_model_revision": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
         "adapter_id": "spkc83/retail-bank-servicing-agent-9b-peft",
@@ -67,6 +70,66 @@ def test_token_count_uses_input_ids_from_batch_encoding_shape(
     )
 
 
+def test_zero_gpu_generation_returns_pass_scoped_activation_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POC_SKIP_MODEL_LOAD", "1")
+    sys.modules.pop("zero_gpu_runtime", None)
+    runtime = importlib.import_module("zero_gpu_runtime")
+
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def apply_chat_template(self, *_args: object, **_kwargs: object) -> str:
+            return "prompt"
+
+        def __call__(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"input_ids": torch.tensor([[1, 2]])}
+
+        def decode(self, _ids: object, **_kwargs: object) -> str:
+            return "Observed ZeroGPU answer"
+
+    class FakeModel:
+        device = torch.device("cpu")
+
+        def generate(self, **_kwargs: object) -> torch.Tensor:
+            return torch.tensor([[1, 2, 3]])
+
+    class FakeSession:
+        def finalize(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                as_dict=lambda: {
+                    "schema": "retail-bank-activation-observation/v1",
+                    "status": "observed",
+                }
+            )
+
+    class FakeObserver:
+        config = SimpleNamespace(mode="observe")
+
+        @contextmanager
+        def capture(self):
+            yield FakeSession()
+
+    cast(Any, runtime).tokenizer = FakeTokenizer()
+    cast(Any, runtime).model = FakeModel()
+    cast(Any, runtime).torch = torch
+    cast(Any, runtime).activation_observer = FakeObserver()
+
+    result = runtime.generate_text(
+        [{"role": "system", "content": "system"}],
+        None,
+        8,
+    )
+
+    assert result.text == "Observed ZeroGPU answer"
+    assert result.activation_observation == {
+        "schema": "retail-bank-activation-observation/v1",
+        "status": "observed",
+    }
+
+
 def test_zero_gpu_runtime_loads_exact_base_and_unmerged_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -85,6 +148,8 @@ def test_zero_gpu_runtime_loads_exact_base_and_unmerged_adapter(
         eos_token = "<eos>"
 
     class FakeModel:
+        config = SimpleNamespace(num_hidden_layers=40, hidden_size=4096)
+
         def to(self, device: str) -> None:
             calls["device"] = (device,)
 
@@ -118,10 +183,24 @@ def test_zero_gpu_runtime_loads_exact_base_and_unmerged_adapter(
     transformers.AutoModelForCausalLM = FakeAutoModel  # type: ignore[attr-defined]
     peft = ModuleType("peft")
     peft.PeftModel = FakePeftModel  # type: ignore[attr-defined]
+    activation_guardrails = ModuleType("activation_guardrails")
+
+    class FakeActivationProbeConfig:
+        @staticmethod
+        def from_env(_model: FakeModel) -> SimpleNamespace:
+            return SimpleNamespace(mode="off")
+
+    class FakeActivationObserver:
+        def __init__(self, _model: FakeModel, config: object, **_kwargs: object) -> None:
+            self.config = config
+
+    activation_guardrails.ActivationProbeConfig = FakeActivationProbeConfig  # type: ignore[attr-defined]
+    activation_guardrails.ActivationObserver = FakeActivationObserver  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "spaces", spaces)
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "transformers", transformers)
     monkeypatch.setitem(sys.modules, "peft", peft)
+    monkeypatch.setitem(sys.modules, "activation_guardrails", activation_guardrails)
     sys.modules.pop("zero_gpu_runtime", None)
 
     runtime = importlib.import_module("zero_gpu_runtime")

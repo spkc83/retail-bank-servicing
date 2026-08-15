@@ -13,6 +13,8 @@ from model_service import (
     AgentExecutionError,
     AgentProtocolError,
     ConversationalBankingAgent,
+    GenerationResult,
+    activation_diagnostic_payloads,
     parse_tool_calls,
     select_token_budgeted_context,
 )
@@ -34,7 +36,7 @@ class RecordingModel:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
-    ) -> str:
+    ) -> str | GenerationResult:
         self.calls.append(
             {
                 "messages": messages,
@@ -50,6 +52,26 @@ class RecordingModel:
         tools: list[dict[str, Any]] | None,
     ) -> int:
         return len(json.dumps({"messages": messages, "tools": tools}))
+
+
+class ObservedModel(RecordingModel):
+    def generate(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        max_new_tokens: int,
+    ) -> GenerationResult:
+        text = super().generate(messages, tools, max_new_tokens)
+        assert isinstance(text, str)
+        return GenerationResult(
+            text=text,
+            activation_observation={
+                "schema": "retail-bank-activation-observation/v1",
+                "status": "observed",
+                "mode": "observe",
+                "layers": [19, 39],
+            },
+        )
 
 
 def router_guidance() -> dict[str, Any]:
@@ -230,6 +252,68 @@ def test_plain_first_pass_text_is_a_model_authored_conversational_answer() -> No
             "details."
         ),
     }
+
+
+def test_generation_result_keeps_activation_observation_on_exact_model_pass() -> None:
+    agent = ConversationalBankingAgent(
+        bank=bank(),
+        model=ObservedModel(["Hello. How can I help with your banking today?"]),
+    )
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="converse",
+            fine_intent="conversation",
+            entity_resolution="not_required",
+        ),
+    )
+
+    assert len(result.model_passes) == 1
+    assert result.model_passes[0].activation_observation == {
+        "schema": "retail-bank-activation-observation/v1",
+        "status": "observed",
+        "mode": "observe",
+        "layers": [19, 39],
+    }
+
+
+def test_activation_diagnostics_drop_unapproved_fields() -> None:
+    agent = ConversationalBankingAgent(
+        bank=bank(),
+        model=ObservedModel(["Hello. How can I help with your banking today?"]),
+    )
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="converse",
+            fine_intent="conversation",
+            entity_resolution="not_required",
+        ),
+    )
+    observation = result.model_passes[0].activation_observation
+    assert observation is not None
+    observation["prompt"] = "private customer text"
+    observation["raw_vector"] = [91.125]
+
+    payloads = activation_diagnostic_payloads(result.model_passes)
+
+    assert payloads == [
+        {
+            "pass": "base",
+            "schema": "retail-bank-activation-observation/v1",
+            "status": "observed",
+            "mode": "observe",
+            "layers": [],
+        }
+    ]
+    assert "private customer text" not in json.dumps(payloads)
 
 
 def test_v4_execute_exposes_only_predicted_intent_tool_across_followup() -> None:

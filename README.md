@@ -84,7 +84,8 @@ Read these in order:
 7. [Inference and POC](docs/07-inference-and-poc.md)
 8. [End-to-end runbook](docs/08-end-to-end-runbook.md)
 9. [Router architecture deep dive](docs/09-conversation-router-v4.md)
-10. [File map](docs/reference/file-map.md)
+10. [Live guardrails and MI shadow mode](docs/17-live-guardrails-and-mechanistic-interpretability.md)
+11. [File map](docs/reference/file-map.md)
 
 The filenames `05-dual-head-router.md` and `09-conversation-router-v4.md` are
 retained for stable links. Their content documents the active V6 router.

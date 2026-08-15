@@ -46,9 +46,11 @@ from model_service import (
     AgentExecutionError,
     AgentProtocolError,
     ConversationalBankingAgent,
+    GenerationResult,
     ModelPassTrace,
     ModelRuntime,
     ToolCall,
+    activation_diagnostic_payloads,
     canonical_conversation,
     router_diagnostic_fields,
 )
@@ -102,7 +104,7 @@ class _RuntimeModel(ModelRuntime):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
-    ) -> str:
+    ) -> str | GenerationResult:
         return generate_text(messages, tools, max_new_tokens)
 
     def count_tokens(
@@ -636,6 +638,13 @@ def _render_diagnostics(
         )
         or "- None; the 9B generator was not invoked."
     )
+    activation_text = html.escape(
+        json.dumps(
+            activation_diagnostic_payloads(model_passes),
+            indent=2,
+            sort_keys=True,
+        )
+    )
     visible_hash = (
         hashlib.sha256(visible_response.encode("utf-8")).hexdigest()
         if isinstance(visible_response, str)
@@ -667,6 +676,7 @@ def _render_diagnostics(
         f"**9B tool calls**\n{call_text}\n\n"
         f"**Tool results**\n{result_text}\n\n"
         f"**9B generation provenance**\n{pass_text}\n\n"
+        f"**MI shadow observations**\n<pre><code>{activation_text}</code></pre>\n\n"
         f"- Generation calls: `{len(model_passes)}`\n"
         f"- Model: `{MODEL_ID}`\n"
         f"- Exact model revision: `{MODEL_REVISION}`\n"

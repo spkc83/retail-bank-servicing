@@ -152,6 +152,7 @@ def test_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(app_module) -> No
     assert "V6 action: `execute_tool`" in diagnostics
     assert "V6 entity resolution: `resolved`" in diagnostics
     assert 'Exposed tools: `["freeze_card"]`' in diagnostics
+    assert "MI shadow observations" in diagnostics
     assert "list_accounts" not in diagnostics
 
 

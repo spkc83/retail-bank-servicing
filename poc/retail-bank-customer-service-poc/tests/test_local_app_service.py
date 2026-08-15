@@ -148,6 +148,7 @@ def test_local_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(
     assert "V6 action: `execute_tool`" in result.diagnostics
     assert "V6 entity resolution: `not_required`" in result.diagnostics
     assert 'Exposed tools: `["list_accounts"]`' in result.diagnostics
+    assert "MI shadow observations" in result.diagnostics
 
 
 def test_local_first_pass_parse_failure_preserves_raw_output_in_diagnostics(

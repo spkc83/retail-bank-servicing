@@ -142,6 +142,12 @@ _TOOL_CALL_BLOCK = re.compile(
 
 
 @dataclass(frozen=True)
+class GenerationResult:
+    text: str
+    activation_observation: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
 class ModelPassTrace:
     label: str
     input_tokens: int
@@ -151,6 +157,7 @@ class ModelPassTrace:
     raw_output: str
     runtime_device: str
     cuda_device_name: str
+    activation_observation: dict[str, Any] | None = None
 
 
 class AgentProtocolError(ValueError):
@@ -182,13 +189,88 @@ class ModelRuntime(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
-    ) -> str: ...
+    ) -> str | GenerationResult: ...
 
     def count_tokens(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> int: ...
+
+
+def activation_diagnostic_payloads(
+    model_passes: tuple[ModelPassTrace, ...],
+) -> list[dict[str, Any]]:
+    """Return only the aggregate activation fields approved for diagnostics."""
+    payloads: list[dict[str, Any]] = []
+    for trace in model_passes:
+        observation = trace.activation_observation
+        if not isinstance(observation, dict):
+            continue
+        config = observation.get("config")
+        runtime = observation.get("runtime_composition")
+        layers = observation.get("layers")
+        payload: dict[str, Any] = {
+            "pass": trace.label,
+            "schema": observation.get("schema"),
+            "status": observation.get("status"),
+            "mode": observation.get("mode"),
+        }
+        if isinstance(observation.get("code"), str):
+            payload["code"] = observation["code"]
+        if isinstance(config, dict):
+            payload["config"] = {
+                key: config[key]
+                for key in (
+                    "layer_indices",
+                    "layer_count",
+                    "hidden_width",
+                    "max_samples_per_layer",
+                )
+                if key in config
+            }
+        if isinstance(runtime, dict):
+            payload["runtime_composition"] = {
+                key: runtime[key]
+                for key in (
+                    "runtime_device",
+                    "model_dtype",
+                    "weight_quantization",
+                    "base_model_revision",
+                    "adapter_revision",
+                )
+                if key in runtime
+            }
+        if isinstance(layers, list):
+            payload["layers"] = [
+                _sanitize_activation_layer(item) for item in layers if isinstance(item, dict)
+            ]
+        payloads.append(payload)
+    return payloads
+
+
+def _sanitize_activation_layer(layer: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {
+        key: layer[key] for key in ("layer_index", "module") if key in layer
+    }
+    for phase in ("prefill", "decode"):
+        values = layer.get(phase)
+        if not isinstance(values, dict):
+            continue
+        sanitized[phase] = {
+            key: values[key]
+            for key in (
+                "sample_count",
+                "rms",
+                "mean_abs",
+                "max_abs",
+                "all_finite",
+                "seq_width_min",
+                "seq_width_max",
+            )
+            if key in values
+        }
+    return sanitized
 
 
 @dataclass(frozen=True)
@@ -638,11 +720,19 @@ class ConversationalBankingAgent:
             sort_keys=True,
             separators=(",", ":"),
         )
-        output = self.model.generate(
+        generated = self.model.generate(
             messages,
             tools,
             MAX_NEW_TOKENS,
-        ).strip()
+        )
+        if isinstance(generated, GenerationResult):
+            output = generated.text.strip()
+            activation_observation = generated.activation_observation
+        elif isinstance(generated, str):
+            output = generated.strip()
+            activation_observation = None
+        else:
+            raise TypeError("model runtime returned an unsupported generation result")
         metadata_provider = getattr(self.model, "runtime_metadata", None)
         metadata = metadata_provider() if callable(metadata_provider) else {}
         return output, ModelPassTrace(
@@ -654,6 +744,7 @@ class ConversationalBankingAgent:
             raw_output=output,
             runtime_device=str(metadata.get("runtime_device", "unavailable")),
             cuda_device_name=str(metadata.get("cuda_device_name", "unavailable")),
+            activation_observation=activation_observation,
         )
 
     def _execute_tool(

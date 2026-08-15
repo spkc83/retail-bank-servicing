@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import torch
 
 import local_gpu_runtime as runtime_module
 from local_gpu_runtime import (
@@ -110,6 +112,64 @@ def test_explicit_test_skip_does_not_construct_a_model(
         )
 
 
+def test_local_generation_returns_immutable_pass_observation() -> None:
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token_id = 0
+
+        def apply_chat_template(self, *_args: object, **_kwargs: object) -> str:
+            return "prompt"
+
+        def __call__(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"input_ids": torch.tensor([[1, 2]])}
+
+        def decode(self, _ids: object, **_kwargs: object) -> str:
+            return "Observed answer"
+
+    class FakeModel:
+        device = torch.device("cpu")
+
+        def generate(self, **_kwargs: object) -> torch.Tensor:
+            return torch.tensor([[1, 2, 3]])
+
+    class FakeSession:
+        def finalize(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                as_dict=lambda: {
+                    "schema": "retail-bank-activation-observation/v1",
+                    "status": "observed",
+                }
+            )
+
+    class FakeObserver:
+        config = SimpleNamespace(mode="observe")
+
+        @contextmanager
+        def capture(self):
+            yield FakeSession()
+
+    runtime = LocalGraniteRuntime(
+        tokenizer=FakeTokenizer(),
+        model=FakeModel(),
+        torch_module=torch,
+        cuda_metadata={},
+        weight_quantization="test",
+        activation_observer=FakeObserver(),  # type: ignore[arg-type]
+    )
+
+    result = runtime.generate(
+        [{"role": "system", "content": "system"}],
+        None,
+        8,
+    )
+
+    assert result.text == "Observed answer"
+    assert result.activation_observation == {
+        "schema": "retail-bank-activation-observation/v1",
+        "status": "observed",
+    }
+
+
 def test_local_runtime_attaches_adapter_to_quantized_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,6 +184,7 @@ def test_local_runtime_attaches_adapter_to_quantized_base(
 
     class FakeModel:
         device = "cuda:0"
+        config = SimpleNamespace(num_hidden_layers=40, hidden_size=4096)
 
         def eval(self) -> None:
             calls["eval"] = ()

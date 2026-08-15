@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
+
+from model_service import GenerationResult
 
 MODEL_ID = os.environ.get(
     "RETAIL_BANK_MODEL_ID",
@@ -71,11 +74,14 @@ if SKIP_MODEL_LOAD:
     spaces_runtime: Any = _Spaces()
     tokenizer = None
     model = None
+    activation_observer = None
 else:
     import spaces
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from activation_guardrails import ActivationObserver, ActivationProbeConfig
 
     spaces_runtime = spaces
     load_repo = BASE_MODEL_ID if USE_PEFT_ADAPTER else MODEL_ID
@@ -106,6 +112,20 @@ else:
     )
     model.to("cuda")
     model.eval()
+    activation_observer = ActivationObserver(
+        model,
+        ActivationProbeConfig.from_env(model),
+        runtime_composition={
+            "runtime_device": "cuda",
+            "model_dtype": MODEL_DTYPE,
+            "weight_quantization": "none",
+            "base_model_revision": BASE_MODEL_REVISION,
+            "adapter_revision": ADAPTER_REVISION,
+        },
+    )
+
+
+_generation_lock = threading.Lock()
 
 
 def count_tokens(
@@ -130,6 +150,9 @@ def runtime_metadata() -> dict[str, str]:
     composition = {
         "model_loading_mode": "peft_adapter" if USE_PEFT_ADAPTER else "merged",
         "model_dtype": MODEL_DTYPE,
+        "activation_observer_mode": (
+            "unavailable" if activation_observer is None else activation_observer.config.mode
+        ),
     }
     if USE_PEFT_ADAPTER:
         composition.update(
@@ -164,7 +187,7 @@ def generate_text(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     max_new_tokens: int,
-) -> str:
+) -> GenerationResult:
     if tokenizer is None or model is None:
         raise RuntimeError("ZeroGPU model is unavailable")
     if not messages or messages[0].get("role") != "system":
@@ -180,14 +203,29 @@ def generate_text(
     )
     encoded = tokenizer(rendered, return_tensors="pt")
     inputs = {name: tensor.to(model.device) for name, tensor in encoded.items()}
-    with torch.inference_mode():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            use_cache=True,
-        )
+    with _generation_lock, torch.inference_mode():
+        if activation_observer is None:
+            output_ids = _generate_ids(inputs, max_new_tokens)
+            observation = None
+        else:
+            with activation_observer.capture() as session:
+                output_ids = _generate_ids(inputs, max_new_tokens)
+            observation = session.finalize().as_dict()
     new_ids = output_ids[0, inputs["input_ids"].shape[-1] :]
-    return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+    return GenerationResult(
+        text=str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip(),
+        activation_observation=observation,
+    )
+
+
+def _generate_ids(inputs: dict[str, Any], max_new_tokens: int) -> Any:
+    if tokenizer is None or model is None:
+        raise RuntimeError("ZeroGPU model is unavailable")
+    return model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        use_cache=True,
+    )

@@ -29,7 +29,8 @@ contract, and run either interface.
 7. [Inference and POC](07-inference-and-poc.md)
 8. [End-to-end runbook](08-end-to-end-runbook.md)
 9. [Router architecture deep dive](09-conversation-router-v4.md)
-10. [File map](reference/file-map.md)
+10. [Live guardrails and MI shadow mode](17-live-guardrails-and-mechanistic-interpretability.md)
+11. [File map](reference/file-map.md)
 
 The router documentation retains two historical filenames for stable links;
 the pages themselves describe V6 format 4 and its seven heads.

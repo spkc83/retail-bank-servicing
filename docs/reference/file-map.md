@@ -38,6 +38,7 @@ c0d71b433fd1eef510fce36f6308eb36e423e329
 | File | Responsibility |
 | --- | --- |
 | [`../../poc/retail-bank-customer-service-poc/router.py`](../../poc/retail-bank-customer-service-poc/router.py) | Artifact verification, state-aware rendering, seven-head inference, route boundary, joint decoding, and diagnostics. |
+| [`../../poc/retail-bank-customer-service-poc/activation_guardrails.py`](../../poc/retail-bank-customer-service-poc/activation_guardrails.py) | Default-off, bounded Granite activation observation and sanitized shadow-mode aggregates. |
 | [`../../poc/retail-bank-customer-service-poc/model_service.py`](../../poc/retail-bank-customer-service-poc/model_service.py) | Token-budgeted context, action-guided single-tool plan, Granite loop, policy generation, and model-pass traces. |
 | [`../../poc/retail-bank-customer-service-poc/dialogue_state.py`](../../poc/retail-bank-customer-service-poc/dialogue_state.py) | Pending servicing task, policy detour, resume, intent switch, completion, and reset. |
 | [`../../poc/retail-bank-customer-service-poc/policy_retrieval.py`](../../poc/retail-bank-customer-service-poc/policy_retrieval.py) | Policy corpus verification, ranking, and citation metadata. |
@@ -73,5 +74,6 @@ c0d71b433fd1eef510fce36f6308eb36e423e329
 | [`../../tests/test_banking_conversation_router_training.py`](../../tests/test_banking_conversation_router_training.py) | Seven-head loss, calibration, metrics, artifact, and release gates. |
 | [`../../poc/retail-bank-customer-service-poc/tests/test_router.py`](../../poc/retail-bank-customer-service-poc/tests/test_router.py) | Runtime artifact loading, joint tuple, thresholds, and diagnostics. |
 | [`../../poc/retail-bank-customer-service-poc/tests/test_model_service.py`](../../poc/retail-bank-customer-service-poc/tests/test_model_service.py) | Single-tool guidance, tool loop, policy lane, context, and traces. |
+| [`../../poc/retail-bank-customer-service-poc/tests/test_activation_guardrails.py`](../../poc/retail-bank-customer-service-poc/tests/test_activation_guardrails.py) | Hook lifecycle, bounds, aggregation, privacy, failure sanitization, and output parity. |
 | [`../../poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py`](../../poc/retail-bank-customer-service-poc/tests/test_dialogue_state.py) | Detour, resume, intent switch, completion, and reset. |
 | [`../../poc/retail-bank-customer-service-poc/tests/test_local_app_service.py`](../../poc/retail-bank-customer-service-poc/tests/test_local_app_service.py) | End-to-end local orchestration behavior. |

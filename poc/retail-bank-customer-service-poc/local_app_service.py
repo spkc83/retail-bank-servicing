@@ -16,6 +16,7 @@ from model_service import (
     ModelPassTrace,
     ModelRuntime,
     ToolCall,
+    activation_diagnostic_payloads,
     canonical_conversation,
     router_diagnostic_fields,
 )
@@ -401,6 +402,11 @@ def render_local_diagnostics(
         )
         or "- None; Granite was not invoked."
     )
+    activation_text = json.dumps(
+        activation_diagnostic_payloads(model_passes),
+        indent=2,
+        sort_keys=True,
+    )
     visible_hash = hashlib.sha256(visible_response.encode("utf-8")).hexdigest()
     return (
         "### Local experiment diagnostics\n\n"
@@ -426,6 +432,7 @@ def render_local_diagnostics(
         f"**Generated tool calls**\n{call_text}\n\n"
         f"**Tool results**\n{result_text}\n\n"
         f"**Model passes**\n{pass_text}\n\n"
+        f"**MI shadow observations**\n```json\n{activation_text}\n```\n\n"
         f"- Generation calls: `{len(model_passes)}`\n"
         f"- Model: `{runtime_metadata.get('model_id', MODEL_ID)}`\n"
         f"- Exact model revision: "

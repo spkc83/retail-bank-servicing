@@ -4,6 +4,9 @@ import os
 import threading
 from typing import Any
 
+from activation_guardrails import ActivationObserver, ActivationProbeConfig
+from model_service import GenerationResult
+
 MODEL_ID = os.environ.get(
     "RETAIL_BANK_MODEL_ID",
     "spkc83/retail-bank-servicing-agent-9b-peft",
@@ -66,12 +69,14 @@ class LocalGraniteRuntime:
         torch_module: Any | None,
         cuda_metadata: dict[str, str],
         weight_quantization: str,
+        activation_observer: ActivationObserver | None = None,
     ) -> None:
         self.tokenizer = tokenizer
         self.model = model
         self.torch = torch_module
         self.cuda_metadata = dict(cuda_metadata)
         self.weight_quantization = weight_quantization
+        self.activation_observer = activation_observer
         self._generation_lock = threading.Lock()
 
     @classmethod
@@ -87,6 +92,7 @@ class LocalGraniteRuntime:
                     "cuda_compiled_arch": "unavailable",
                 },
                 weight_quantization="not-loaded-test-mode",
+                activation_observer=None,
             )
 
         try:
@@ -133,12 +139,24 @@ class LocalGraniteRuntime:
                 autocast_adapter_dtype=False,
             )
         model.eval()
+        activation_observer = ActivationObserver(
+            model,
+            ActivationProbeConfig.from_env(model),
+            runtime_composition={
+                "runtime_device": str(_model_device(model)),
+                "model_dtype": "fp16",
+                "weight_quantization": "bitsandbytes-nf4-double",
+                "base_model_revision": BASE_MODEL_REVISION,
+                "adapter_revision": ADAPTER_REVISION,
+            },
+        )
         return cls(
             tokenizer=tokenizer,
             model=model,
             torch_module=torch,
             cuda_metadata=cuda_metadata,
             weight_quantization="bitsandbytes-nf4-double",
+            activation_observer=activation_observer,
         )
 
     def count_tokens(
@@ -165,7 +183,7 @@ class LocalGraniteRuntime:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
-    ) -> str:
+    ) -> GenerationResult:
         tokenizer, model, torch = self._required_components()
         if not messages or messages[0].get("role") != "system":
             raise ValueError("model messages must begin with a system prompt")
@@ -185,17 +203,35 @@ class LocalGraniteRuntime:
         if "attention_mask" not in inputs:
             inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
         with self._generation_lock, torch.inference_mode():
-            output_ids = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                use_cache=True,
-            )
+            if self.activation_observer is None:
+                output_ids = self._generate_ids(model, tokenizer, inputs, max_new_tokens)
+                observation = None
+            else:
+                with self.activation_observer.capture() as session:
+                    output_ids = self._generate_ids(model, tokenizer, inputs, max_new_tokens)
+                observation = session.finalize().as_dict()
         prompt_width = int(inputs["input_ids"].shape[-1])
         new_ids = output_ids[0, prompt_width:]
-        return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+        return GenerationResult(
+            text=str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip(),
+            activation_observation=observation,
+        )
+
+    @staticmethod
+    def _generate_ids(
+        model: Any,
+        tokenizer: Any,
+        inputs: dict[str, Any],
+        max_new_tokens: int,
+    ) -> Any:
+        return model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            use_cache=True,
+        )
 
     def runtime_metadata(self) -> dict[str, str]:
         device = "unavailable" if self.model is None else str(_model_device(self.model))
@@ -205,6 +241,11 @@ class LocalGraniteRuntime:
             "model_loading_mode": "peft_adapter" if USE_PEFT_ADAPTER else "merged",
             "runtime_device": device,
             "weight_quantization": self.weight_quantization,
+            "activation_observer_mode": (
+                "unavailable"
+                if self.activation_observer is None
+                else self.activation_observer.config.mode
+            ),
             **self.cuda_metadata,
         }
         if USE_PEFT_ADAPTER:
