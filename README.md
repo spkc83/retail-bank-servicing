@@ -41,16 +41,19 @@ current turn + up to 3 visible exchanges + trusted prior dialogue state
   -> uncertain: Granite receives no tools and asks a clarification
   -> retrieve_policy: retrieve governed policy; Granite receives no tools
   -> execute_tool: expose the single tool schema mapped from the intent
-     -> Granite decides whether to call it and supplies all arguments
+     -> Granite must call it exactly once and supplies all arguments
+     -> one bounded retry if Granite emits prose instead of the required call
      -> execute against fictional session state
+     -> remove tools for the grounded-final pass
      -> render exact read tables or validate the grounded response
   -> clarify/converse: Granite receives no tools and follows turn guidance
 ```
 
 The classifier does not generate tool arguments and does not execute a tool.
 For an accepted `execute_tool` decision, the harness exposes exactly one
-intent-compatible schema. Granite still decides whether enough information is
-present and chooses the arguments from conversation context.
+intent-compatible schema and requires exactly one call before execution.
+Granite chooses the arguments from conversation context; unresolved targets
+are routed to `clarify` without exposing a tool.
 
 ## Seven-Head Taxonomy
 

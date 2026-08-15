@@ -27,8 +27,10 @@ AGENT_SYSTEM_PROMPT = (
     "customer-specific banking records or actions, use tool results for final answers, "
     "call dependent tools one at a time so each later call can use the earlier result, "
     "and never ask for account numbers, customer IDs, passwords, PINs, or private IDs."
-    " Respond warmly and concisely, acknowledge distress before helping, name banking "
-    "products clearly, and never mention prototypes, demos, synthetic data, models, "
+    " Respond warmly and concisely, acknowledge distress only when the customer "
+    "explicitly expresses it, never infer distress from a neutral greeting or request, "
+    "name banking products clearly, and never mention prototypes, demos, synthetic "
+    "data, models, "
     "routers, tools, GPUs, CPUs, or implementation details."
 )
 
@@ -326,6 +328,7 @@ class ConversationalBankingAgent:
         current = [*canonical, {"role": "user", "content": message.strip()}]
         system, public_tools = _generation_plan(router_result)
         serving_tools = self.tool_adapter.render_tools(public_tools) if public_tools else None
+        routed_single_call = _requires_tool_call(router_result, public_tools)
         first_context = select_token_budgeted_context(
             system,
             current,
@@ -351,6 +354,36 @@ class ConversationalBankingAgent:
                 first_output,
                 turn_key=first_trace.prompt_sha256,
             )
+            if not calls and routed_single_call:
+                retry_system = _required_tool_retry_system(system, public_tools)
+                retry_context = select_token_budgeted_context(
+                    retry_system,
+                    current,
+                    tools=serving_tools,
+                    token_counter=self.model.count_tokens,
+                    input_budget=self.input_budget,
+                    pinned_exchange=pinned_exchange,
+                )
+                retry_output, retry_trace = self._generate_pass(
+                    "required_tool_retry_1",
+                    retry_context,
+                    serving_tools,
+                )
+                model_passes.append(retry_trace)
+                if not retry_output:
+                    raise AgentProtocolError(
+                        "model returned an empty response when a tool call was required"
+                    )
+                calls = self.tool_adapter.parse_assistant(
+                    retry_output,
+                    turn_key=retry_trace.prompt_sha256,
+                )
+                if not calls:
+                    raise AgentProtocolError(
+                        "model did not return a required tool call after one retry"
+                    )
+            if routed_single_call and len(calls) != 1:
+                raise AgentProtocolError("routed servicing turns require exactly one tool call")
             if not calls:
                 return self._complete_without_tools(
                     username=username,
@@ -379,10 +412,12 @@ class ConversationalBankingAgent:
                     with_tools.append(self.tool_adapter.render_tool_result(call, result))
 
                 post_tool_passes += 1
+                followup_system = _grounded_final_system(system) if routed_single_call else system
+                followup_tools = None if routed_single_call else serving_tools
                 followup_context = select_token_budgeted_context(
-                    system,
+                    followup_system,
                     with_tools,
-                    tools=serving_tools,
+                    tools=followup_tools,
                     token_counter=self.model.count_tokens,
                     input_budget=self.input_budget,
                     pinned_exchange=pinned_exchange,
@@ -395,7 +430,7 @@ class ConversationalBankingAgent:
                 followup_output, followup_trace = self._generate_pass(
                     pass_label,
                     followup_context,
-                    serving_tools,
+                    followup_tools,
                 )
                 model_passes.append(followup_trace)
                 if not followup_output:
@@ -404,6 +439,10 @@ class ConversationalBankingAgent:
                     followup_output,
                     turn_key=followup_trace.prompt_sha256,
                 )
+                if routed_single_call and next_calls:
+                    raise AgentProtocolError(
+                        "grounded-final response attempted another routed tool call"
+                    )
                 if not next_calls:
                     final_output = followup_output
                     break
@@ -977,7 +1016,8 @@ def _generation_plan(
     elif action == "converse":
         instruction = (
             "Respond naturally and concisely without looking up customer records or "
-            "performing a banking action."
+            "performing a banking action. Never infer distress, trouble, or a failed "
+            "banking event from a neutral greeting or social message."
         )
     else:
         instruction = (
@@ -989,6 +1029,46 @@ def _generation_plan(
         "role": "system",
         "content": f"{system['content']}\n\nTURN GUIDANCE: {instruction}",
     }, tools
+
+
+def _requires_tool_call(
+    router_result: dict[str, Any],
+    public_tools: list[dict[str, Any]],
+) -> bool:
+    return (
+        "action" in router_result
+        and router_result.get("route") == "in_domain"
+        and router_result.get("action") == "execute_tool"
+        and router_result.get("entity_resolution") in {"resolved", "not_required"}
+        and len(public_tools) == 1
+    )
+
+
+def _required_tool_retry_system(
+    system: dict[str, str],
+    public_tools: list[dict[str, Any]],
+) -> dict[str, str]:
+    tool_name = str(public_tools[0]["function"]["name"])
+    return {
+        "role": "system",
+        "content": (
+            f"{system['content']}\n\nTOOL CALL REQUIRED: A tool call is required before "
+            f"answering this customer-specific request. Call {tool_name}, the only "
+            "available tool. Do not describe, simulate, or claim the result before "
+            "the application returns the tool result."
+        ),
+    }
+
+
+def _grounded_final_system(system: dict[str, str]) -> dict[str, str]:
+    return {
+        "role": "system",
+        "content": (
+            f"{system['content']}\n\nGROUNDED FINAL REQUIRED: The routed banking tool "
+            "has already run. Do not call any tool again. Answer only from the returned "
+            "tool result and do not claim anything the result does not establish."
+        ),
+    }
 
 
 def router_diagnostic_fields(router_result: dict[str, Any]) -> dict[str, Any]:

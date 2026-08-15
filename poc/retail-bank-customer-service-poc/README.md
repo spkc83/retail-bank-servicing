@@ -56,7 +56,9 @@ customer turn + recent conversation + trusted prior dialogue state
   -> relation thresholds for context, repair, topic shift, clarification, resume
   -> out_of_domain: fixed scope response; no Granite pass
   -> policy: retrieve evidence; Granite gets no tools
-  -> execute_tool: Granite gets one intent-compatible tool schema
+  -> execute_tool: Granite gets one intent-compatible schema and must call it once
+     -> one bounded retry if the first pass emits prose
+     -> grounded-final pass receives the result and no tools
   -> clarify/converse/uncertain: Granite gets no tools
   -> validate and execute model-selected arguments against fictional state
   -> exact table or grounded Granite response
@@ -64,8 +66,9 @@ customer turn + recent conversation + trusted prior dialogue state
 
 The router never supplies tool arguments. It narrows the tool space to one
 schema only when the decoded action is executable and the entity state is
-usable. Granite decides whether to call that schema and derives arguments from
-conversation history.
+usable. Granite derives arguments from conversation history. The harness
+requires exactly one call before execution and rejects any repeat call after
+the result, preventing duplicate routed mutations.
 
 ## Supported Actions
 

@@ -136,17 +136,18 @@ list_transactions    list_transfers      freeze_card
 replace_card         dispute_transaction cancel_transfer
 ```
 
-Granite still decides whether the action is appropriate and supplies every
-argument. It may answer directly or emit tagged JSON:
+For an accepted V6 `execute_tool` route, Granite supplies every argument and
+must emit exactly one tagged JSON call:
 
 ```text
 <tool_call>{"name":"list_transactions","arguments":{"limit":5}}</tool_call>
 ```
 
-The harness validates the name, arguments, types, call order, unique IDs, and
-an eight-call maximum. It executes valid calls against session-isolated state
-and returns correlated results to Granite. Multiple dependent calls are
-supported one pass at a time.
+The harness validates the name, arguments, and types before execution. If the
+first pass emits prose, it retries Granite once without inventing arguments. It
+then executes the one valid call against session-isolated state and returns the
+correlated result to a no-tools grounded-final pass. Repeated calls are rejected.
+The bounded multi-call chain remains only for legacy V3 compatibility.
 
 Successful read-only lists are rendered by the harness as Markdown tables from
 exact result fields. Action responses remain Granite-authored, but the harness

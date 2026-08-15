@@ -223,9 +223,11 @@ def test_plain_first_pass_text_is_a_model_authored_conversational_answer() -> No
             "use tool results for final answers, call dependent tools one at a time "
             "so each later call can use the earlier result, and never ask for account "
             "numbers, customer IDs, passwords, PINs, or private IDs. Respond warmly "
-            "and concisely, acknowledge distress before helping, name banking products "
-            "clearly, and never mention prototypes, demos, synthetic data, models, "
-            "routers, tools, GPUs, CPUs, or implementation details."
+            "and concisely, acknowledge distress only when the customer explicitly "
+            "expresses it, never infer distress from a neutral greeting or request, "
+            "name banking products clearly, and never mention prototypes, demos, "
+            "synthetic data, models, routers, tools, GPUs, CPUs, or implementation "
+            "details."
         ),
     }
 
@@ -247,16 +249,173 @@ def test_v4_execute_exposes_only_predicted_intent_tool_across_followup() -> None
         router_result=v4_router_guidance(
             action="execute_tool",
             fine_intent="view_transactions",
+            entity_resolution="not_required",
         ),
     )
 
     assert [call.name for call in result.tool_calls] == ["list_transactions"]
     assert len(model.calls) == 2
-    for call in model.calls:
-        assert [tool["function"]["name"] for tool in call["tools"]] == ["list_transactions"]
+    assert [tool["function"]["name"] for tool in model.calls[0]["tools"]] == ["list_transactions"]
+    assert model.calls[1]["tools"] is None
     system_prompt = model.calls[0]["messages"][0]["content"]
     assert "Use only list_transactions for this turn" in system_prompt
     assert "guidance supplies no tool arguments" in system_prompt
+
+
+def test_v4_execute_retries_once_when_model_returns_prose_before_required_tool() -> None:
+    model = RecordingModel(
+        [
+            "I found your transactions.",
+            '<tool_call>{"name": "list_transactions", "arguments": {"limit": 5}}</tool_call>',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my five most recent transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+    assert result.tool_calls[0].arguments == {"limit": 5}
+    assert [trace.label for trace in result.model_passes] == [
+        "base",
+        "required_tool_retry_1",
+        "grounded_final",
+    ]
+    assert all(
+        [tool["function"]["name"] for tool in call["tools"]] == ["list_transactions"]
+        for call in model.calls[:2]
+    )
+    assert model.calls[2]["tools"] is None
+    assert "A tool call is required before answering" in model.calls[1]["messages"][0]["content"]
+
+
+def test_v4_execute_rejects_repeated_prose_without_executing_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = RecordingModel(
+        [
+            "I replaced that card.",
+            "The replacement is complete.",
+        ]
+    )
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(
+        AgentExecutionError,
+        match="required tool call after one retry",
+    ) as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Replace the card ending in 4821.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="replace_card",
+            ),
+        )
+
+    assert executed == []
+    assert [trace.label for trace in failure.value.model_passes] == [
+        "base",
+        "required_tool_retry_1",
+    ]
+    assert [trace.raw_output for trace in failure.value.model_passes] == [
+        "I replaced that card.",
+        "The replacement is complete.",
+    ]
+    assert model.outputs == []
+
+
+def test_v4_execute_rejects_multiple_routed_write_calls_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    duplicate_calls = (
+        '<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>'
+        '<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>'
+    )
+    model = RecordingModel(["I can replace it.", duplicate_calls])
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(
+        AgentExecutionError,
+        match="exactly one tool call",
+    ):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Replace the card ending in 4821.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="replace_card",
+            ),
+        )
+
+    assert executed == []
+
+
+def test_v4_grounded_final_rejects_repeated_write_after_one_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repeated_call = '<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>'
+    model = RecordingModel([repeated_call, repeated_call])
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"status": "replacement_requested", "last4": "4821"}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(
+        AgentExecutionError,
+        match="grounded-final response attempted another routed tool call",
+    ) as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Replace the card ending in 4821.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="replace_card",
+            ),
+        )
+
+    assert executed == ["replace_card"]
+    assert [trace.label for trace in failure.value.model_passes] == [
+        "base",
+        "grounded_final",
+    ]
+    assert model.calls[1]["tools"] is None
 
 
 @pytest.mark.parametrize("entity_resolution", ["missing", "ambiguous", "ineligible"])
@@ -337,6 +496,7 @@ def test_v4_converse_exposes_no_banking_tools() -> None:
     assert result.response == response
     assert model.calls[0]["tools"] is None
     assert "Respond naturally and concisely" in model.calls[0]["messages"][0]["content"]
+    assert "Never infer distress" in model.calls[0]["messages"][0]["content"]
 
 
 def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:

@@ -68,12 +68,18 @@ cancel_transfer -> expose cancel_transfer only
 
 The system guidance names the allowed tool but supplies no arguments. Granite
 must derive selectors such as a card ending or transfer recipient from the
-conversation. If required selectors are absent, Granite should ask one
-clarifying question.
+conversation and emit exactly one call. If it emits prose first, the harness
+gives it one bounded retry with the same single schema. A second prose response
+fails transparently and executes nothing.
 
 For `missing`, `ambiguous`, or `ineligible` entity resolution, the harness
 exposes no tool. This reduces invalid tool choice while preserving Granite as
 the natural-language and argument-selection component.
+
+After the routed call executes, the grounded-final pass receives the correlated
+tool result and no tool schemas. Any attempted repeat call is rejected, so a
+single routed servicing turn cannot execute the same mutation twice. Legacy V3
+evaluation paths retain their bounded multi-tool chaining behavior.
 
 ## Policy Detours and Intent Changes
 
