@@ -530,11 +530,11 @@ class LearnedConversationRouter:
             entity_resolution_labels=self.entity_resolution_labels,
         )
         domain = decision.domain
-        lane = decision.lane
-        family = decision.family
-        intent = decision.intent
-        action = decision.action
-        entity_resolution = decision.entity_resolution
+        lane: str | None = decision.lane
+        family: str | None = decision.family
+        intent: str | None = decision.intent
+        action: str | None = decision.action
+        entity_resolution: str | None = decision.entity_resolution
         decoded_tuple = (domain, lane, family, intent, action, entity_resolution)
         diagnostics: tuple[str, ...] = (
             ("constraint:joint-decoder-resolved-independent-head-conflict",)

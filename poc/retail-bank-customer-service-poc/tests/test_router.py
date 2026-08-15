@@ -26,7 +26,7 @@ from router import (
 
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "c8f154266612e79afe20af8abef25761fa56d589"
+    assert ROUTER_REVISION == "7f6a0e77ad231233702039560ced007fdc68bd74"
 
 
 class FakeTokenizer:

@@ -1,209 +1,165 @@
-# V5 Inference and POC
+# V6 Inference and POC
 
-The POC has two interfaces over the same orchestration design:
+The same orchestration design serves two interfaces:
 
 - Gradio on Hugging Face ZeroGPU;
 - Streamlit on a local CUDA GPU.
 
-Both present Harborlight Bank and Harbor, use two fictional authenticated
-profiles, load the released V5 CPU router, preserve bounded dialogue state,
-retrieve from the same policy corpus, run Granite through the same action
-service, and expose developer diagnostics separately from the chat.
+Both use the V6 hierarchical CPU router, the Granite PEFT composition, bounded
+dialogue state, the versioned policy corpus, and fictional session-isolated
+bank data.
 
 ## Runtime Pins
 
-| Component | ID | Revision/status |
-| --- | --- | --- |
-| Generalized router | `spkc83/retail-bank-conversation-router` | `c8f154266612e79afe20af8abef25761fa56d589` |
-| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft` | `cc95e446af2b5e1d8d9df2751a8192613ad386e3`; adapter bundle commit `b4269445...` |
-| Granite base | `spkc83/retail-bank-servicing-agent-9b` | `1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| Model loading mode | PEFT base plus adapter | BF16 on ZeroGPU; NF4-quantized base plus adapter locally |
-| Policy corpus | `policy_knowledge.json` | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
+| Component | Identity |
+| --- | --- |
+| Router | `spkc83/retail-bank-conversation-router@7f6a0e77ad231233702039560ced007fdc68bd74` |
+| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| Granite adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
+| Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
+| Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
-Both runtimes pin all four PEFT composition fields. They load the base first,
-attach the adapter with `autocast_adapter_dtype=False`, and expose
-`model_loading_mode: peft_adapter` in diagnostics. The final PEFT revision
-`cc95e446...` is the model identity; `b4269445...` is the adapter-files bundle
-commit recorded in its release metadata. Strict
-evaluation failed, so these pins describe a testable candidate, not an
-approved deployment.
+The loader pins this immutable commit and rejects a mutable branch name.
 
 ## Turn Lifecycle
 
-1. The UI obtains the authenticated username and session ID.
-2. The runtime canonicalizes visible conversation history.
-3. The router receives the current text, up to three recent visible exchanges,
-   and the trusted pre-turn dialogue state.
-4. OOD and classifier-error routes return direct governed responses without a
-   Granite call.
-5. An accepted fine intent and relations update the bounded state machine.
-6. The policy lane retrieves versioned chunks and calls Granite with banking
-   actions disabled.
-7. Other accepted/uncertain turns call Granite with normal action schemas.
-8. The action loop validates and executes up to eight calls.
-9. Read-only lists are rendered as Markdown tables. Other answers are checked
-   against action results.
-10. Policy answers require allowed `[Policy: id]` citations.
-11. All customer-facing answers pass the internal-language validator; one
-    tools-disabled repair is allowed.
-12. A successful action matching the pending servicing intent clears state.
-13. The UI records route scores, state, policy sources, action calls/results,
-    model-pass hashes, raw output, device, and immutable revisions in the
-    diagnostics panel.
+1. Resolve the authenticated fictional profile and browser session.
+2. Canonicalize visible conversation history.
+3. Classify the current text with up to three recent exchanges and trusted
+   pre-turn dialogue state.
+4. Joint-decode domain, lane, family, intent, action, and entity resolution;
+   independently threshold the relation head.
+5. Apply the route/action contract:
+   - OOD: return the governed scope response without Granite;
+   - uncertain: no tools, one natural clarification;
+   - policy: retrieve evidence, no tools, require valid citations;
+   - servicing: expose one intent-compatible tool schema when executable;
+   - clarify/converse: no tools and action-specific generation guidance.
+6. Let Granite choose tool arguments from conversation context.
+7. Validate and execute up to eight action passes against fictional state.
+8. Render exact list results as Markdown tables or validate action-grounded
+   prose.
+9. Record router tuple, raw candidates, model passes, tool results, hashes,
+   devices, and immutable revisions in diagnostics.
 
-## Routing and State Behavior
+## Router Outputs at Runtime
 
-| Router result | State behavior | Granite behavior |
-| --- | --- | --- |
-| `out_of_domain` | unchanged | not called |
-| `classifier_error` | unchanged | not called |
-| `uncertain` | unchanged | normal model turn |
-| in-domain `conversation` | unchanged | direct conversation or clarification |
-| in-domain servicing intent | start, continue, or replace one pending task | normal action-capable turn |
-| in-domain `policy_knowledge` | preserve pending task and activate detour | retrieved policy context; actions disabled |
-| `resume_previous_service` after detour | deactivate detour and restore servicing lane | original servicing exchange pinned into context |
+| Output | Consumer |
+| --- | --- |
+| `route` / `domain` | Scope gate and abstention behavior. |
+| `lane` | Servicing, policy, conversation, or other-banking orchestration. |
+| `family` | Diagnostic product hierarchy. |
+| `intent` | Dialogue-state continuity and single-tool schema selection. |
+| `active_relations` | Repair, topic-change, clarification, and resume transitions. |
+| `action` | Refuse, retrieve, execute, clarify, or converse generation plan. |
+| `entity_resolution` | Blocks execution for missing, ambiguous, or ineligible targets. |
+| candidate probabilities | Diagnostics only; they do not bypass the joint decision. |
 
-The router intent does not enter the model prompt. It influences only the
-bounded orchestration lane and state transition. Granite still chooses whether
-to call an action and supplies its public arguments.
+## Action-Guided Harness
+
+The harness does not send all nine tools on every turn. If the router emits
+`execute_tool`, `_generation_plan` maps the intent to one public schema:
+
+```text
+replace_card -> expose replace_card only
+view_transactions -> expose list_transactions only
+cancel_transfer -> expose cancel_transfer only
+```
+
+The system guidance names the allowed tool but supplies no arguments. Granite
+must derive selectors such as a card ending or transfer recipient from the
+conversation. If required selectors are absent, Granite should ask one
+clarifying question.
+
+For `missing`, `ambiguous`, or `ineligible` entity resolution, the harness
+exposes no tool. This reduces invalid tool choice while preserving Granite as
+the natural-language and argument-selection component.
+
+## Policy Detours and Intent Changes
+
+The dialogue state stores one pending servicing task. A policy question can
+temporarily activate a knowledge detour without discarding that task. A later
+`resume_previous_service` relation restores the task and pins its original
+user/assistant exchange into model context.
+
+An explicit new intent takes precedence over stale state. For example, after
+a card-replacement clarification, “Actually, show my transfers” produces the
+transfer hierarchy and replaces the pending route instead of being interpreted
+as a card answer.
 
 ## Token-Budgeted Conversation
 
 [`select_token_budgeted_context`](../poc/retail-bank-customer-service-poc/model_service.py)
-keeps complete interaction groups rather than truncating individual messages.
-The default input budget is 8,192 tokens. During a resumed task, the actual
-original user/assistant exchange is a pinned group and survives ordinary
-oldest-first trimming.
+keeps complete interaction groups instead of truncating individual messages.
+The default model-input budget is 8,192 tokens. A resumed task pins its actual
+anchor exchange so ordinary oldest-first trimming cannot remove it.
 
-This approach supports long conversations without sending unlimited history.
-It also prevents the state machine from inventing a summary that Granite never
-saw.
+The router sees only up to three recent exchanges plus bounded state. Granite
+receives a larger token-budgeted history because generation needs more natural
+conversation context than classification.
 
-## Policy Retrieval and Generation
-
-[`PolicyKnowledgeBase`](../poc/retail-bank-customer-service-poc/policy_retrieval.py)
-loads a schema-versioned JSON corpus, recomputes its SHA-256 revision, rejects
-tampering, and ranks chunks through deterministic weighted lexical overlap.
-Each match includes product, jurisdiction, effective dates, score, revision,
-and citation.
-
-For a mortgage question, a retrieved chunk might be:
-
-```text
-[Policy: mortgage.opening.us.v1]
-Customers may begin a mortgage application online or with a mortgage specialist ...
-```
-
-Granite receives the passage and no action schemas. The response validator
-requires at least one returned citation, rejects invented IDs, rejects internal
-implementation language, and rejects numeric claims absent from the evidence.
-
-If retrieval finds no match, the application returns the policy-not-found
-response and does not ask Granite to answer from memory.
-
-## Action-Capable Granite Turn
-
-Normal servicing calls pass the nine public action schemas. Granite can answer
-directly or emit:
-
-```text
-<tool_call>{"name":"cancel_transfer","arguments":{"recipient":"River Consulting"}}</tool_call>
-```
-
-The harness validates the wire format and executes the action against the
-authenticated session's fictional SQLite state. The next Granite pass sees the
-correlated result. Dependent actions are executed one pass at a time so later
-arguments can depend on earlier results.
-
-The harness renders successful read-only actions as exact tables. It validates
-action answers for essential facts and private-ID leakage. It never substitutes
-a CPU-authored servicing answer when Granite fails.
-
-## Proving Granite Generated the Response
+## Confirming Granite Generated a Response
 
 Open **Technical details** in Gradio or **Experiment diagnostics** in
-Streamlit. For every Granite pass, the panel records:
+Streamlit. A Granite-authored turn records at least one model pass with:
 
-- label such as `base`, `grounded_final`, `policy_grounded`, or a repair pass;
-- input token count;
-- prompt SHA-256;
-- raw output and raw-output SHA-256;
-- runtime device and CUDA device;
-- exact base, adapter-bundle, and router revisions;
-- emitted actions and execution results;
-- response path, policy sources, and dialogue state;
-- visible-response SHA-256.
+- pass label and raw output;
+- prompt and output SHA-256;
+- input-token count;
+- runtime and CUDA device;
+- exact base, adapter, and router identities;
+- exposed action schema, calls, and results;
+- response path and policy sources.
 
-A turn with zero recorded model passes was not generated by Granite. This is
-expected for high-confidence OOD, classifier failure, or policy no-match.
+Zero model passes means Granite did not generate the response. Expected
+zero-pass paths include OOD, classifier failure, and policy no-match.
 
 ## Local Streamlit
-
-Start the local app from the repository root:
 
 ```bash
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
-Open <http://127.0.0.1:8501>. The launcher installs its pinned runtime through
-the UV script metadata, refuses test skip flags unless explicitly allowed, and
-loads:
+Open <http://127.0.0.1:8501>. The local runtime loads the Granite base with
+bitsandbytes NF4 double quantization and attaches the immutable adapter. It
+prefers:
 
-- the pinned Granite base with bitsandbytes NF4 double quantization and the
-  pinned LoRA adapter attached without merging;
-- `artifacts/banking-conversation-router-v5-social-policy-generalization-candidate5`
-  when present, otherwise the published generalized router;
-- the versioned policy JSON;
-- the same fictional bank state and controller used by tests.
+```text
+artifacts/banking-conversation-router-v6-hierarchical
+```
 
-Local default credentials are displayed on the login page:
+Local-only default credentials are:
 
 ```text
 alex.demo / alex-local-demo
 maya.demo / maya-local-demo
 ```
 
-Override them with a JSON object containing exactly those two usernames and
-different passwords of at least 12 characters:
+Set stronger values with:
 
 ```bash
 export DEMO_AUTH_JSON='{"alex.demo":"replace-with-strong-value-1","maya.demo":"replace-with-strong-value-2"}'
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
-Useful local overrides:
-
-```text
-LOCAL_STREAMLIT_PORT
-LOCAL_ROUTER_ARTIFACT_DIR
-RETAIL_BANK_MODEL_ID
-RETAIL_BANK_MODEL_REVISION
-RETAIL_BANK_BASE_MODEL_ID
-RETAIL_BANK_BASE_MODEL_REVISION
-RETAIL_BANK_ADAPTER_ID
-RETAIL_BANK_ADAPTER_REVISION
-RETAIL_BANK_ROUTER_ID
-RETAIL_BANK_ROUTER_REVISION
-HF_TOKEN
-```
+Relevant overrides are `LOCAL_STREAMLIT_PORT`,
+`LOCAL_ROUTER_ARTIFACT_DIR`, `RETAIL_BANK_MODEL_ID`,
+`RETAIL_BANK_MODEL_REVISION`, `RETAIL_BANK_BASE_MODEL_ID`,
+`RETAIL_BANK_BASE_MODEL_REVISION`, `RETAIL_BANK_ADAPTER_ID`,
+`RETAIL_BANK_ADAPTER_REVISION`, `RETAIL_BANK_ROUTER_ID`,
+`RETAIL_BANK_ROUTER_REVISION`, and `HF_TOKEN`.
 
 ## Gradio and ZeroGPU
 
-[`app.py`](../poc/retail-bank-customer-service-poc/app.py) runs one queued model
-event at a time. The model turn uses
-`@spaces.GPU(size="large", duration=90)`. A separate 30-second probe confirms
-that user code entered a ZeroGPU worker and reports the packed model/device
-metadata.
+The model event uses `@spaces.GPU(size="large", duration=90)`. A separate
+30-second probe confirms that user code entered a ZeroGPU worker. The Gradio
+queue uses concurrency one for this low-traffic POC.
 
-The Space requires `DEMO_AUTH_JSON` as a variable or secret. It must define
-exactly `alex.demo` and `maya.demo`, use different passwords, and use at least
-12 characters per password.
-
-Plan a deployment without publishing:
+Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=c8f154266612e79afe20af8abef25761fa56d589
+ROUTER_REVISION=7f6a0e77ad231233702039560ced007fdc68bd74
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
@@ -218,30 +174,21 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --router-revision "$ROUTER_REVISION"
 ```
 
-The helper uploads only allowlisted POC files and persists the exact base,
-adapter, router, dtype, and Space commit identities as Space variables. The
-command above only prints a plan. Do not add `--execute --allow-publish`: the
-current PEFT candidate failed strict evaluation. Deployment remains pending a
-new evaluated artifact.
+Without `--execute --allow-publish`, the helper prints and validates a plan.
+Execution uploads only allowlisted POC files and persists exact runtime pins.
 
-## Reset and Isolation
+The current Space source/pin deployment is
+`f018cad020a17e33be59992035c1418c4cf91a01`. Its runtime remains **PAUSED**;
+the current OAuth token receives HTTP 401 when attempting a restart. Treat the
+Space as deployed but unavailable, not READY, until authentication is repaired
+and a remote smoke test passes.
 
-Each authenticated browser session has independent conversation and bounded
-dialogue state. The fictional bank registry isolates mutable records by
-username and session ID. **Start over** or **Reset demo** clears the complete
-conversation, pending task, detour flag, and session bank changes.
-
-Static authentication is only a POC profile selector. It is not a production
-identity, authorization, or security design.
-
-## POC Verification
-
-Run without loading Granite or downloading the router:
+## Verify
 
 ```bash
 POC_SKIP_MODEL_LOAD=1 POC_SKIP_ROUTER_LOAD=1 \
   uv run pytest -q poc/retail-bank-customer-service-poc/tests
 ```
 
-The skip flags are test-only. The local launcher refuses them during an
-ordinary start, and production Space configuration should not set them.
+Skip flags are test-only. Ordinary local launches and the deployed Space must
+load the real model and router.

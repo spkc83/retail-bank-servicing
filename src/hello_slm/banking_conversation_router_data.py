@@ -1224,62 +1224,65 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
 def _ineligible_entity_rows(split: str) -> list[dict[str, Any]]:
     """Teach the router to preserve intent while blocking an ineligible entity."""
 
-    examples = {
-        "train": {
-            "freeze_card": (
-                "Freeze that closed card anyway.",
-                "Try to lock the inactive card.",
-                "Block the card that is already closed.",
-                "Put a freeze on the permanently disabled card.",
-                "Lock the card that has already been replaced.",
-                "Try freezing the expired card shown above.",
-                "Block that unusable card once more.",
-                "Apply a freeze to the card marked closed.",
-            ),
-            "replace_card": (
-                "Replace that card even though a replacement is pending.",
-                "Order another copy of the card already being replaced.",
-                "Replace the card whose replacement request is still open.",
-                "Request another replacement for the card already replaced.",
-                "Send a new card for the closed card shown above.",
-                "Replace that card despite the active replacement order.",
-                "Order a copy of the card that is no longer replaceable.",
-                "Proceed with replacing the card marked ineligible.",
-            ),
-            "dispute_transaction": (
-                "Dispute that reversed transaction anyway.",
-                "Open a dispute on the charge that was already reversed.",
-                "Challenge the transaction marked as fully reversed.",
-                "Dispute the charge whose refund has already posted.",
-                "Challenge that purchase even though a dispute is already open.",
-                "Open another dispute for the refunded transaction.",
-                "Proceed against the charge marked ineligible for dispute.",
-                "Try disputing the transaction that was already resolved.",
-            ),
-            "cancel_transfer": (
-                "Cancel that completed transfer anyway.",
-                "Stop the transfer that has already completed.",
-                "Try to cancel the money transfer marked complete.",
-                "Cancel the transfer that was already cancelled.",
-                "Revoke that settled transfer once more.",
-                "Stop the transfer whose cancellation window has closed.",
-                "Proceed with cancelling the transfer marked ineligible.",
-                "Try to reverse that completed transfer from here.",
-            ),
-        },
-        "validation": {
-            "freeze_card": ("Lock the card shown as closed.",),
-            "replace_card": ("Replace the card with an open replacement order.",),
-            "dispute_transaction": ("Dispute the purchase shown as reversed.",),
-            "cancel_transfer": ("Cancel the transfer shown as completed.",),
-        },
-        "test": {
-            "freeze_card": ("Put a freeze on the inactive card.",),
-            "replace_card": ("Request a replacement for the card already in replacement.",),
-            "dispute_transaction": ("Challenge the transaction that has been reversed.",),
-            "cancel_transfer": ("Revoke the transfer that is already complete.",),
-        },
-    }[split]
+    examples = cast(
+        Mapping[str, tuple[str, ...]],
+        {
+            "train": {
+                "freeze_card": (
+                    "Freeze that closed card anyway.",
+                    "Try to lock the inactive card.",
+                    "Block the card that is already closed.",
+                    "Put a freeze on the permanently disabled card.",
+                    "Lock the card that has already been replaced.",
+                    "Try freezing the expired card shown above.",
+                    "Block that unusable card once more.",
+                    "Apply a freeze to the card marked closed.",
+                ),
+                "replace_card": (
+                    "Replace that card even though a replacement is pending.",
+                    "Order another copy of the card already being replaced.",
+                    "Replace the card whose replacement request is still open.",
+                    "Request another replacement for the card already replaced.",
+                    "Send a new card for the closed card shown above.",
+                    "Replace that card despite the active replacement order.",
+                    "Order a copy of the card that is no longer replaceable.",
+                    "Proceed with replacing the card marked ineligible.",
+                ),
+                "dispute_transaction": (
+                    "Dispute that reversed transaction anyway.",
+                    "Open a dispute on the charge that was already reversed.",
+                    "Challenge the transaction marked as fully reversed.",
+                    "Dispute the charge whose refund has already posted.",
+                    "Challenge that purchase even though a dispute is already open.",
+                    "Open another dispute for the refunded transaction.",
+                    "Proceed against the charge marked ineligible for dispute.",
+                    "Try disputing the transaction that was already resolved.",
+                ),
+                "cancel_transfer": (
+                    "Cancel that completed transfer anyway.",
+                    "Stop the transfer that has already completed.",
+                    "Try to cancel the money transfer marked complete.",
+                    "Cancel the transfer that was already cancelled.",
+                    "Revoke that settled transfer once more.",
+                    "Stop the transfer whose cancellation window has closed.",
+                    "Proceed with cancelling the transfer marked ineligible.",
+                    "Try to reverse that completed transfer from here.",
+                ),
+            },
+            "validation": {
+                "freeze_card": ("Lock the card shown as closed.",),
+                "replace_card": ("Replace the card with an open replacement order.",),
+                "dispute_transaction": ("Dispute the purchase shown as reversed.",),
+                "cancel_transfer": ("Cancel the transfer shown as completed.",),
+            },
+            "test": {
+                "freeze_card": ("Put a freeze on the inactive card.",),
+                "replace_card": ("Request a replacement for the card already in replacement.",),
+                "dispute_transaction": ("Challenge the transaction that has been reversed.",),
+                "cancel_transfer": ("Revoke the transfer that is already complete.",),
+            },
+        }[split],
+    )
     histories = {
         "freeze_card": (
             ("Show my cards.", "The card ending in 1846 is closed and cannot be used."),

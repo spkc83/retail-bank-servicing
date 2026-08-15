@@ -20,7 +20,7 @@ ROUTER_REPO_ID = os.environ.get(
 )
 ROUTER_REVISION = os.environ.get(
     "RETAIL_BANK_ROUTER_REVISION",
-    "c8f154266612e79afe20af8abef25761fa56d589",
+    "7f6a0e77ad231233702039560ced007fdc68bd74",
 )
 
 
@@ -443,11 +443,11 @@ class LearnedBankingRouter:
             entity_resolution_labels=self.entity_resolution_labels,
         )
         domain = decision.domain
-        lane = decision.lane
-        family = decision.family
-        intent = decision.intent
-        action = decision.action
-        entity_resolution = decision.entity_resolution
+        lane: str | None = decision.lane
+        family: str | None = decision.family
+        intent: str | None = decision.intent
+        action: str | None = decision.action
+        entity_resolution: str | None = decision.entity_resolution
         diagnostics: tuple[str, ...] = (
             ("constraint:joint-decoder-resolved-independent-head-conflict",)
             if (domain, lane, family, intent, action, entity_resolution) != raw_tuple

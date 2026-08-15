@@ -1,7 +1,7 @@
-# V5 System Overview
+# System Overview
 
 Harbor is a model-driven retail-bank customer-service assistant for the
-fictional Harborlight Bank. The V5 system combines a small CPU router, bounded
+fictional Harborlight Bank. The system combines a hierarchical CPU router, bounded
 deterministic dialogue state, versioned policy retrieval, a PEFT-adapted
 Granite 8.79B model, and session-isolated fictional bank records.
 
@@ -9,7 +9,7 @@ Granite 8.79B model, and session-isolated fictional bank records.
 
 | Component | Responsibility | Must not do |
 | --- | --- | --- |
-| V5 router | Score banking domain, one fine intent, and five conversation relations from the current turn, recent visible history, and prior dialogue state. | Select an action, provide action arguments, or write customer-facing text. |
+| V6 router | Jointly score domain, lane, family, fine intent, five conversation relations, action disposition, and entity resolution from the current turn, recent visible history, and prior dialogue state. | Provide action arguments, execute a tool, or write customer-facing text. |
 | Dialogue state | Retain at most one pending servicing task and whether a policy detour is active. | Authorize an action or invent a summary of the earlier request. |
 | Policy retriever | Return current versioned policy chunks through deterministic lexical scoring. | Generate prose or execute a customer action. |
 | Granite | Converse, clarify, choose public banking actions and arguments, and write grounded responses. | Bypass the action schema or cite policy chunks that retrieval did not supply. |
@@ -18,12 +18,16 @@ Granite 8.79B model, and session-isolated fictional bank records.
 
 ## Router Inputs and Outputs
 
-The router is a shared DistilBERT cross-encoder with three classification
+The router is a shared DistilBERT cross-encoder with seven classification
 heads:
 
-1. **Domain head:** `out_of_domain` or `in_domain`.
-2. **Intent head:** 12 mutually exclusive fine intents.
-3. **Relation head:** five independent sigmoid labels.
+1. **Domain head:** `out_of_domain`, `banking`, or `social`.
+2. **Lane head:** orchestration path such as `servicing`, `policy`, or `conversation`.
+3. **Family head:** product grouping such as `cards` or `transactions`.
+4. **Intent head:** 12 mutually exclusive fine intents.
+5. **Relation head:** five independent sigmoid labels.
+6. **Action head:** `execute_tool`, `clarify`, `retrieve_policy`, `converse`, or `refuse_ood`.
+7. **Entity-resolution head:** `resolved`, `missing`, `ambiguous`, `ineligible`, or `not_required`.
 
 The rendered input can contain:
 
@@ -58,8 +62,9 @@ context_dependent   agent_repair         topic_shift
 clarification_answer                     resume_previous_service
 ```
 
-The broad lane is derived from the fine intent. It is not a fourth learned
-head.
+At runtime a constrained joint decoder selects the highest-scoring legal
+domain/lane/family/intent/action/entity tuple. Raw independent-head candidates
+remain diagnostics; incompatible combinations do not reach the harness.
 
 ## Bounded Dialogue State
 
@@ -121,8 +126,9 @@ response and does not ask Granite to improvise an answer.
 
 ## Servicing and Action Loop
 
-For accepted non-policy turns, Granite receives the Harborlight system prompt,
-token-budgeted conversation, and nine public actions:
+For `execute_tool` turns, Granite receives the Harborlight system prompt,
+token-budgeted conversation, and exactly one intent-compatible public action
+schema selected by the router disposition. The full supported set is:
 
 ```text
 list_accounts        list_cards          list_service_cases
@@ -130,7 +136,8 @@ list_transactions    list_transfers      freeze_card
 replace_card         dispute_transaction cancel_transfer
 ```
 
-Granite may answer directly or emit tagged JSON:
+Granite still decides whether the action is appropriate and supplies every
+argument. It may answer directly or emit tagged JSON:
 
 ```text
 <tool_call>{"name":"list_transactions","arguments":{"limit":5}}</tool_call>
@@ -163,16 +170,16 @@ the assistant's ordinary customer-facing answers.
 
 | Runtime | Model loading | UI |
 | --- | --- | --- |
-| Hugging Face Space | FP16 Granite inside `@spaces.GPU(size="large", duration=90)` | Gradio |
+| Hugging Face Space | BF16 base-plus-PEFT Granite inside `@spaces.GPU(size="large", duration=90)` | Gradio |
 | Local CUDA | bitsandbytes NF4 double quantization, FP16 compute, device `cuda:0` | Streamlit |
 
 Both paths share the router, dialogue state, policy retriever, Granite action
 service, response policy, Harborlight branding helpers, and fictional bank
 backend.
 
-The generalized state-conditioned router is published at
-`c8f154266612e79afe20af8abef25761fa56d589` from dataset revision
-`8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc`. Granite inference composes base
+The hierarchical state-conditioned router is published at
+`7f6a0e77ad231233702039560ced007fdc68bd74` from dataset revision
+`80c0edfea84b341d2ee4092f5c4a4bbb05405e40`. Granite inference composes base
 `spkc83/retail-bank-servicing-agent-9b@1d568249...` with PEFT adapter
 `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446...`. Merged candidates are
 not used because they failed the unchanged behavioral-parity gates. Evaluation

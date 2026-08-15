@@ -1,14 +1,14 @@
-# V5 Evaluation and Release Gates
+# Evaluation and Release Gates
 
-V5 has three evaluation layers:
+The project has three evaluation layers:
 
 1. deterministic data and schema validation;
 2. frozen router evaluation;
 3. frozen Granite generation plus end-to-end orchestration tests.
 
-The generalized router is published at
-`c8f154266612e79afe20af8abef25761fa56d589` from data revision
-`8efa57dc335d8cfa8e6f2c51446c3d1aa83215dc` and passed the router gates reported
+The hierarchical router is published at
+`7f6a0e77ad231233702039560ced007fdc68bd74` from data revision
+`80c0edfea84b341d2ee4092f5c4a4bbb05405e40` and passed the router gates reported
 in [05-dual-head-router.md](05-dual-head-router.md#held-out-results). Granite
 PEFT evaluation job `6a7f89edc97db76cbdf31893` ran from source
 `42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five
@@ -42,12 +42,13 @@ PYTHONPATH=src uv run pytest -q \
 
 ## 2. Router Gates
 
-The router trainer evaluates the immutable V5 test split and persists
+The router trainer evaluates the immutable V6 test split and persists
 `metrics.json` in the artifact. Important gates include:
 
-- domain OOD specificity and in-domain recall;
-- fine-intent macro F1;
+- domain, lane, family, fine-intent, action, and entity-resolution macro F1;
 - relation macro F1;
+- joint hierarchy compatibility and independent-head conflict diagnostics;
+- counterfactual action, entity-resolution, and exact pair-flip accuracy;
 - contextual and repair false-refusal rates;
 - external topic-shift false acceptance;
 - resume-trajectory intent and relation errors;
