@@ -9,10 +9,19 @@ fi
 source_commit="$1"
 dataset_revision="$2"
 source_adapter_revision="${3:-d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2}"
-destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3}"
+destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4}"
 max_steps="${5:-600}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
+probe_only="${PROBE_ONLY:-0}"
+probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600}"
+probe_checkpoint_step="${PROBE_CHECKPOINT_STEP:-600}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_continue_tool_sft.py"
+output_dir="/data/retail-bank-agent-9b-candidate4-${source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
+
+if [[ "$probe_only" == "1" ]]; then
+  probe_name="${probe_checkpoint_dir##*/}"
+  output_dir="/data/retail-bank-agent-9b-probe-${probe_name}-${source_commit:0:8}-${dataset_revision:0:8}"
+fi
 
 if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_COMMIT must be the exact 40-character lowercase Git commit." >&2
@@ -21,6 +30,11 @@ fi
 
 if [[ ! "$dataset_revision" =~ ^[0-9a-f]{40}$ ]]; then
   echo "DATASET_REVISION must be the exact 40-character lowercase Git commit." >&2
+  exit 2
+fi
+
+if [[ "$probe_only" == "1" && "$dataset_revision" != "715064e50e7ed2f815dfd3ce19b61f345a466b9d" ]]; then
+  echo "PROBE_ONLY requires candidate3 dataset revision 715064e50e7ed2f815dfd3ce19b61f345a466b9d." >&2
   exit 2
 fi
 
@@ -63,8 +77,16 @@ job_args=(
   --source-adapter-repo "$source_adapter_repo"
   --source-adapter-revision "$source_adapter_revision"
   --destination-repo "$destination_repo"
-  --output-dir "/data/retail-bank-agent-9b-continuation-${source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
+  --output-dir "$output_dir"
   --max-steps "$max_steps"
 )
+
+if [[ "$probe_only" == "1" ]]; then
+  job_args+=(
+    --probe-only
+    --probe-checkpoint-dir "$probe_checkpoint_dir"
+    --probe-checkpoint-step "$probe_checkpoint_step"
+  )
+fi
 
 hf jobs uv run "${job_args[@]}"

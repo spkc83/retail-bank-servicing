@@ -32,7 +32,13 @@ SOURCE_REPO = "spkc83/retail-bank-servicing"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3"
+DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
+DEFAULT_PROBE_CHECKPOINT_DIR = (
+    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/"
+    "trainer/checkpoint-600"
+)
+DEFAULT_PROBE_CHECKPOINT_STEP = 600
+CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
@@ -44,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-adapter-repo", default=ADAPTER_REPO)
     parser.add_argument("--source-adapter-revision", default=DEFAULT_SOURCE_ADAPTER_REVISION)
     parser.add_argument("--destination-repo", default=DEFAULT_DESTINATION_REPO)
-    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate3")
+    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate4")
     parser.add_argument("--max-steps", type=int, default=600)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
@@ -53,12 +59,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ambiguity-multiplier", type=int, default=5)
     parser.add_argument("--policy-faq-multiplier", type=int, default=4)
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
+    parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
+    parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
     return parser.parse_args()
 
 
 def require_exact_revision(value: str, *, field: str) -> None:
     if len(value) != 40 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError(f"{field} must be an exact 40-character lowercase Git revision")
+
+
+def execution_mode_args(args: argparse.Namespace) -> list[str]:
+    if args.probe_only:
+        return [
+            "--probe-only",
+            "--probe-checkpoint-dir",
+            str(args.probe_checkpoint_dir),
+            "--probe-checkpoint-step",
+            str(args.probe_checkpoint_step),
+        ]
+    return ["--push-to-hub"]
 
 
 def download_source(source_commit: str, destination: Path) -> Path:
@@ -85,6 +106,11 @@ def main() -> int:
     require_exact_revision(args.source_adapter_revision, field="--source-adapter-revision")
     if args.destination_repo == args.source_adapter_repo:
         raise ValueError("--destination-repo must differ from the source adapter repository")
+    if args.probe_only and args.dataset_revision != CANDIDATE3_PROBE_DATASET_REVISION:
+        raise ValueError(
+            "checkpoint probes require the exact candidate3 dataset revision "
+            f"{CANDIDATE3_PROBE_DATASET_REVISION}"
+        )
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-continuation-") as temp_dir:
@@ -115,7 +141,6 @@ def main() -> int:
             str(source_root / "scripts/retail_bank/cloud_continue_tool_sft.py"),
             "--execute-remote",
             "--allow-remote-execution",
-            "--push-to-hub",
             "--manifest",
             str(manifest),
             "--output-dir",
@@ -143,7 +168,7 @@ def main() -> int:
             "--max-seq-len",
             "2048",
             "--learning-rate",
-            "5e-6",
+            "3e-6",
             "--checkpoint-every",
             str(args.checkpoint_every),
             "--positive-multiplier",
@@ -157,8 +182,9 @@ def main() -> int:
             "--trackio-project",
             "retail-bank-agent-v5-remediation",
             "--trackio-run-name",
-            f"granite-peft-remediation-{args.source_commit[:8]}",
+            f"granite-peft-candidate4-{args.source_commit[:8]}",
         ]
+        command.extend(execution_mode_args(args))
         subprocess.run(command, cwd=source_root, env=env, check=True)
     return 0
 

@@ -22,7 +22,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.3-counterfactual-coreference"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.4-decorrelated-coreference"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -707,13 +707,18 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
     number_base = 6100 if split == "train" else 2100
     other_number_base = 8100 if split == "train" else 4100
     pair_index = 0
-    for spec in _coreference_curriculum_specs(split):
+    specs = _coreference_curriculum_specs(split)
+    products = tuple(spec["product"] for spec in specs)
+    for family_index, spec in enumerate(specs):
         for realization, prompt_form in enumerate(prompt_forms):
             pair_index += 1
             family = spec["phrase_family"]
             prompt = prompt_form.format(prompt=spec["prompt"])
-            card_name = f"{spec['product']} {tiers[realization]}"
-            other_card_name = f"{spec['product']} {tiers[realization].replace('Debit', 'Credit')}"
+            product = products[(family_index + (3 * realization)) % len(products)]
+            tier = tiers[(family_index + realization) % len(tiers)]
+            history_form = (3 * family_index + realization) % len(sole_card_history_forms)
+            card_name = f"{product} {tier}"
+            other_card_name = f"{product} {tier.replace('Debit', 'Credit')}"
             card_last4 = f"{number_base + pair_index:04d}"
             other_card_last4 = f"{other_number_base + pair_index:04d}"
             pair_id = f"coreference-{split}-{family}-{realization}"
@@ -724,8 +729,8 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                 "other_card_name": other_card_name,
                 "other_card_last4": other_card_last4,
             }
-            sole_card_history = sole_card_history_forms[realization].format(**history_values)
-            multiple_card_history = multiple_card_history_forms[realization].format(
+            sole_card_history = sole_card_history_forms[history_form].format(**history_values)
+            multiple_card_history = multiple_card_history_forms[history_form].format(
                 **history_values
             )
             action = _record(
@@ -785,6 +790,10 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                         "coreference_pair_id": pair_id,
                         "coreference_phrase_family": family,
                         "coreference_prompt": prompt,
+                        "coreference_prompt_form": realization,
+                        "coreference_history_form": history_form,
+                        "coreference_product": product,
+                        "coreference_tier": tier,
                         "coreference_entity_keys": entity_keys,
                         "coreference_target": target,
                         "actionable_card_count": actionable_card_count,

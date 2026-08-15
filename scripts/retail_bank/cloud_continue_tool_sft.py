@@ -65,9 +65,16 @@ ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3"
+DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
 DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
-DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate3"
+DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate4"
+DEFAULT_PROBE_CHECKPOINT_DIR = (
+    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/"
+    "trainer/checkpoint-600"
+)
+DEFAULT_PROBE_CHECKPOINT_STEP = 600
+CANDIDATE4_TRAINING_SEED = 20_260_814
+CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
 ADAPTER_FILES = (
     "adapter_config.json",
     "adapter_model.safetensors",
@@ -98,6 +105,9 @@ class ContinuationConfig:
     base_revision: str
     family: str
     hub_dest: str
+    probe_only: bool
+    probe_checkpoint_dir: Path
+    probe_checkpoint_step: int
     max_steps: int
     max_train_seconds: int
     batch_size: int
@@ -131,12 +141,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--max-seq-len", type=int, default=2048)
-    parser.add_argument("--learning-rate", type=float, default=5e-6)
+    parser.add_argument("--learning-rate", type=float, default=3e-6)
     parser.add_argument("--checkpoint-every", type=int, default=50)
     parser.add_argument("--positive-multiplier", type=int, default=10)
     parser.add_argument("--ambiguity-multiplier", type=int, default=5)
     parser.add_argument("--policy-faq-multiplier", type=int, default=4)
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
+    parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
+    parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--execute-remote", action="store_false", dest="dry_run")
     parser.add_argument("--allow-remote-execution", action="store_true")
@@ -156,6 +169,9 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         base_revision=str(args.base_revision),
         family=str(args.family),
         hub_dest=str(args.hub_dest),
+        probe_only=bool(args.probe_only),
+        probe_checkpoint_dir=Path(args.probe_checkpoint_dir),
+        probe_checkpoint_step=int(args.probe_checkpoint_step),
         max_steps=int(args.max_steps),
         max_train_seconds=int(args.max_train_seconds),
         batch_size=int(args.batch_size),
@@ -357,6 +373,27 @@ def read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def validate_source_checkpoint(path: Path, *, expected_step: int) -> dict[str, Any]:
+    resolved = path.resolve()
+    required = ("adapter_config.json", "adapter_model.safetensors", "trainer_state.json")
+    missing = [name for name in required if not (resolved / name).is_file()]
+    if missing:
+        raise RuntimeError(f"probe checkpoint is missing required files: {missing}")
+    state = read_json(resolved / "trainer_state.json")
+    actual_step = state.get("global_step")
+    if actual_step != expected_step:
+        raise RuntimeError(
+            f"probe checkpoint step mismatch: expected {expected_step}, got {actual_step!r}"
+        )
+    return {
+        "path": str(resolved),
+        "step": expected_step,
+        "adapter_sha256": sha256(resolved / "adapter_model.safetensors"),
+        "trainer_state_sha256": sha256(resolved / "trainer_state.json"),
+        "optimizer_resumed": False,
+    }
+
+
 def dataset_identity(manifest_path: Path) -> dict[str, str]:
     repository = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REPO", "")
     revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
@@ -384,6 +421,13 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
         "manifest": str(config.manifest),
         "output_dir": str(config.output_dir),
         "hub_dest": config.hub_dest,
+        "training_parent": "pinned d965 adapter",
+        "checkpoint_probe": {
+            "available": True,
+            "default_path": str(config.probe_checkpoint_dir),
+            "expected_step": config.probe_checkpoint_step,
+            "required_dataset_revision": CANDIDATE3_PROBE_DATASET_REVISION,
+        },
         "training": {
             "max_steps": config.max_steps,
             "max_train_seconds": config.max_train_seconds,
@@ -396,6 +440,7 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "ambiguity_multiplier": config.ambiguity_multiplier,
             "policy_faq_multiplier": config.policy_faq_multiplier,
             "tool_outcome_multiplier": config.tool_outcome_multiplier,
+            "seed": CANDIDATE4_TRAINING_SEED,
             "retained_regression_mix": [
                 "single-tool",
                 "tool-error",
@@ -449,7 +494,9 @@ def build_training_args(config: ContinuationConfig) -> Any:
         optim="adamw_torch_fused",
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
-        run_name=config.trackio_run_name or "granite-peft-v5-candidate3",
+        seed=CANDIDATE4_TRAINING_SEED,
+        data_seed=CANDIDATE4_TRAINING_SEED,
+        run_name=config.trackio_run_name or "granite-peft-v5-candidate4",
         push_to_hub=False,
     )
 
@@ -521,7 +568,7 @@ def continuation_fingerprint(
         },
         "dataset_identity": dict(dataset),
         "template_hash": adapter.template_hash,
-        "training_seed": TRAINING_SEED,
+        "training_seed": CANDIDATE4_TRAINING_SEED,
         "continuation": {
             "max_steps": config.max_steps,
             "max_train_seconds": config.max_train_seconds,
@@ -562,6 +609,37 @@ def validate_eval_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
     return dict(metrics)
 
 
+def coreference_prediction_passes(
+    record: Mapping[str, Any],
+    prediction: Mapping[str, Any] | None,
+) -> bool:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise RuntimeError("coreference record is missing metadata")
+    if not isinstance(prediction, Mapping):
+        return False
+    calls = list(prediction.get("tool_calls", ()) or ())
+    target = str(metadata.get("coreference_target", ""))
+    if target == "replace_card":
+        expected = record.get("expected")
+        expected_calls = (
+            list(expected.get("tool_calls", ()) or ()) if isinstance(expected, Mapping) else []
+        )
+        actual_calls = [
+            {
+                "name": call.get("function", {}).get("name"),
+                "arguments": call.get("function", {}).get("arguments"),
+            }
+            for call in calls
+            if isinstance(call, Mapping) and isinstance(call.get("function"), Mapping)
+        ]
+        return actual_calls == expected_calls
+    if target == "clarification":
+        content = str(prediction.get("content") or "").lower()
+        return not calls and "which" in content and "card" in content
+    raise RuntimeError(f"unexpected coreference target in validation: {target}")
+
+
 def score_coreference_behavior(
     records: Sequence[Mapping[str, Any]],
     predictions: Mapping[str, Mapping[str, Any] | None],
@@ -579,30 +657,7 @@ def score_coreference_behavior(
         prediction = predictions.get(record_id)
         if not isinstance(prediction, Mapping):
             parse_failures += 1
-            passed = False
-        else:
-            calls = list(prediction.get("tool_calls", ()) or ())
-            if target == "replace_card":
-                expected = record.get("expected")
-                expected_calls = (
-                    list(expected.get("tool_calls", ()) or ())
-                    if isinstance(expected, Mapping)
-                    else []
-                )
-                actual_calls = [
-                    {
-                        "name": call.get("function", {}).get("name"),
-                        "arguments": call.get("function", {}).get("arguments"),
-                    }
-                    for call in calls
-                    if isinstance(call, Mapping) and isinstance(call.get("function"), Mapping)
-                ]
-                passed = actual_calls == expected_calls
-            elif target == "clarification":
-                content = str(prediction.get("content") or "").lower()
-                passed = not calls and "which" in content and "card" in content
-            else:
-                raise RuntimeError(f"unexpected coreference target in validation: {target}")
+        passed = coreference_prediction_passes(record, prediction)
         if target == "replace_card":
             positive_results.append(passed)
         elif target == "clarification":
@@ -624,6 +679,46 @@ def score_coreference_behavior(
         "ambiguity_records": len(ambiguity_results),
         "pairs": len(pair_passes),
         "parse_failures": parse_failures,
+    }
+
+
+def build_coreference_behavior_report(
+    records: Sequence[Mapping[str, Any]],
+    predictions: Mapping[str, Mapping[str, Any] | None],
+    *,
+    raw_outputs: Mapping[str, str],
+    parse_errors: Mapping[str, str],
+    cumulative_step: int,
+) -> dict[str, Any]:
+    report_rows = []
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, Mapping) or "coreference_pair_id" not in metadata:
+            continue
+        record_id = str(record["record_id"])
+        prediction = predictions.get(record_id)
+        report_rows.append(
+            {
+                "record_id": record_id,
+                "pair_id": str(metadata["coreference_pair_id"]),
+                "target": str(metadata.get("coreference_target", "")),
+                "phrase_family": str(metadata.get("coreference_phrase_family", "")),
+                "prompt_form": metadata.get("coreference_prompt_form"),
+                "history_form": metadata.get("coreference_history_form"),
+                "current": str(metadata.get("coreference_prompt", "")),
+                "expected_tool_calls": record.get("expected", {}).get("tool_calls", []),
+                "raw_output": raw_outputs.get(record_id, ""),
+                "parsed": dict(prediction) if isinstance(prediction, Mapping) else None,
+                "parse_error": parse_errors.get(record_id),
+                "passed": coreference_prediction_passes(record, prediction),
+            }
+        )
+    return {
+        "contract": "banking-v5-coreference-behavior-report/v1",
+        "created_at_unix": int(time.time()),
+        "cumulative_step": cumulative_step,
+        "metrics": score_coreference_behavior(records, predictions),
+        "records": report_rows,
     }
 
 
@@ -655,13 +750,28 @@ def validate_coreference_behavioral_gate(
     return dict(metrics)
 
 
-def run_coreference_behavioral_gate(
+def persist_and_validate_coreference_report(
+    report: Mapping[str, Any],
+    path: Path,
+) -> dict[str, Any]:
+    write_json(path, report)
+    metrics = report.get("metrics")
+    if not isinstance(metrics, Mapping):
+        raise RuntimeError("coreference behavior report is missing metrics")
+    return validate_coreference_behavioral_gate(metrics)
+
+
+def generate_coreference_behavior_report(
     model: Any,
     tokenizer: Any,
     adapter: ToolWireAdapter,
     records: Sequence[Mapping[str, Any]],
+    *,
+    cumulative_step: int,
 ) -> dict[str, Any]:
     predictions: dict[str, Mapping[str, Any] | None] = {}
+    raw_outputs: dict[str, str] = {}
+    parse_errors: dict[str, str] = {}
     was_training = bool(model.training)
     model.eval()
     device = next(model.parameters()).device
@@ -691,15 +801,24 @@ def run_coreference_behavioral_gate(
                 use_cache=True,
             )
         prompt_width = int(inputs["input_ids"].shape[-1])
+        record_id = str(record["record_id"])
+        raw_outputs[record_id] = str(
+            tokenizer.decode(output_ids[0, prompt_width:], skip_special_tokens=True)
+        ).strip()
         try:
-            predictions[str(record["record_id"])] = adapter.parse_assistant(
-                output_ids[0, prompt_width:]
-            )
-        except (TypeError, ValueError):
-            predictions[str(record["record_id"])] = None
+            predictions[record_id] = adapter.parse_assistant(output_ids[0, prompt_width:])
+        except (TypeError, ValueError) as error:
+            predictions[record_id] = None
+            parse_errors[record_id] = f"{type(error).__name__}: {error}"
     if was_training:
         model.train()
-    return validate_coreference_behavioral_gate(score_coreference_behavior(records, predictions))
+    return build_coreference_behavior_report(
+        records,
+        predictions,
+        raw_outputs=raw_outputs,
+        parse_errors=parse_errors,
+        cumulative_step=cumulative_step,
+    )
 
 
 def render_model_card(result: Mapping[str, Any]) -> str:
@@ -799,6 +918,90 @@ def upload_release(
     return revision
 
 
+def run_checkpoint_probe(config: ContinuationConfig) -> dict[str, Any]:
+    assert_remote_execution_allowed(config)
+    validate_pinned_model_inputs(config)
+    require_exact_revision(os.environ.get("RETAIL_BANK_SOURCE_COMMIT", ""), field="source commit")
+    if config.push_to_hub:
+        raise RuntimeError("checkpoint probes cannot publish an adapter")
+    ensure_unique_release_output(config)
+    dataset = dataset_identity(config.manifest)
+    if dataset["revision"] != CANDIDATE3_PROBE_DATASET_REVISION:
+        raise RuntimeError(
+            "candidate3 checkpoint probes require dataset revision "
+            f"{CANDIDATE3_PROBE_DATASET_REVISION}"
+        )
+    checkpoint = validate_source_checkpoint(
+        config.probe_checkpoint_dir,
+        expected_step=config.probe_checkpoint_step,
+    )
+    config.output_dir.mkdir(parents=True, exist_ok=False)
+
+    from peft import PeftModel  # type: ignore[import-not-found]
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    source_snapshot = snapshot_source_adapter(config)
+    tokenizer = AutoTokenizer.from_pretrained(source_snapshot, local_files_only=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    adapter = ToolWireAdapter(
+        tokenizer,
+        family=config.family,
+        public_tool_manifest=PUBLIC_BANKING_TOOL_MANIFEST,
+        pad_to_max_length=False,
+    )
+    validation_records = load_manifest_records(config.manifest, "validation")
+    base = AutoModelForCausalLM.from_pretrained(
+        config.base_model,
+        revision=config.base_revision,
+        dtype=torch.bfloat16,
+        device_map={"": torch.cuda.current_device()},
+    )
+    model = PeftModel.from_pretrained(
+        base,
+        config.probe_checkpoint_dir,
+        is_trainable=False,
+        autocast_adapter_dtype=False,
+    )
+    report = generate_coreference_behavior_report(
+        model,
+        tokenizer,
+        adapter,
+        validation_records,
+        cumulative_step=config.probe_checkpoint_step,
+    )
+    report["source_checkpoint"] = checkpoint
+    report["dataset_identity"] = dataset
+    report_path = (
+        config.output_dir
+        / "behavioral-evaluations"
+        / f"step-{config.probe_checkpoint_step:04d}.json"
+    )
+    write_json(report_path, report)
+    metrics = report["metrics"]
+    assert isinstance(metrics, Mapping)
+    try:
+        validate_coreference_behavioral_gate(metrics)
+        passed = True
+    except RuntimeError:
+        passed = False
+    result = {
+        "contract": "banking-v5-coreference-checkpoint-probe/v1",
+        "source_checkpoint": checkpoint,
+        "dataset_identity": dataset,
+        "report_path": str(report_path),
+        "metrics": dict(metrics),
+        "passed": passed,
+        "published": False,
+    }
+    write_json(config.output_dir / "checkpoint_probe_result.json", result)
+    del model
+    del base
+    gc.collect()
+    torch.cuda.empty_cache()
+    return result
+
+
 def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     assert_remote_execution_allowed(config)
     validate_pinned_model_inputs(config)
@@ -806,7 +1009,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     ensure_unique_release_output(config)
     dataset = dataset_identity(config.manifest)
     config.output_dir.mkdir(parents=True, exist_ok=False)
-    seed_training(TRAINING_SEED)
+    seed_training(CANDIDATE4_TRAINING_SEED)
 
     from datasets import Dataset as HfDataset  # type: ignore[import-not-found]
     from peft import PeftModel  # type: ignore[import-not-found]
@@ -831,6 +1034,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         ambiguity_multiplier=config.ambiguity_multiplier,
         policy_faq_multiplier=config.policy_faq_multiplier,
         tool_outcome_multiplier=config.tool_outcome_multiplier,
+        seed=CANDIDATE4_TRAINING_SEED,
     )
     train_examples = tokenize_records(
         mask_coreference_positive_final_loss(mixed_train_records),
@@ -885,8 +1089,62 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
                 control.should_save = True
             return control
 
+    class BehavioralGateCallback(TrainerCallback):
+        def __init__(
+            self,
+            model_ref: Any,
+            tokenizer_ref: Any,
+            adapter_ref: ToolWireAdapter,
+            records_ref: Sequence[Mapping[str, Any]],
+            output_dir: Path,
+        ) -> None:
+            self.model_ref = model_ref
+            self.tokenizer_ref = tokenizer_ref
+            self.adapter_ref = adapter_ref
+            self.records_ref = records_ref
+            self.output_dir = output_dir
+            self.last_report: dict[str, Any] | None = None
+            self.last_report_path: Path | None = None
+            self.first_passing_step: int | None = None
+
+        def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            step = int(state.global_step)
+            report = generate_coreference_behavior_report(
+                self.model_ref,
+                self.tokenizer_ref,
+                self.adapter_ref,
+                self.records_ref,
+                cumulative_step=step,
+            )
+            report_path = (
+                self.output_dir / "behavioral-evaluations" / f"step-{step:04d}.json"
+            )
+            write_json(report_path, report)
+            self.last_report = report
+            self.last_report_path = report_path
+            metrics = report.get("metrics")
+            if not isinstance(metrics, Mapping):
+                raise RuntimeError("periodic coreference report is missing metrics")
+            try:
+                validate_coreference_behavioral_gate(metrics)
+            except RuntimeError:
+                return control
+            if self.first_passing_step is None:
+                self.first_passing_step = step
+            control.should_training_stop = True
+            control.should_save = True
+            return control
+
     fingerprint = continuation_fingerprint(
         config, wire_adapter, source_snapshot, mix_report, dataset
+    )
+    behavioral_callback = BehavioralGateCallback(
+        model,
+        tokenizer,
+        wire_adapter,
+        validation_records,
+        config.output_dir,
     )
     trainer = SFTTrainer(
         model=model,
@@ -898,7 +1156,10 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             pad_token_id=int(tokenizer.pad_token_id),
         ),
         processing_class=tokenizer,
-        callbacks=[WallClockStopCallback(config.max_train_seconds)],
+        callbacks=[
+            WallClockStopCallback(config.max_train_seconds),
+            behavioral_callback,
+        ],
     )
     train_output = trainer.train()
     if config.trackio_project:
@@ -906,11 +1167,14 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
 
         trainer.remove_callback(TrackioCallback)
     eval_metrics = validate_eval_metrics(trainer.evaluate())
-    behavioral_gate = run_coreference_behavioral_gate(
-        model,
-        tokenizer,
-        wire_adapter,
-        validation_records,
+    if (
+        behavioral_callback.last_report is None
+        or behavioral_callback.last_report_path is None
+    ):
+        raise RuntimeError("training completed without a persisted coreference behavior report")
+    behavioral_gate = persist_and_validate_coreference_report(
+        behavioral_callback.last_report,
+        behavioral_callback.last_report_path,
     )
     adapter_dir = config.output_dir / "adapter"
     trainer.save_model(str(adapter_dir))
@@ -928,6 +1192,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
         "coreference_behavioral_gate": behavioral_gate,
+        "first_passing_behavioral_step": behavioral_callback.first_passing_step,
     }
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
@@ -946,6 +1211,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
         "coreference_behavioral_gate": behavioral_gate,
+        "first_passing_behavioral_step": behavioral_callback.first_passing_step,
         "adapter_sha256": sha256(adapter_dir / "adapter_model.safetensors"),
         "merged_model": None,
         "frozen_release_gates": "pending unchanged frozen evaluation",
@@ -985,6 +1251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--learning-rate must be positive")
     if config.dry_run:
         print(json.dumps(build_dry_run_plan(config), indent=2, sort_keys=True))
+    elif config.probe_only:
+        print(json.dumps(run_checkpoint_probe(config), indent=2, sort_keys=True))
     else:
         print(json.dumps(run_remote_continuation(config), indent=2, sort_keys=True))
     return 0

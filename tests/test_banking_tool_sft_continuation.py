@@ -30,6 +30,18 @@ def _load_worker() -> ModuleType:
 WORKER = _load_worker()
 
 
+def _load_job() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("hf_job_continue_tool_sft", JOB_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+JOB = _load_job()
+
+
 def _record(
     record_id: str,
     *,
@@ -262,16 +274,23 @@ def test_worker_dry_run_exposes_capped_continuation_plan() -> None:
         "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
     )
     assert plan["source_adapter_revision"] == "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
+    assert plan["checkpoint_probe"]["available"] is True
+    assert plan["checkpoint_probe"]["default_path"].endswith("/trainer/checkpoint-600")
+    assert plan["checkpoint_probe"]["required_dataset_revision"] == (
+        "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
+    )
+    assert plan["training_parent"] == "pinned d965 adapter"
     assert plan["base_model"] == "spkc83/retail-bank-servicing-agent-9b"
     assert plan["base_revision"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-    assert plan["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3"
+    assert plan["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
     assert plan["training"]["max_steps"] == 600
     assert plan["training"]["max_train_seconds"] == 3_600
-    assert plan["training"]["learning_rate"] == 5e-6
+    assert plan["training"]["learning_rate"] == 3e-6
     assert plan["training"]["positive_multiplier"] == 10
     assert plan["training"]["ambiguity_multiplier"] == 5
     assert plan["training"]["policy_faq_multiplier"] == 4
     assert plan["training"]["tool_outcome_multiplier"] == 6
+    assert plan["training"]["seed"] == 20_260_814
     assert plan["release"]["format"] == "root-level PEFT adapter"
     assert plan["release"]["merge"] is False
     assert plan["release"]["evaluation_before_publish"] is True
@@ -298,6 +317,11 @@ def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> No
     assert assignments["DEFAULT_SOURCE_ADAPTER_REVISION"] == (
         "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
     )
+    assert assignments["DEFAULT_PROBE_CHECKPOINT_STEP"] == 600
+    assert assignments["DEFAULT_PROBE_CHECKPOINT_DIR"].endswith("/trainer/checkpoint-600")
+    assert assignments["CANDIDATE3_PROBE_DATASET_REVISION"] == (
+        "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
+    )
     assert assignments["BASE_MODEL"] == "spkc83/retail-bank-servicing-agent-9b"
     assert assignments["BASE_REVISION"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
     assert assignments["DATASET_REPO"] == "spkc83/retail-bank-servicing-alignment-sft"
@@ -307,7 +331,43 @@ def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> No
     assert "--source-adapter-repo" in source
     assert "--destination-repo" in source
     assert "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT" in source
-    assert '"5e-6"' in source
+    assert '"3e-6"' in source
+
+
+def test_job_probe_command_never_requests_publication() -> None:
+    probe = SimpleNamespace(
+        probe_only=True,
+        probe_checkpoint_dir="/data/run/trainer/checkpoint-550",
+        probe_checkpoint_step=550,
+    )
+    training = SimpleNamespace(
+        probe_only=False,
+        probe_checkpoint_dir="unused",
+        probe_checkpoint_step=0,
+    )
+
+    probe_args = JOB.execution_mode_args(probe)
+
+    assert probe_args == [
+        "--probe-only",
+        "--probe-checkpoint-dir",
+        "/data/run/trainer/checkpoint-550",
+        "--probe-checkpoint-step",
+        "550",
+    ]
+    assert "--push-to-hub" not in probe_args
+    assert JOB.execution_mode_args(training) == ["--push-to-hub"]
+
+
+def test_worker_probe_requires_exact_source_and_candidate3_dataset_revisions() -> None:
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    probe_body = source.split("def run_checkpoint_probe", 1)[1].split(
+        "def run_remote_continuation", 1
+    )[0]
+
+    assert 'require_exact_revision(os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")' in probe_body
+    assert "CANDIDATE3_PROBE_DATASET_REVISION" in probe_body
+    assert '"published": False' in probe_body
 
 
 def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_cap() -> None:
@@ -319,7 +379,7 @@ def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_c
     assert "SOURCE_ADAPTER_REPO must be a Hugging Face repository id" in launcher
     assert "DESTINATION_REPO must differ from the source adapter repository" in launcher
     assert (
-        "retail-bank-agent-9b-continuation-${source_commit:0:8}-"
+        "retail-bank-agent-9b-candidate4-${source_commit:0:8}-"
         "${source_adapter_revision:0:8}-${dataset_revision:0:8}"
     ) in launcher
     assert "hf jobs uv run" in launcher
@@ -329,6 +389,9 @@ def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_c
     assert "rm " not in launcher
     assert 'max_steps="${5:-600}"' in launcher
     assert "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2" in launcher
+    assert "checkpoint-600" in launcher
+    assert "PROBE_ONLY" in launcher
+    assert "715064e50e7ed2f815dfd3ce19b61f345a466b9d" in launcher
 
 
 def test_worker_evaluates_before_atomic_adapter_upload_without_merging() -> None:
@@ -338,9 +401,11 @@ def test_worker_evaluates_before_atomic_adapter_upload_without_merging() -> None
     assert remote_body.index(
         "eval_metrics = validate_eval_metrics(trainer.evaluate())"
     ) < remote_body.index("if config.push_to_hub:")
-    assert remote_body.index("behavioral_gate = run_coreference_behavioral_gate(") < (
+    assert remote_body.index("behavioral_gate = persist_and_validate_coreference_report(") < (
         remote_body.index("if config.push_to_hub:")
     )
+    assert "class BehavioralGateCallback" in remote_body
+    assert 'self.output_dir / "behavioral-evaluations"' in remote_body
     assert "merge_and_unload" not in source
     assert "merged-fp16" not in source
     assert "CommitOperationAdd" in source
@@ -567,3 +632,70 @@ def test_coreference_behavioral_gate_scores_tool_arguments_ambiguity_and_pair_fl
 
     with pytest.raises(RuntimeError, match="requires each accuracy"):
         WORKER.validate_coreference_behavioral_gate({**metrics, "pair_flip_accuracy": 0.94})
+
+
+def test_behavioral_report_persists_record_predictions_before_gate_failure(
+    tmp_path: Path,
+) -> None:
+    positive = _record("positive", path="multi_turn", assistant_tool_calls=1)
+    positive["metadata"] = {
+        "coreference_pair_id": "pair-1",
+        "coreference_target": "replace_card",
+    }
+    positive["expected"] = {
+        "path": "multi_turn",
+        "tool_calls": [{"name": "replace_card", "arguments": {"last4": "6107"}}],
+    }
+    ambiguous = _record("ambiguous", path="clarification")
+    ambiguous["metadata"] = {
+        "coreference_pair_id": "pair-1",
+        "coreference_target": "clarification",
+    }
+    predictions = {
+        "positive": {"role": "assistant", "content": "Which card?", "tool_calls": []},
+        "ambiguous": {
+            "role": "assistant",
+            "content": "Which card should I replace?",
+            "tool_calls": [],
+        },
+    }
+    report = WORKER.build_coreference_behavior_report(
+        [positive, ambiguous],
+        predictions,
+        raw_outputs={"positive": "Which card?", "ambiguous": "Which card should I replace?"},
+        parse_errors={},
+        cumulative_step=650,
+    )
+    path = tmp_path / "behavioral-evaluations" / "step-0650.json"
+
+    with pytest.raises(RuntimeError, match="requires each accuracy"):
+        WORKER.persist_and_validate_coreference_report(report, path)
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["cumulative_step"] == 650
+    assert persisted["metrics"]["positive_tool_argument_accuracy"] == 0.0
+    assert [row["record_id"] for row in persisted["records"]] == [
+        "positive",
+        "ambiguous",
+    ]
+    assert persisted["records"][0]["raw_output"] == "Which card?"
+    assert persisted["records"][0]["passed"] is False
+
+
+def test_source_checkpoint_requires_exact_step_and_records_adapter_digest(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "adapter_model.safetensors").write_bytes(b"candidate3-checkpoint")
+    (tmp_path / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "trainer_state.json").write_text(
+        json.dumps({"global_step": 600}), encoding="utf-8"
+    )
+
+    identity = WORKER.validate_source_checkpoint(tmp_path, expected_step=600)
+
+    assert identity["path"] == str(tmp_path.resolve())
+    assert identity["step"] == 600
+    assert identity["optimizer_resumed"] is False
+    assert identity["adapter_sha256"] == hashlib.sha256(b"candidate3-checkpoint").hexdigest()
+    with pytest.raises(RuntimeError, match="step mismatch"):
+        WORKER.validate_source_checkpoint(tmp_path, expected_step=550)

@@ -275,6 +275,22 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
             " is the card to " in prompt or " is what i need" in prompt for prompt in prompts
         )
         assert any(_last_user(row) == row["metadata"]["coreference_prompt"] for row in rows)
+        action_rows = [row for row in rows if row["expected"]["path"] == "multi_turn"]
+        for prompt_form in range(4):
+            same_form = [
+                row
+                for row in action_rows
+                if row["metadata"]["coreference_prompt_form"] == prompt_form
+            ]
+            assert len({row["metadata"]["coreference_history_form"] for row in same_form}) == 4
+            assert len({row["metadata"]["coreference_tier"] for row in same_form}) == 4
+        for family in {row["metadata"]["coreference_phrase_family"] for row in action_rows}:
+            same_family = [
+                row
+                for row in action_rows
+                if row["metadata"]["coreference_phrase_family"] == family
+            ]
+            assert len({row["metadata"]["coreference_product"] for row in same_family}) == 4
 
     train_entities = {
         entity
@@ -309,7 +325,7 @@ def test_duplicate_current_requires_one_declared_opposite_target_pair() -> None:
         validate_records(pair)
 
 
-def test_candidate3_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
+def test_candidate4_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
     _base_manifest, base_splits = load_base_sft_splits()
     alignment_splits, _report = build_servicing_alignment_splits()
     rows = [*base_splits["test"], *alignment_splits["test"]]

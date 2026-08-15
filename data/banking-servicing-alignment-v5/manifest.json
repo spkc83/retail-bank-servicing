@@ -2,7 +2,7 @@
   "contract": "banking-tool-sft-manifest",
   "created_at": "2026-07-31T00:00:00Z",
   "format_version": 1,
-  "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
+  "generator_version": "banking-servicing-alignment-sft/v5.4-decorrelated-coreference",
   "name": "retail-bank-servicing-alignment-v5",
   "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "report": {
@@ -25,7 +25,7 @@
     },
     "created_at": "2026-07-31T00:00:00Z",
     "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets",
-    "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
+    "generator_version": "banking-servicing-alignment-sft/v5.4-decorrelated-coreference",
     "heldout_exact_currents_in_train": [],
     "heldout_long_ngram_leaks_in_train": [],
     "path_counts": {
@@ -121,31 +121,31 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 4485458,
+      "bytes": 4495738,
       "name": "train",
       "path": "train.jsonl",
       "record_count": 1609,
-      "sha256": "8eb152527c756abbc3bbbf45c832a08ed0338f9e48298938bf68f356b91a9d35"
+      "sha256": "b38c43dfba6d77e45d1929bf97dafdae4a74aa702ae8d99634f5ebc559abb065"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1057497,
+      "bytes": 1061049,
       "name": "validation",
       "path": "validation.jsonl",
       "record_count": 379,
-      "sha256": "3d38c9743cf51fc8c6452bca53bd0773f151c3cf15b20f4ddd1af64cdf741bb7"
+      "sha256": "828a6c26c39ac07c64cea2480caa94094f16132334f19437613dba2c8b6c5edf"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 585130,
+      "bytes": 585060,
       "name": "test",
       "path": "test.jsonl",
       "record_count": 215,
-      "sha256": "5f62ad3c202ffc0fa6bdb942eb22d258afc2393fd05ca988ea1cea81135feb27"
+      "sha256": "afe2493a7565a8ee281be247771801d85e3e60bd64f1c637efffd92f200a487c"
     }
   ]
 }

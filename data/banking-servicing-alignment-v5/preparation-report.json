@@ -18,7 +18,7 @@
   },
   "created_at": "2026-07-31T00:00:00Z",
   "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets",
-  "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
+  "generator_version": "banking-servicing-alignment-sft/v5.4-decorrelated-coreference",
   "heldout_exact_currents_in_train": [],
   "heldout_long_ngram_leaks_in_train": [],
   "path_counts": {
