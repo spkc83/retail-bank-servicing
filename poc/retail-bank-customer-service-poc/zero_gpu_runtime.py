@@ -98,6 +98,7 @@ else:
             base_model,
             ADAPTER_ID,
             revision=ADAPTER_REVISION,
+            torch_device="cpu",
             autocast_adapter_dtype=False,
         )
         if USE_PEFT_ADAPTER

@@ -141,6 +141,7 @@ def test_zero_gpu_runtime_loads_exact_base_and_unmerged_adapter(
         "spkc83/adapter",
         {
             "revision": adapter_revision,
+            "torch_device": "cpu",
             "autocast_adapter_dtype": False,
         },
     )

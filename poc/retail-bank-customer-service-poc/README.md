@@ -44,8 +44,8 @@ bank or perform a real transaction.
 | Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
-| Space source/pins | `spkc83/retail-bank-servicing-poc@f018cad020a17e33be59992035c1418c4cf91a01` |
-| Space runtime | PAUSED; the current OAuth token receives HTTP 401 on restart |
+| Space source/pins | The immutable deployed commit is exposed as `SPACE_COMMIT_SHA` in diagnostics |
+| Space runtime | ZeroGPU; verify the current Hub stage and run the probe before testing |
 
 ## Request Flow
 
@@ -200,10 +200,8 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 The command prints a plan unless `--execute --allow-publish` is supplied. The
 execution path uploads only allowlisted files and stores immutable pins as
-Space variables. Source and pins are deployed at
-`f018cad020a17e33be59992035c1418c4cf91a01`, but the runtime remains PAUSED
-because the current OAuth token receives HTTP 401 on restart. Do not describe
-the Space as READY until it starts and passes a remote smoke test.
+Space variables. Treat the deployment as complete only after the Hub reports
+`RUNNING` and the remote ZeroGPU probe succeeds.
 
 ## Reset and Test
 
