@@ -68,8 +68,8 @@ pass those raw choices downstream.
 and returns the highest-scoring coherent tuple. It also records whether this
 tuple differed from the independent head argmaxes. On the held-out set:
 
-- raw independent-head incompatibility rate: `0.002860`;
-- joint-decoder disagreement rate: `0.002860`;
+- raw independent-head incompatibility rate: `0.001018`;
+- joint-decoder disagreement rate: `0.001221`;
 - exposed hierarchy compatibility error rate: `0.0`.
 
 The decoder constrains structure; it does not grant authorization or invent
@@ -94,6 +94,8 @@ Training and serving use the same rendering order:
 State is trusted pre-turn application state. It contains at most one pending
 servicing anchor plus the detour flag. Current-turn answers, target outputs,
 tool results, and evaluation labels never enter this input.
+The renderer omits the state header when both the pending task and detour are
+absent; version-only/default state is not meaningful model context.
 
 ## Routing Thresholds
 
@@ -102,11 +104,11 @@ tool results, and evaluation labels never enter this input.
 | in-domain support | 0.50 |
 | OOD support boundary | 0.45 |
 | relation rescue | 0.40 |
-| `context_dependent` | 0.45 |
+| `context_dependent` | 0.40 |
 | `agent_repair` | 0.60 |
 | `topic_shift` | 0.70 |
 | `clarification_answer` | 0.80 |
-| `resume_previous_service` | 0.45 |
+| `resume_previous_service` | 0.50 |
 
 The route policy is:
 

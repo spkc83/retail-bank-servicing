@@ -9,6 +9,7 @@ from hello_slm.banking_conversation_router_data import (
     build_conversation_router_splits,
     normalize_router_text,
     render_router_input,
+    render_router_input_with_context,
 )
 from hello_slm.banking_domain_taxonomy import (
     ACTION_LABELS,
@@ -80,6 +81,20 @@ def test_cross_encoder_renderer_places_current_then_recent_complete_exchanges() 
         "[PREVIOUS_USER]\nShow my recent service cases."
     )
     assert "hidden" not in rendered
+
+
+def test_cross_encoder_renderer_omits_semantically_empty_dialogue_state() -> None:
+    rendered, context_applied = render_router_input_with_context(
+        "What happened with the money I sent recently?",
+        prior_dialogue_state={
+            "knowledge_detour_active": False,
+            "pending_servicing": None,
+            "version": 1,
+        },
+    )
+
+    assert rendered == "[CURRENT_USER]\nWhat happened with the money I sent recently?"
+    assert context_applied is False
 
 
 def test_v5_splits_use_hierarchy_actions_relations_and_no_current_turn_leakage() -> None:

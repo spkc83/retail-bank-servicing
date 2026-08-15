@@ -18,6 +18,7 @@ from router import (
     ROUTER_REVISION,
     ConversationRouterOutput,
     LearnedBankingRouter,
+    render_router_input,
 )
 from router import (
     decode_v4_joint as decode_poc_v4_joint,
@@ -27,6 +28,22 @@ from router import (
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
     assert ROUTER_REVISION == "c0d71b433fd1eef510fce36f6308eb36e423e329"
+
+
+def test_router_omits_semantically_empty_dialogue_state() -> None:
+    rendered, context_applied = render_router_input(
+        "What happened with the money I sent recently?",
+        [],
+        max_exchanges=3,
+        dialogue_state={
+            "knowledge_detour_active": False,
+            "pending_servicing": None,
+            "version": 1,
+        },
+    )
+
+    assert rendered == "[CURRENT_USER]\nWhat happened with the money I sent recently?"
+    assert context_applied is False
 
 
 class FakeTokenizer:

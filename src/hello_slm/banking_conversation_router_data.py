@@ -127,10 +127,11 @@ def render_router_input_with_context(
         raise ValueError("max_exchanges must be non-negative")
 
     parts = []
-    if prior_dialogue_state:
+    meaningful_state = _meaningful_dialogue_state(prior_dialogue_state)
+    if meaningful_state is not None:
         parts.append(
             "[PRIOR_DIALOGUE_STATE]\n"
-            + json.dumps(prior_dialogue_state, sort_keys=True, separators=(",", ":"))
+            + json.dumps(meaningful_state, sort_keys=True, separators=(",", ":"))
         )
     parts.append(f"[CURRENT_USER]\n{current.strip()}")
     complete_exchanges = _visible_complete_exchanges(history or [])
@@ -138,7 +139,17 @@ def render_router_input_with_context(
     for previous_user, previous_assistant in reversed(selected):
         parts.append(f"[PREVIOUS_ASSISTANT]\n{previous_assistant}")
         parts.append(f"[PREVIOUS_USER]\n{previous_user}")
-    return "\n".join(parts), bool(selected or prior_dialogue_state)
+    return "\n".join(parts), bool(selected or meaningful_state)
+
+
+def _meaningful_dialogue_state(
+    state: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if not state:
+        return None
+    if state.get("pending_servicing") or state.get("knowledge_detour_active") is True:
+        return state
+    return None
 
 
 def build_conversation_router_splits(
