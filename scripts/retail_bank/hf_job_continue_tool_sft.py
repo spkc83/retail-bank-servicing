@@ -26,7 +26,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
 CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"
@@ -39,6 +39,24 @@ DEFAULT_PROBE_CHECKPOINT_DIR = (
 )
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
+CANCELED_CANDIDATE5_DATASET_REVISION = "70c9cd9a9075ddbc1bf9aece0253dd62bd769c9d"
+DEFAULT_RESUME_CHECKPOINT_DIR = (
+    "/data/retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350"
+)
+DEFAULT_RESUME_CHECKPOINT_STEP = 350
+RESUME_BUCKET_ID = "spkc83/jobs-artifacts"
+RESUME_BUCKET_PREFIX = (
+    "retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350"
+)
+RESUME_CHECKPOINT_XET_HASHES = {
+    "adapter_config.json": "a9682f1296289fce43ec798430798468b64c795c13d528c17e4b2024030c3529",
+    "adapter_model.safetensors": "f1af57fc28b05efbac63192b5652b1cf49d3b2504778fa3629b207fb3536940d",
+    "optimizer.pt": "1100817feb246ec0d2ccc847d750dd01ab294af5f38d051a4bee4a9a2b09d532",
+    "rng_state.pth": "0cd6c1c69085489da8c3ce055699dc6b0a46446c64096bf6087bddc7bb6007b5",
+    "scheduler.pt": "25adb42bf10cd7f5dd953b978d0bbd3572b83d502ec96121dfdcc2ebf28cf9d1",
+    "trainer_state.json": "0dbffbed61861d125aa1c65067c03df2620ebc9eb80bb6e2fdddafb52453fa44",
+    "training_args.bin": "57cd397e7cb202aa8682719e1eb2f8132c62f8328c47bbbaa1546a9f9bc0f6ca",
+}
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
@@ -61,8 +79,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
     parser.add_argument("--publish-only", action="store_true")
+    parser.add_argument("--resume-canceled-candidate5", action="store_true")
     parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
     parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
+    parser.add_argument("--resume-checkpoint-dir", default=DEFAULT_RESUME_CHECKPOINT_DIR)
+    parser.add_argument(
+        "--resume-checkpoint-step", type=int, default=DEFAULT_RESUME_CHECKPOINT_STEP
+    )
     return parser.parse_args()
 
 
@@ -90,7 +113,32 @@ def execution_mode_args(args: argparse.Namespace) -> list[str]:
             "--probe-checkpoint-step",
             str(args.probe_checkpoint_step),
         ]
+    if args.resume_canceled_candidate5:
+        return [
+            "--resume-canceled-candidate5",
+            "--resume-checkpoint-dir",
+            str(args.resume_checkpoint_dir),
+            "--resume-checkpoint-step",
+            str(args.resume_checkpoint_step),
+            "--push-to-hub",
+        ]
     return ["--push-to-hub"]
+
+
+def validate_resume_bucket_checkpoint(api: HfApi) -> None:
+    paths = [f"{RESUME_BUCKET_PREFIX}/{name}" for name in RESUME_CHECKPOINT_XET_HASHES]
+    entries = list(api.get_bucket_paths_info(RESUME_BUCKET_ID, paths))
+    by_name = {Path(entry.path).name: entry for entry in entries}
+    missing = sorted(set(RESUME_CHECKPOINT_XET_HASHES) - set(by_name))
+    if missing:
+        raise RuntimeError(f"resume bucket checkpoint is incomplete: {missing}")
+    mismatches = [
+        name
+        for name, expected_hash in RESUME_CHECKPOINT_XET_HASHES.items()
+        if by_name[name].xet_hash != expected_hash
+    ]
+    if mismatches:
+        raise RuntimeError(f"resume bucket checkpoint xet hash mismatch: {mismatches}")
 
 
 def download_source(source_commit: str, destination: Path) -> Path:
@@ -124,8 +172,9 @@ def main() -> int:
     args = parse_args()
     require_exact_revision(args.dataset_revision, field="--dataset-revision")
     validate_source_adapter(args.source_adapter_repo, args.source_adapter_revision)
-    if args.probe_only and args.publish_only:
-        raise ValueError("--probe-only and --publish-only are mutually exclusive")
+    modes = (args.probe_only, args.publish_only, args.resume_canceled_candidate5)
+    if sum(bool(mode) for mode in modes) > 1:
+        raise ValueError("probe, publish-only, and resume modes are mutually exclusive")
     if args.destination_repo == args.source_adapter_repo:
         raise ValueError("--destination-repo must differ from the source adapter repository")
     if args.probe_only and args.dataset_revision != CANDIDATE3_PROBE_DATASET_REVISION:
@@ -133,8 +182,22 @@ def main() -> int:
             "checkpoint probes require the exact candidate3 dataset revision "
             f"{CANDIDATE3_PROBE_DATASET_REVISION}"
         )
+    if args.resume_canceled_candidate5:
+        if args.dataset_revision != CANCELED_CANDIDATE5_DATASET_REVISION:
+            raise ValueError(
+                "candidate5 resume requires dataset revision "
+                f"{CANCELED_CANDIDATE5_DATASET_REVISION}"
+            )
+        if (
+            args.resume_checkpoint_dir != DEFAULT_RESUME_CHECKPOINT_DIR
+            or args.resume_checkpoint_step != DEFAULT_RESUME_CHECKPOINT_STEP
+            or args.max_steps != 964
+        ):
+            raise ValueError("candidate5 resume checkpoint and 964-step horizon are immutable")
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
+    if args.resume_canceled_candidate5:
+        validate_resume_bucket_checkpoint(HfApi(token=os.environ["HF_TOKEN"]))
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-continuation-") as temp_dir:
         temp_root = Path(temp_dir)
         source_root = download_source(args.source_commit, temp_root / "source")

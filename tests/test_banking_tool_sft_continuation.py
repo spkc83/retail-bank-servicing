@@ -401,12 +401,14 @@ def test_job_probe_command_never_requests_publication() -> None:
     probe = SimpleNamespace(
         probe_only=True,
         publish_only=False,
+        resume_canceled_candidate5=False,
         probe_checkpoint_dir="/data/run/trainer/checkpoint-550",
         probe_checkpoint_step=550,
     )
     training = SimpleNamespace(
         probe_only=False,
         publish_only=False,
+        resume_canceled_candidate5=False,
         probe_checkpoint_dir="unused",
         probe_checkpoint_step=0,
     )
@@ -422,8 +424,25 @@ def test_job_probe_command_never_requests_publication() -> None:
     ]
     assert "--push-to-hub" not in probe_args
     assert JOB.execution_mode_args(training) == ["--push-to-hub"]
-    recovery = SimpleNamespace(publish_only=True, probe_only=False)
+    recovery = SimpleNamespace(
+        publish_only=True, probe_only=False, resume_canceled_candidate5=False
+    )
     assert JOB.execution_mode_args(recovery) == ["--publish-only", "--push-to-hub"]
+    resume = SimpleNamespace(
+        publish_only=False,
+        probe_only=False,
+        resume_canceled_candidate5=True,
+        resume_checkpoint_dir=JOB.DEFAULT_RESUME_CHECKPOINT_DIR,
+        resume_checkpoint_step=350,
+    )
+    assert JOB.execution_mode_args(resume) == [
+        "--resume-canceled-candidate5",
+        "--resume-checkpoint-dir",
+        JOB.DEFAULT_RESUME_CHECKPOINT_DIR,
+        "--resume-checkpoint-step",
+        "350",
+        "--push-to-hub",
+    ]
 
 
 def test_worker_probe_requires_exact_source_and_candidate3_dataset_revisions() -> None:
@@ -1124,6 +1143,128 @@ def test_source_checkpoint_requires_exact_step_and_records_adapter_digest(
     assert identity["adapter_sha256"] == hashlib.sha256(b"candidate3-checkpoint").hexdigest()
     with pytest.raises(RuntimeError, match="step mismatch"):
         WORKER.validate_source_checkpoint(tmp_path, expected_step=550)
+
+
+def _write_padded_json(path: Path, payload: dict[str, Any], size: int) -> None:
+    encoded = json.dumps(payload).encode()
+    assert len(encoded) <= size
+    path.write_bytes(encoded + b" " * (size - len(encoded)))
+
+
+def _write_resume_checkpoint(root: Path) -> None:
+    root.mkdir()
+    adapter = {
+        "base_model_name_or_path": WORKER.BASE_MODEL,
+        "peft_type": "LORA",
+        "task_type": "CAUSAL_LM",
+        "r": 32,
+        "lora_alpha": 64,
+    }
+    state = {"global_step": 350, "max_steps": 964}
+    _write_padded_json(
+        root / "adapter_config.json",
+        adapter,
+        WORKER.RESUME_CHECKPOINT_SIZES["adapter_config.json"],
+    )
+    _write_padded_json(
+        root / "trainer_state.json",
+        state,
+        WORKER.RESUME_CHECKPOINT_SIZES["trainer_state.json"],
+    )
+    for name in set(WORKER.RESUME_CHECKPOINT_FILES) - {
+        "adapter_config.json",
+        "trainer_state.json",
+    }:
+        with (root / name).open("wb") as handle:
+            handle.seek(WORKER.RESUME_CHECKPOINT_SIZES[name] - 1)
+            handle.write(b"\0")
+
+
+def test_resume_checkpoint_requires_exact_state_architecture_sizes_and_identity(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "checkpoint-350"
+    _write_resume_checkpoint(checkpoint)
+
+    identity = WORKER.validate_resume_checkpoint(checkpoint, expected_step=350)
+
+    assert identity["step"] == 350
+    assert identity["max_steps"] == 964
+    assert identity["optimizer_resumed"] is True
+    assert identity["bucket_xet_hash"] == WORKER.RESUME_CHECKPOINT_XET_HASHES
+
+    with (checkpoint / "scheduler.pt").open("ab") as handle:
+        handle.write(b"mutation")
+    with pytest.raises(RuntimeError, match="file size mismatch"):
+        WORKER.validate_resume_checkpoint(checkpoint, expected_step=350)
+
+
+def test_resume_mode_rejects_any_recipe_dataset_or_path_drift() -> None:
+    base = replace(
+        WORKER.config_from_args(WORKER.parse_args([])),
+        output_dir=WORKER.DEFAULT_RESUME_OUTPUT_DIR,
+        resume_canceled_candidate5=True,
+    )
+    dataset = {
+        "repository": WORKER.DATASET_REPO,
+        "revision": WORKER.CANCELED_CANDIDATE5_DATASET_REVISION,
+    }
+    WORKER.validate_resume_mode_inputs(base, dataset)
+
+    with pytest.raises(RuntimeError, match="settings mismatch"):
+        WORKER.validate_resume_mode_inputs(replace(base, learning_rate=3e-6), dataset)
+    with pytest.raises(RuntimeError, match="settings mismatch"):
+        WORKER.validate_resume_mode_inputs(
+            replace(base, resume_checkpoint_dir=Path("/data/wrong-checkpoint")), dataset
+        )
+    with pytest.raises(RuntimeError, match="requires dataset revision"):
+        WORKER.validate_resume_mode_inputs(base, {**dataset, "revision": "f" * 40})
+
+
+def test_resume_dry_run_and_training_call_preserve_exact_horizon_and_gates() -> None:
+    config = replace(
+        WORKER.config_from_args(WORKER.parse_args([])),
+        output_dir=WORKER.DEFAULT_RESUME_OUTPUT_DIR,
+        resume_canceled_candidate5=True,
+    )
+    plan = WORKER.build_dry_run_plan(config)
+    resume = plan["canceled_job_resume"]
+    assert resume["enabled"] is True
+    assert resume["checkpoint_step"] == 350
+    assert resume["required_dataset_revision"] == WORKER.CANCELED_CANDIDATE5_DATASET_REVISION
+    assert resume["optimizer_rng_scheduler"] == "required and resumed"
+    assert plan["training"]["max_steps"] == 964
+
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    remote_body = source.split("def run_remote_continuation", 1)[1].split("def main", 1)[0]
+    assert remote_body.index("validate_resume_checkpoint(") < remote_body.index(
+        "AutoModelForCausalLM.from_pretrained("
+    )
+    assert "resume_from_checkpoint=" in remote_body
+    assert "ConsecutiveGateTracker()" in remote_body
+    assert "shadow-selected-step-" in remote_body
+
+
+def test_bootstrap_rejects_mutated_resume_bucket_xet_identity() -> None:
+    entries = [
+        SimpleNamespace(
+            path=f"{JOB.RESUME_BUCKET_PREFIX}/{name}",
+            xet_hash=digest,
+        )
+        for name, digest in JOB.RESUME_CHECKPOINT_XET_HASHES.items()
+    ]
+
+    class FakeApi:
+        def get_bucket_paths_info(self, _bucket: str, _paths: list[str]) -> list[Any]:
+            return entries
+
+    JOB.validate_resume_bucket_checkpoint(FakeApi())
+    WORKER.validate_resume_bucket_identity(FakeApi())
+    entries[0].xet_hash = "0" * 64
+    with pytest.raises(RuntimeError, match="xet hash mismatch"):
+        JOB.validate_resume_bucket_checkpoint(FakeApi())
+    with pytest.raises(RuntimeError, match="xet hash mismatch"):
+        WORKER.validate_resume_bucket_identity(FakeApi())
 
 
 def test_shadow_gate_loader_requires_non_trainable_exact_digest(tmp_path: Path) -> None:

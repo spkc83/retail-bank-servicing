@@ -259,6 +259,50 @@ def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: 
     assert "--publish-only" in submitted
 
 
+def test_canceled_candidate5_resume_launcher_uses_exact_checkpoint_and_new_output(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'CANDIDATE5_PROTOCOL = \"retail-bank-peft-candidate5/v1\"'\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n',
+        encoding="utf-8",
+    )
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+        "RESUME_CANCELED_CANDIDATE5": "1",
+    }
+
+    subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "70c9cd9a9075ddbc1bf9aece0253dd62bd769c9d",
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=True,
+        env=env,
+    )
+    submitted = hf_log.read_text(encoding="utf-8")
+    assert "rtx-pro-6000" in submitted
+    assert "--resume-canceled-candidate5" in submitted
+    assert "checkpoint-350" in submitted
+    assert "candidate5-resume-4e86f632-d965816b-70c9cd9a-from350" in submitted
+
+
 def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
