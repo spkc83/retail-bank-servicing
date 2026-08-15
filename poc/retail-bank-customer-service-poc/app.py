@@ -18,10 +18,10 @@ if os.environ.get("POC_SKIP_MODEL_LOAD") == "1":
         count_tokens,
         generate_text,
         runtime_metadata,
-        spaces_runtime,
+        spaces_runtime as _spaces_runtime,
     )
 else:
-    import spaces as spaces_runtime
+    import spaces as _spaces_runtime  # type: ignore[no-redef]
 
     from zero_gpu_runtime import (
         MODEL_ID,
@@ -60,6 +60,8 @@ from responses import (
 )
 from router import ROUTER_REVISION, LearnedBankingRouter
 from state import BANK
+
+spaces_runtime: Any = _spaces_runtime
 
 AUTH_CREDENTIALS = load_demo_auth()
 AUTH_MESSAGE = (

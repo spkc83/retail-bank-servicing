@@ -178,10 +178,9 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`f018cad020a17e33be59992035c1418c4cf91a01`. Its runtime remains **PAUSED**;
-the current OAuth token receives HTTP 401 when attempting a restart. Treat the
-Space as deployed but unavailable, not READY, until authentication is repaired
-and a remote smoke test passes.
+`2ec64ceacc390f5619d246fbca60dcca67f4a83f`. The runtime is **RUNNING** and an
+authenticated chat smoke generated a model-authored response on a ZeroGPU RTX
+PRO 6000 worker using the pinned BF16 base-plus-adapter composition.
 
 ## Verify
 

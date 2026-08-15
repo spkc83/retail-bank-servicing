@@ -14,8 +14,8 @@ artifact.
 | Local dataset | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@f018cad020a17e33be59992035c1418c4cf91a01` |
-| ZeroGPU runtime | PAUSED; current OAuth restart receives HTTP 401 |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2ec64ceacc390f5619d246fbca60dcca67f4a83f` |
+| ZeroGPU runtime | RUNNING; authenticated model-generation smoke passed |
 
 ### Dataset files
 

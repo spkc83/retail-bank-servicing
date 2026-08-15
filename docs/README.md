@@ -16,7 +16,7 @@ contract, and run either interface.
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
 | Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@f018cad020a17e33be59992035c1418c4cf91a01`; runtime paused after OAuth restart returned HTTP 401 |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2ec64ceacc390f5619d246fbca60dcca67f4a83f`; authenticated chat smoke passed |
 
 ## Read in This Order
 

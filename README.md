@@ -23,10 +23,10 @@ fictional. The POC does not connect to a real bank.
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Artifact format | 4 |
 | Release gate | `release_eligible: true`; no failures |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@f018cad020a17e33be59992035c1418c4cf91a01`; runtime paused |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2ec64ceacc390f5619d246fbca60dcca67f4a83f`; runtime running |
 
-The Space source and immutable pins are deployed, but the runtime is not
-READY: restarting it with the current OAuth token returns HTTP 401.
+The Space is running and its authenticated chat smoke completed on a ZeroGPU
+RTX PRO 6000 worker with the exact base, adapter, and router revisions above.
 
 ## Request Flow
 

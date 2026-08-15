@@ -195,9 +195,9 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source/pin deployment is
-`f018cad020a17e33be59992035c1418c4cf91a01`. The runtime remains PAUSED because
-the current OAuth token receives HTTP 401 on restart. Do not claim READY or run
-remote behavioral smokes until authentication is repaired and the Space starts.
+`2ec64ceacc390f5619d246fbca60dcca67f4a83f`. The runtime is RUNNING and its
+authenticated chat smoke passed on ZeroGPU with the pinned base, adapter, and
+router identities present in the returned diagnostics.
 
 ## Stop Conditions
 
