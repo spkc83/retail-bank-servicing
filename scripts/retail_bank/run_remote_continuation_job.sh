@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 4 || $# -gt 5 ]]; then
-  echo "usage: $0 SOURCE_COMMIT DATASET_REVISION SOURCE_ADAPTER_REVISION DESTINATION_REPO [MAX_STEPS]" >&2
+if [[ $# -lt 2 || $# -gt 5 ]]; then
+  echo "usage: $0 SOURCE_COMMIT DATASET_REVISION [SOURCE_ADAPTER_REVISION] [DESTINATION_REPO] [MAX_STEPS]" >&2
   exit 2
 fi
 
 source_commit="$1"
 dataset_revision="$2"
-source_adapter_revision="$3"
-destination_repo="$4"
-max_steps="${5:-250}"
-source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft}"
+source_adapter_revision="${3:-d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2}"
+destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3}"
+max_steps="${5:-600}"
+source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_continue_tool_sft.py"
 
 if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then

@@ -34,6 +34,7 @@ import random
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -60,13 +61,13 @@ from hello_slm.banking_tool_wire import ToolWireAdapter
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT"
 REMOTE_CONFIRMATION_VALUE = "banking-v5-peft-remediation"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
-ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
+ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-DEFAULT_SOURCE_ADAPTER_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
-DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
+DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
+DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3"
 DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
-DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-remediation"
+DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate3"
 ADAPTER_FILES = (
     "adapter_config.json",
     "adapter_model.safetensors",
@@ -75,22 +76,14 @@ ADAPTER_FILES = (
     "tokenizer_config.json",
     "training_args.bin",
 )
-SERVICING_QUALITY_FAMILIES = frozenset(
+POLICY_FAQ_FAMILIES = frozenset(
     {
-        "read_accounts",
-        "read_cards",
-        "read_service_cases",
-        "read_transactions",
-        "read_transfers",
-        "clarification_card",
         "faq_mortgage",
         "faq_mortgage_age",
         "faq_deposit_opening",
         "faq_savings_interest",
         "no_tool_banking_faq",
-        "history_entity_action",
-        "history_entity_ambiguity",
-        "tool_outcome_consistency",
+        "policy_detour",
     }
 )
 
@@ -112,9 +105,10 @@ class ContinuationConfig:
     max_seq_len: int
     learning_rate: float
     checkpoint_every: int
-    sequential_multiplier: int
-    clarification_multiplier: int
-    servicing_quality_multiplier: int
+    positive_multiplier: int
+    ambiguity_multiplier: int
+    policy_faq_multiplier: int
+    tool_outcome_multiplier: int
     dry_run: bool
     allow_remote_execution: bool
     push_to_hub: bool
@@ -132,16 +126,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-revision", default=BASE_REVISION)
     parser.add_argument("--family", choices=("granite",), default="granite")
     parser.add_argument("--hub-dest", default=DEFAULT_HUB_DEST)
-    parser.add_argument("--max-steps", type=int, default=250)
+    parser.add_argument("--max-steps", type=int, default=600)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--max-seq-len", type=int, default=2048)
-    parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--learning-rate", type=float, default=5e-6)
     parser.add_argument("--checkpoint-every", type=int, default=50)
-    parser.add_argument("--sequential-multiplier", type=int, default=5)
-    parser.add_argument("--clarification-multiplier", type=int, default=4)
-    parser.add_argument("--servicing-quality-multiplier", type=int, default=4)
+    parser.add_argument("--positive-multiplier", type=int, default=10)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=5)
+    parser.add_argument("--policy-faq-multiplier", type=int, default=4)
+    parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--execute-remote", action="store_false", dest="dry_run")
     parser.add_argument("--allow-remote-execution", action="store_true")
@@ -168,9 +163,10 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         max_seq_len=int(args.max_seq_len),
         learning_rate=float(args.learning_rate),
         checkpoint_every=int(args.checkpoint_every),
-        sequential_multiplier=int(args.sequential_multiplier),
-        clarification_multiplier=int(args.clarification_multiplier),
-        servicing_quality_multiplier=int(args.servicing_quality_multiplier),
+        positive_multiplier=int(args.positive_multiplier),
+        ambiguity_multiplier=int(args.ambiguity_multiplier),
+        policy_faq_multiplier=int(args.policy_faq_multiplier),
+        tool_outcome_multiplier=int(args.tool_outcome_multiplier),
         dry_run=bool(args.dry_run),
         allow_remote_execution=bool(args.allow_remote_execution),
         push_to_hub=bool(args.push_to_hub),
@@ -218,36 +214,65 @@ def assert_remote_execution_allowed(config: ContinuationConfig) -> None:
         )
 
 
-def assistant_tool_call_count(record: Mapping[str, Any]) -> int:
-    return sum(
-        len(message.get("tool_calls") or ())
-        for message in record.get("messages", ())
-        if message.get("role") == "assistant"
-    )
-
-
 def expected_path(record: Mapping[str, Any]) -> str:
     expected = record.get("expected")
     return str(expected.get("path", "")) if isinstance(expected, Mapping) else ""
 
 
-def final_assistant_text(record: Mapping[str, Any]) -> str:
-    for message in reversed(record.get("messages", ())):
-        if message.get("role") == "assistant" and isinstance(message.get("content"), str):
-            return str(message["content"])
-    return ""
+def scenario_family(record: Mapping[str, Any]) -> str:
+    metadata = record.get("metadata")
+    return str(metadata.get("scenario_family", "")) if isinstance(metadata, Mapping) else ""
 
 
-def is_sequential_focus_record(record: Mapping[str, Any]) -> bool:
-    return assistant_tool_call_count(record) >= 2 or expected_path(record) == "multi_turn"
+def coreference_target(record: Mapping[str, Any]) -> str:
+    metadata = record.get("metadata")
+    return str(metadata.get("coreference_target", "")) if isinstance(metadata, Mapping) else ""
 
 
-def is_credential_safe_clarification_record(record: Mapping[str, Any]) -> bool:
-    if expected_path(record) != "clarification":
-        return False
-    text = final_assistant_text(record).lower()
-    blocked = ("account number", "customer id", "password", " pin", "ssn")
-    return "last four digits" in text and not any(token in text for token in blocked)
+def is_coreference_positive_record(record: Mapping[str, Any]) -> bool:
+    return (
+        scenario_family(record) == "deictic_replace_action"
+        and coreference_target(record) == "replace_card"
+    )
+
+
+def is_coreference_ambiguity_record(record: Mapping[str, Any]) -> bool:
+    return (
+        scenario_family(record) == "deictic_replace_ambiguity"
+        and coreference_target(record) == "clarification"
+    )
+
+
+def is_policy_faq_record(record: Mapping[str, Any]) -> bool:
+    return scenario_family(record) in POLICY_FAQ_FAMILIES or expected_path(record) in {
+        "no_tool_banking_faq",
+        "retrieval_grounded_policy",
+    }
+
+
+def is_tool_outcome_record(record: Mapping[str, Any]) -> bool:
+    return scenario_family(record) == "tool_outcome_consistency"
+
+
+def mask_coreference_positive_final_loss(
+    records: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    masked = deepcopy(list(records))
+    for record in masked:
+        if not is_coreference_positive_record(record):
+            continue
+        tool_targets = [
+            message
+            for message in record["messages"]
+            if message.get("role") == "assistant" and message.get("tool_calls")
+        ]
+        if len(tool_targets) != 1 or tool_targets[0].get("loss") is not True:
+            raise RuntimeError("coreference positive must supervise exactly one tool decision")
+        for message in reversed(record["messages"]):
+            if message.get("role") == "assistant" and isinstance(message.get("content"), str):
+                message["loss"] = False
+                break
+    return masked
 
 
 def is_regression_record(record: Mapping[str, Any]) -> bool:
@@ -260,49 +285,56 @@ def is_regression_record(record: Mapping[str, Any]) -> bool:
     }
 
 
-def is_servicing_quality_record(record: Mapping[str, Any]) -> bool:
-    metadata = record.get("metadata")
-    if not isinstance(metadata, Mapping):
-        return False
-    return str(metadata.get("scenario_family", "")) in SERVICING_QUALITY_FAMILIES
-
-
 def build_continuation_mix(
     records: Sequence[dict[str, Any]],
     *,
-    sequential_multiplier: int,
-    clarification_multiplier: int,
-    servicing_quality_multiplier: int,
+    positive_multiplier: int,
+    ambiguity_multiplier: int,
+    policy_faq_multiplier: int,
+    tool_outcome_multiplier: int,
     seed: int = TRAINING_SEED,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if min(sequential_multiplier, clarification_multiplier, servicing_quality_multiplier) < 1:
+    if (
+        min(
+            positive_multiplier,
+            ambiguity_multiplier,
+            policy_faq_multiplier,
+            tool_outcome_multiplier,
+        )
+        < 1
+    ):
         raise ValueError("continuation multipliers must be >= 1")
     mixed: list[dict[str, Any]] = []
     stats = {
         "input_records": len(records),
-        "sequential_focus_records": 0,
-        "credential_safe_clarification_records": 0,
-        "servicing_quality_records": 0,
+        "coreference_positive_records": 0,
+        "coreference_ambiguity_records": 0,
+        "policy_faq_records": 0,
+        "tool_outcome_records": 0,
         "regression_records": 0,
         "total_weighted_records": 0,
-        "sequential_multiplier": sequential_multiplier,
-        "clarification_multiplier": clarification_multiplier,
-        "servicing_quality_multiplier": servicing_quality_multiplier,
+        "positive_multiplier": positive_multiplier,
+        "ambiguity_multiplier": ambiguity_multiplier,
+        "policy_faq_multiplier": policy_faq_multiplier,
+        "tool_outcome_multiplier": tool_outcome_multiplier,
         "all_input_records_retained": True,
     }
     for record in records:
-        sequential = is_sequential_focus_record(record)
-        clarification = is_credential_safe_clarification_record(record)
-        servicing_quality = is_servicing_quality_record(record)
+        positive = is_coreference_positive_record(record)
+        ambiguity = is_coreference_ambiguity_record(record)
+        policy_faq = is_policy_faq_record(record)
+        tool_outcome = is_tool_outcome_record(record)
         regression = is_regression_record(record)
-        stats["sequential_focus_records"] += int(sequential)
-        stats["credential_safe_clarification_records"] += int(clarification)
-        stats["servicing_quality_records"] += int(servicing_quality)
+        stats["coreference_positive_records"] += int(positive)
+        stats["coreference_ambiguity_records"] += int(ambiguity)
+        stats["policy_faq_records"] += int(policy_faq)
+        stats["tool_outcome_records"] += int(tool_outcome)
         stats["regression_records"] += int(regression)
         weight = max(
-            sequential_multiplier if sequential else 1,
-            clarification_multiplier if clarification else 1,
-            servicing_quality_multiplier if servicing_quality else 1,
+            positive_multiplier if positive else 1,
+            ambiguity_multiplier if ambiguity else 1,
+            policy_faq_multiplier if policy_faq else 1,
+            tool_outcome_multiplier if tool_outcome else 1,
         )
         mixed.extend([record] * weight)
     random.Random(seed).shuffle(mixed)
@@ -360,9 +392,10 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "max_seq_len": config.max_seq_len,
             "learning_rate": config.learning_rate,
             "checkpoint_every": config.checkpoint_every,
-            "sequential_multiplier": config.sequential_multiplier,
-            "clarification_multiplier": config.clarification_multiplier,
-            "servicing_quality_multiplier": config.servicing_quality_multiplier,
+            "positive_multiplier": config.positive_multiplier,
+            "ambiguity_multiplier": config.ambiguity_multiplier,
+            "policy_faq_multiplier": config.policy_faq_multiplier,
+            "tool_outcome_multiplier": config.tool_outcome_multiplier,
             "retained_regression_mix": [
                 "single-tool",
                 "tool-error",
@@ -416,7 +449,7 @@ def build_training_args(config: ContinuationConfig) -> Any:
         optim="adamw_torch_fused",
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
-        run_name=config.trackio_run_name or "granite-peft-v5-remediation",
+        run_name=config.trackio_run_name or "granite-peft-v5-candidate3",
         push_to_hub=False,
     )
 
@@ -529,6 +562,146 @@ def validate_eval_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
     return dict(metrics)
 
 
+def score_coreference_behavior(
+    records: Sequence[Mapping[str, Any]],
+    predictions: Mapping[str, Mapping[str, Any] | None],
+) -> dict[str, Any]:
+    positive_results: list[bool] = []
+    ambiguity_results: list[bool] = []
+    pair_results: dict[str, list[bool]] = {}
+    parse_failures = 0
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, Mapping) or "coreference_pair_id" not in metadata:
+            continue
+        record_id = str(record["record_id"])
+        target = str(metadata.get("coreference_target", ""))
+        prediction = predictions.get(record_id)
+        if not isinstance(prediction, Mapping):
+            parse_failures += 1
+            passed = False
+        else:
+            calls = list(prediction.get("tool_calls", ()) or ())
+            if target == "replace_card":
+                expected = record.get("expected")
+                expected_calls = (
+                    list(expected.get("tool_calls", ()) or ())
+                    if isinstance(expected, Mapping)
+                    else []
+                )
+                actual_calls = [
+                    {
+                        "name": call.get("function", {}).get("name"),
+                        "arguments": call.get("function", {}).get("arguments"),
+                    }
+                    for call in calls
+                    if isinstance(call, Mapping) and isinstance(call.get("function"), Mapping)
+                ]
+                passed = actual_calls == expected_calls
+            elif target == "clarification":
+                content = str(prediction.get("content") or "").lower()
+                passed = not calls and "which" in content and "card" in content
+            else:
+                raise RuntimeError(f"unexpected coreference target in validation: {target}")
+        if target == "replace_card":
+            positive_results.append(passed)
+        elif target == "clarification":
+            ambiguity_results.append(passed)
+        else:
+            raise RuntimeError(f"unexpected coreference target in validation: {target}")
+        pair_results.setdefault(str(metadata["coreference_pair_id"]), []).append(passed)
+    if not positive_results or not ambiguity_results or not pair_results:
+        raise RuntimeError("coreference behavioral gate requires paired validation records")
+    incomplete_pairs = [pair_id for pair_id, results in pair_results.items() if len(results) != 2]
+    if incomplete_pairs:
+        raise RuntimeError(f"coreference validation pairs are incomplete: {incomplete_pairs}")
+    pair_passes = [all(results) for results in pair_results.values()]
+    return {
+        "positive_tool_argument_accuracy": sum(positive_results) / len(positive_results),
+        "ambiguity_accuracy": sum(ambiguity_results) / len(ambiguity_results),
+        "pair_flip_accuracy": sum(pair_passes) / len(pair_passes),
+        "positive_records": len(positive_results),
+        "ambiguity_records": len(ambiguity_results),
+        "pairs": len(pair_passes),
+        "parse_failures": parse_failures,
+    }
+
+
+def validate_coreference_behavioral_gate(
+    metrics: Mapping[str, Any],
+    *,
+    minimum: float = 0.95,
+) -> dict[str, Any]:
+    required = (
+        "positive_tool_argument_accuracy",
+        "ambiguity_accuracy",
+        "pair_flip_accuracy",
+    )
+    failures = []
+    for name in required:
+        value = metrics.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(float(value))
+            or float(value) < minimum
+        ):
+            failures.append(f"{name}={value!r}")
+    if failures:
+        raise RuntimeError(
+            f"coreference behavioral gate requires each accuracy >= {minimum:.2f}: "
+            + ", ".join(failures)
+        )
+    return dict(metrics)
+
+
+def run_coreference_behavioral_gate(
+    model: Any,
+    tokenizer: Any,
+    adapter: ToolWireAdapter,
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    predictions: dict[str, Mapping[str, Any] | None] = {}
+    was_training = bool(model.training)
+    model.eval()
+    device = next(model.parameters()).device
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, Mapping) or "coreference_pair_id" not in metadata:
+            continue
+        messages = list(record.get("messages", ()))
+        last_user = max(
+            index for index, message in enumerate(messages) if message.get("role") == "user"
+        )
+        rendered = adapter.render_generation(messages[: last_user + 1])
+        inputs = {
+            key: value.to(device)
+            for key, value in rendered.items()
+            if key != "tools" and hasattr(value, "to")
+        }
+        if "attention_mask" not in inputs:
+            inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+        with torch.inference_mode():
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=128,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                use_cache=True,
+            )
+        prompt_width = int(inputs["input_ids"].shape[-1])
+        try:
+            predictions[str(record["record_id"])] = adapter.parse_assistant(
+                output_ids[0, prompt_width:]
+            )
+        except (TypeError, ValueError):
+            predictions[str(record["record_id"])] = None
+    if was_training:
+        model.train()
+    return validate_coreference_behavioral_gate(score_coreference_behavior(records, predictions))
+
+
 def render_model_card(result: Mapping[str, Any]) -> str:
     return f"""---
 license: apache-2.0
@@ -585,6 +758,10 @@ def upload_release(
     if not isinstance(eval_metrics, Mapping):
         raise RuntimeError("training result is missing post-train evaluation metrics")
     validate_eval_metrics(eval_metrics)
+    behavioral_gate = result.get("coreference_behavioral_gate")
+    if not isinstance(behavioral_gate, Mapping):
+        raise RuntimeError("training result is missing the coreference behavioral gate")
+    validate_coreference_behavioral_gate(behavioral_gate)
     if read_json(result_path) != dict(result):
         raise RuntimeError("training result file does not match the atomic release payload")
     api = HfApi(token=os.environ["HF_TOKEN"])
@@ -650,15 +827,20 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     validation_records = load_manifest_records(config.manifest, "validation")
     mixed_train_records, mix_report = build_continuation_mix(
         train_records,
-        sequential_multiplier=config.sequential_multiplier,
-        clarification_multiplier=config.clarification_multiplier,
-        servicing_quality_multiplier=config.servicing_quality_multiplier,
+        positive_multiplier=config.positive_multiplier,
+        ambiguity_multiplier=config.ambiguity_multiplier,
+        policy_faq_multiplier=config.policy_faq_multiplier,
+        tool_outcome_multiplier=config.tool_outcome_multiplier,
     )
     train_examples = tokenize_records(
-        mixed_train_records, wire_adapter, max_seq_len=config.max_seq_len
+        mask_coreference_positive_final_loss(mixed_train_records),
+        wire_adapter,
+        max_seq_len=config.max_seq_len,
     )
     validation_examples = tokenize_records(
-        validation_records, wire_adapter, max_seq_len=config.max_seq_len
+        mask_coreference_positive_final_loss(validation_records),
+        wire_adapter,
+        max_seq_len=config.max_seq_len,
     )
     train_dataset = HfDataset.from_dict(
         {
@@ -724,6 +906,12 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
 
         trainer.remove_callback(TrackioCallback)
     eval_metrics = validate_eval_metrics(trainer.evaluate())
+    behavioral_gate = run_coreference_behavioral_gate(
+        model,
+        tokenizer,
+        wire_adapter,
+        validation_records,
+    )
     adapter_dir = config.output_dir / "adapter"
     trainer.save_model(str(adapter_dir))
     tokenizer.save_pretrained(adapter_dir)
@@ -739,6 +927,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "fingerprint": fingerprint,
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
+        "coreference_behavioral_gate": behavioral_gate,
     }
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
@@ -756,6 +945,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "sampling": mix_report,
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
+        "coreference_behavioral_gate": behavioral_gate,
         "adapter_sha256": sha256(adapter_dir / "adapter_model.safetensors"),
         "merged_model": None,
         "frozen_release_gates": "pending unchanged frozen evaluation",

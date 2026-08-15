@@ -2,14 +2,14 @@
   "contract": "banking-tool-sft-manifest",
   "created_at": "2026-07-31T00:00:00Z",
   "format_version": 1,
-  "generator_version": "banking-servicing-alignment-sft/v5.2-coreference",
+  "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
   "name": "retail-bank-servicing-alignment-v5",
   "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "report": {
     "alignment_split_counts": {
       "test": 35,
-      "train": 1440,
-      "validation": 232
+      "train": 768,
+      "validation": 200
     },
     "base_manifest_sha256": "1290c8787dcf06df9c594aed9d483588613ba86f7db1b72ccaef9f4cb5680fe9",
     "base_split_counts": {
@@ -18,8 +18,14 @@
       "validation": 179
     },
     "contract": "banking-servicing-alignment-sft-report",
+    "coreference_pair_counts": {
+      "test": 0,
+      "train": 48,
+      "validation": 16
+    },
     "created_at": "2026-07-31T00:00:00Z",
-    "generator_version": "banking-servicing-alignment-sft/v5.2-coreference",
+    "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets",
+    "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
     "heldout_exact_currents_in_train": [],
     "heldout_long_ngram_leaks_in_train": [],
     "path_counts": {
@@ -29,16 +35,16 @@
         "retrieval_grounded_policy": 4
       },
       "train": {
-        "clarification": 416,
-        "multi_turn": 832,
+        "clarification": 80,
+        "multi_turn": 496,
         "ood": 32,
         "retrieval_grounded_policy": 32,
         "tool_error": 64,
         "tool_success": 64
       },
       "validation": {
-        "clarification": 40,
-        "multi_turn": 144,
+        "clarification": 24,
+        "multi_turn": 128,
         "ood": 8,
         "retrieval_grounded_policy": 8,
         "tool_error": 16,
@@ -61,8 +67,8 @@
         "banking_topic_shift": 32,
         "card_anaphora_action": 64,
         "clarification_answer": 64,
-        "deictic_replace_action": 384,
-        "deictic_replace_ambiguity": 384,
+        "deictic_replace_action": 48,
+        "deictic_replace_ambiguity": 48,
         "external_topic_shift": 32,
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
@@ -76,8 +82,8 @@
         "banking_topic_shift": 8,
         "card_anaphora_action": 16,
         "clarification_answer": 16,
-        "deictic_replace_action": 32,
-        "deictic_replace_ambiguity": 32,
+        "deictic_replace_action": 16,
+        "deictic_replace_ambiguity": 16,
         "external_topic_shift": 8,
         "history_entity_action": 32,
         "history_entity_ambiguity": 8,
@@ -89,8 +95,8 @@
     },
     "split_counts": {
       "test": 215,
-      "train": 2281,
-      "validation": 411
+      "train": 1609,
+      "validation": 379
     }
   },
   "schema_version": "banking-tool-sft/v1",
@@ -115,31 +121,31 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 6304394,
+      "bytes": 4485458,
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 2281,
-      "sha256": "e2fe392477f98bfd9c71ddcba0df951e948a150e777b4d5d8e0f0ca495f67926"
+      "record_count": 1609,
+      "sha256": "8eb152527c756abbc3bbbf45c832a08ed0338f9e48298938bf68f356b91a9d35"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1145601,
+      "bytes": 1057497,
       "name": "validation",
       "path": "validation.jsonl",
-      "record_count": 411,
-      "sha256": "9adddd20fa66b25257d10c91200d55ad1dc6fdf87b244a2b705781181775c910"
+      "record_count": 379,
+      "sha256": "3d38c9743cf51fc8c6452bca53bd0773f151c3cf15b20f4ddd1af64cdf741bb7"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 584605,
+      "bytes": 585130,
       "name": "test",
       "path": "test.jsonl",
       "record_count": 215,
-      "sha256": "77ab4e83acc653f70e1939bdbb3bcb172c233c0a7f7c05049970811c3681ddf0"
+      "sha256": "5f62ad3c202ffc0fa6bdb942eb22d258afc2393fd05ca988ea1cea81135feb27"
     }
   ]
 }

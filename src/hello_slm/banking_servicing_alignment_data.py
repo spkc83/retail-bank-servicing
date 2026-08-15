@@ -22,7 +22,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.2-coreference"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.3-counterfactual-coreference"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -103,6 +103,7 @@ def build_servicing_alignment_splits() -> tuple[
     for split, records in splits.items():
         validate_records(records)
         _assert_no_duplicate_current(records, split=split)
+    _assert_coreference_pair_integrity(splits)
     _assert_no_cross_split_leakage(splits)
     report = {
         "contract": "banking-servicing-alignment-sft-report",
@@ -117,6 +118,19 @@ def build_servicing_alignment_splits() -> tuple[
             split: dict(Counter(row["expected"]["path"] for row in rows))
             for split, rows in splits.items()
         },
+        "coreference_pair_counts": {
+            split: len(
+                {
+                    str(row["metadata"]["coreference_pair_id"])
+                    for row in rows
+                    if "coreference_pair_id" in row["metadata"]
+                }
+            )
+            for split, rows in splits.items()
+        },
+        "duplicate_current_policy": (
+            "only declared two-record coreference pairs with opposite targets"
+        ),
         "pii_matches": _count_pii_matches(splits),
         "heldout_exact_currents_in_train": _heldout_exact_currents_in_train(splits),
         "heldout_long_ngram_leaks_in_train": _heldout_long_ngram_leaks_in_train(splits),
@@ -242,8 +256,10 @@ def _train_records() -> list[dict[str, Any]]:
     records.extend(_history_entity_actions("train"))
     records.extend(_history_entity_ambiguity("train"))
     records.extend(_tool_outcome_consistency("train"))
-    records.extend(_deictic_replace_curriculum("train"))
-    return _expand_records(records, split="train")
+    return [
+        *_expand_records(records, split="train"),
+        *_deictic_replace_curriculum("train"),
+    ]
 
 
 def _validation_records() -> list[dict[str, Any]]:
@@ -257,8 +273,10 @@ def _validation_records() -> list[dict[str, Any]]:
     records.extend(_history_entity_actions("validation"))
     records.extend(_history_entity_ambiguity("validation"))
     records.extend(_tool_outcome_consistency("validation"))
-    records.extend(_deictic_replace_curriculum("validation"))
-    return _expand_records(records, split="validation")
+    return [
+        *_expand_records(records, split="validation"),
+        *_deictic_replace_curriculum("validation"),
+    ]
 
 
 def _test_records() -> list[dict[str, Any]]:
@@ -568,230 +586,211 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
         return (
             {
                 "phrase_family": "that-card",
-                "action_prompt": "Replace that card",
-                "ambiguity_prompt": "Please replace that card",
-                "card_name": "Harbor Debit",
-                "card_last4": "6107",
-                "other_card_name": "Harbor Credit",
-                "other_card_last4": "8130",
+                "prompt": "replace that card",
+                "product": "Harbor",
             },
             {
                 "phrase_family": "that-one",
-                "action_prompt": "Replace that one",
-                "ambiguity_prompt": "Could you replace that one",
-                "card_name": "Rewards Debit",
-                "card_last4": "6249",
-                "other_card_name": "Rewards Credit",
-                "other_card_last4": "8241",
+                "prompt": "replace that one",
+                "product": "Summit",
             },
             {
-                "phrase_family": "same-card",
-                "action_prompt": "Use the same card for the replacement",
-                "ambiguity_prompt": "Can you use the same card for the replacement",
-                "card_name": "Travel Debit",
-                "card_last4": "6381",
-                "other_card_name": "Travel Credit",
-                "other_card_last4": "8352",
+                "phrase_family": "swap-card",
+                "prompt": "swap that card",
+                "product": "Cedar",
             },
             {
-                "phrase_family": "just-listed",
-                "action_prompt": "Replace the card you just listed",
-                "ambiguity_prompt": "Please replace the card you just listed",
-                "card_name": "Everyday Debit",
-                "card_last4": "6473",
-                "other_card_name": "Everyday Credit",
-                "other_card_last4": "8463",
+                "phrase_family": "swap-one",
+                "prompt": "swap that one",
+                "product": "Maple",
             },
             {
                 "phrase_family": "it",
-                "action_prompt": "Replace it",
-                "ambiguity_prompt": "Would you replace it",
-                "card_name": "Cashback Debit",
-                "card_last4": "6592",
-                "other_card_name": "Cashback Credit",
-                "other_card_last4": "8574",
+                "prompt": "order a replacement for it",
+                "product": "Orchard",
             },
             {
-                "phrase_family": "yes-proceed",
-                "action_prompt": "Yes, proceed with the replacement",
-                "ambiguity_prompt": "Yes, please proceed with the replacement",
-                "card_name": "Student Debit",
-                "card_last4": "6714",
-                "other_card_name": "Student Credit",
-                "other_card_last4": "8685",
+                "phrase_family": "replacement-card",
+                "prompt": "get a replacement for that card",
+                "product": "River",
             },
             {
-                "phrase_family": "selection",
-                "action_prompt": "Proceed with that selection",
-                "ambiguity_prompt": "Can you proceed with that selection",
-                "card_name": "Market Debit",
-                "card_last4": "6835",
-                "other_card_name": "Market Credit",
-                "other_card_last4": "8796",
+                "phrase_family": "would-like-card",
+                "prompt": "i would like that card replaced",
+                "product": "Prairie",
             },
             {
-                "phrase_family": "mentioned-above",
-                "action_prompt": "Order a replacement for the card mentioned above",
-                "ambiguity_prompt": "Please order a replacement for the card mentioned above",
-                "card_name": "Premier Debit",
-                "card_last4": "6947",
-                "other_card_name": "Premier Credit",
-                "other_card_last4": "8907",
+                "phrase_family": "needs-replacing",
+                "prompt": "that one needs replacing",
+                "product": "Lake",
             },
             {
-                "phrase_family": "summary-reference",
-                "action_prompt": "Request a replacement for the card from your summary",
-                "ambiguity_prompt": "Please request a replacement for the card from your summary",
-                "card_name": "Community Debit",
-                "card_last4": "7059",
-                "other_card_name": "Community Credit",
-                "other_card_last4": "9018",
+                "phrase_family": "same-card",
+                "prompt": "the same card should be replaced",
+                "product": "Valley",
             },
             {
-                "phrase_family": "continue-selection",
-                "action_prompt": "Continue with replacement for that selection",
-                "ambiguity_prompt": "Please continue with replacement for that selection",
-                "card_name": "Secure Debit",
-                "card_last4": "7183",
-                "other_card_name": "Secure Credit",
-                "other_card_last4": "9129",
+                "phrase_family": "replacement-needed",
+                "prompt": "a replacement is what i need for that one",
+                "product": "Pioneer",
             },
             {
-                "phrase_family": "answer-reference",
-                "action_prompt": "Go ahead and replace the debit card from your answer",
-                "ambiguity_prompt": "Can you replace the debit card from your answer",
-                "card_name": "Daily Debit",
-                "card_last4": "7296",
-                "other_card_name": "Daily Credit",
-                "other_card_last4": "9230",
+                "phrase_family": "active-one",
+                "prompt": "the active one is the card to replace",
+                "product": "Meadow",
             },
             {
-                "phrase_family": "same-one",
-                "action_prompt": "Use the same one for replacement",
-                "ambiguity_prompt": "Please use the same one for replacement",
-                "card_name": "Classic Debit",
-                "card_last4": "7418",
-                "other_card_name": "Classic Credit",
-                "other_card_last4": "9341",
+                "phrase_family": "one-to-swap",
+                "prompt": "that card is the one to swap out",
+                "product": "Forest",
             },
         )
     if split == "validation":
         return (
             {
                 "phrase_family": "prior-answer",
-                "action_prompt": "Swap out the card from your prior answer",
-                "ambiguity_prompt": "Please swap out the card from your prior answer",
-                "card_name": "Home Debit",
-                "card_last4": "1526",
-                "other_card_name": "Home Credit",
-                "other_card_last4": "2516",
+                "prompt": "that is the card i need replaced",
+                "product": "Juniper",
             },
             {
-                "phrase_family": "identified-card",
-                "action_prompt": "Order a new copy of the previously identified card",
-                "ambiguity_prompt": "Please order a new copy of the previously identified card",
-                "card_name": "Choice Debit",
-                "card_last4": "1678",
-                "other_card_name": "Choice Credit",
-                "other_card_last4": "2671",
+                "phrase_family": "list-reference",
+                "prompt": "i would like the card from that list replaced",
+                "product": "Granite",
             },
             {
-                "phrase_family": "previously-mentioned",
-                "action_prompt": "Use the previously mentioned debit card for replacement",
-                "ambiguity_prompt": "Please use the previously mentioned card for replacement",
-                "card_name": "Compass Debit",
-                "card_last4": "1794",
-                "other_card_name": "Compass Credit",
-                "other_card_last4": "2795",
+                "phrase_family": "another-copy",
+                "prompt": "a new copy of that card is what i need",
+                "product": "Copper",
             },
             {
-                "phrase_family": "carry-forward",
-                "action_prompt": "Carry forward the selected card and request a replacement",
-                "ambiguity_prompt": "Please carry forward the selected card for replacement",
-                "card_name": "Select Debit",
-                "card_last4": "1836",
-                "other_card_name": "Select Credit",
-                "other_card_last4": "2837",
+                "phrase_family": "replacement-reference",
+                "prompt": "go ahead with replacing that card",
+                "product": "Aspen",
             },
         )
     raise ValueError(f"unsupported coreference curriculum split: {split}")
 
 
 def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
-    suffix = _suffix(split)
+    prompt_forms = (
+        "{prompt}",
+        "okay {prompt}",
+        "{prompt} please",
+        "yes {prompt}",
+    )
+    sole_card_history_forms = (
+        "You have an active {card_name} card ending in {card_last4}.",
+        "Cards on this profile: {card_name} ending in {card_last4} (active).",
+        "I found {card_name} ending in {card_last4} with active status.",
+        "Card results: {card_name} ending in {card_last4}, status active.",
+    )
+    multiple_card_history_forms = (
+        (
+            "You have an active {card_name} card ending in {card_last4} and an active "
+            "{other_card_name} card ending in {other_card_last4}."
+        ),
+        (
+            "Cards on this profile: {card_name} ending in {card_last4} (active); "
+            "{other_card_name} ending in {other_card_last4} (active)."
+        ),
+        (
+            "I found {card_name} ending in {card_last4} and {other_card_name} ending in "
+            "{other_card_last4}, both with active status."
+        ),
+        (
+            "Card results: {card_name} ending in {card_last4}, status active; "
+            "{other_card_name} ending in {other_card_last4}, status active."
+        ),
+    )
+    tiers = ("Everyday Debit", "Rewards Debit", "Travel Debit", "Cashback Debit")
     records: list[dict[str, Any]] = []
+    number_base = 6100 if split == "train" else 2100
+    other_number_base = 8100 if split == "train" else 4100
+    pair_index = 0
     for spec in _coreference_curriculum_specs(split):
-        family = spec["phrase_family"]
-        entity_key = f"{spec['card_name']}|{spec['card_last4']}"
-        action = _record(
-            record_id=f"deictic_replace_{family}_{split}",
-            split=split,
-            scenario_family="deictic_replace_action",
-            current=f"{spec['action_prompt']} {suffix}.",
-            final=(
-                f"Replacement is pending for your {spec['card_name']} ending in "
-                f"{spec['card_last4']}."
-            ),
-            tool_plan=[("replace_card", {"last4": spec["card_last4"]})],
-            grounding_facts=[
-                f"card.last4={spec['card_last4']}",
-                "card.status=replacement_pending",
-            ],
-            path="multi_turn",
-            pre_messages=[
-                _user(f"Show the card currently selected for replacement {suffix}."),
-                _assistant(
-                    f"The selected card is your {spec['card_name']} ending in "
-                    f"{spec['card_last4']}.",
-                    loss=False,
+        for realization, prompt_form in enumerate(prompt_forms):
+            pair_index += 1
+            family = spec["phrase_family"]
+            prompt = prompt_form.format(prompt=spec["prompt"])
+            card_name = f"{spec['product']} {tiers[realization]}"
+            other_card_name = f"{spec['product']} {tiers[realization].replace('Debit', 'Credit')}"
+            card_last4 = f"{number_base + pair_index:04d}"
+            other_card_last4 = f"{other_number_base + pair_index:04d}"
+            pair_id = f"coreference-{split}-{family}-{realization}"
+            history_user = "List the cards on my profile."
+            history_values = {
+                "card_name": card_name,
+                "card_last4": card_last4,
+                "other_card_name": other_card_name,
+                "other_card_last4": other_card_last4,
+            }
+            sole_card_history = sole_card_history_forms[realization].format(**history_values)
+            multiple_card_history = multiple_card_history_forms[realization].format(
+                **history_values
+            )
+            action = _record(
+                record_id=f"deictic_replace_{family}_{split}_{realization}",
+                split=split,
+                scenario_family="deictic_replace_action",
+                current=prompt,
+                final=(f"Replacement is pending for your {card_name} ending in {card_last4}."),
+                tool_plan=[("replace_card", {"last4": card_last4})],
+                grounding_facts=[
+                    f"card.last4={card_last4}",
+                    "card.status=replacement_pending",
+                ],
+                path="multi_turn",
+                pre_messages=[
+                    _user(history_user),
+                    _assistant(sole_card_history, loss=False),
+                ],
+                tool_envelopes=[
+                    _success_envelope(
+                        card={
+                            "name": card_name,
+                            "last4": card_last4,
+                            "status": "replacement_pending",
+                        }
+                    )
+                ],
+            )
+            ambiguity = _record(
+                record_id=f"deictic_ambiguous_{family}_{split}_{realization}",
+                split=split,
+                scenario_family="deictic_replace_ambiguity",
+                current=prompt,
+                final=(
+                    f"I found {card_name} ending in {card_last4} and {other_card_name} "
+                    f"ending in {other_card_last4}. Which card should I replace? Please "
+                    "share the last four digits shown in the app."
                 ),
-            ],
-            tool_envelopes=[
-                _success_envelope(
-                    card={
-                        "name": spec["card_name"],
-                        "last4": spec["card_last4"],
-                        "status": "replacement_pending",
+                tool_plan=[],
+                grounding_facts=[],
+                path="clarification",
+                pre_messages=[
+                    _user(history_user),
+                    _assistant(multiple_card_history, loss=False),
+                ],
+            )
+            entity_keys = (
+                f"{card_name}|{card_last4}",
+                f"{other_card_name}|{other_card_last4}",
+            )
+            for record, target, actionable_card_count in (
+                (action, "replace_card", 1),
+                (ambiguity, "clarification", 2),
+            ):
+                record["metadata"].update(
+                    {
+                        "coreference_pair_id": pair_id,
+                        "coreference_phrase_family": family,
+                        "coreference_prompt": prompt,
+                        "coreference_entity_keys": entity_keys,
+                        "coreference_target": target,
+                        "actionable_card_count": actionable_card_count,
                     }
                 )
-            ],
-        )
-        ambiguity = _record(
-            record_id=f"deictic_ambiguous_{family}_{split}",
-            split=split,
-            scenario_family="deictic_replace_ambiguity",
-            current=f"{spec['ambiguity_prompt']} {suffix}.",
-            final=(
-                f"I found {spec['card_name']} ending in {spec['card_last4']} and "
-                f"{spec['other_card_name']} ending in {spec['other_card_last4']} in our "
-                "conversation. Which should I replace? Please share the last four digits "
-                "shown in the app."
-            ),
-            tool_plan=[],
-            grounding_facts=[],
-            path="clarification",
-            pre_messages=[
-                _user(f"Show the cards I could replace {suffix}."),
-                _assistant(
-                    f"I found {spec['card_name']} ending in {spec['card_last4']} and "
-                    f"{spec['other_card_name']} ending in {spec['other_card_last4']}.",
-                    loss=False,
-                ),
-            ],
-        )
-        for record, prompt, target in (
-            (action, spec["action_prompt"], "replace_card"),
-            (ambiguity, spec["ambiguity_prompt"], "clarification"),
-        ):
-            record["metadata"].update(
-                {
-                    "coreference_phrase_family": family,
-                    "coreference_prompt": prompt,
-                    "coreference_entity_key": entity_key,
-                    "coreference_target": target,
-                }
-            )
-        records.extend((action, ambiguity))
+            records.extend((action, ambiguity))
     return records
 
 
@@ -1378,12 +1377,88 @@ def _last_user_text(record: dict[str, Any]) -> str:
 
 
 def _assert_no_duplicate_current(records: Sequence[dict[str, Any]], *, split: str) -> None:
-    seen: set[str] = set()
+    seen: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         normalized = _normalize(_last_user_text(record))
-        if normalized in seen:
-            raise ValueError(f"duplicate current user text in {split}: {normalized}")
-        seen.add(normalized)
+        seen.setdefault(normalized, []).append(record)
+    for normalized, duplicates in seen.items():
+        if len(duplicates) == 1:
+            continue
+        pair_ids = {row["metadata"].get("coreference_pair_id") for row in duplicates}
+        targets = {row["metadata"].get("coreference_target") for row in duplicates}
+        if (
+            len(duplicates) == 2
+            and len(pair_ids) == 1
+            and None not in pair_ids
+            and targets == {"replace_card", "clarification"}
+        ):
+            continue
+        raise ValueError(f"duplicate current user text in {split}: {normalized}")
+
+
+def _assert_coreference_pair_integrity(
+    splits: Mapping[str, Sequence[dict[str, Any]]],
+) -> None:
+    pair_owners: dict[str, str] = {}
+    entities_by_split: dict[str, set[str]] = {"train": set(), "validation": set()}
+    families_by_split: dict[str, set[str]] = {"train": set(), "validation": set()}
+    for split in ("train", "validation"):
+        pairs: dict[str, list[dict[str, Any]]] = {}
+        for record in splits[split]:
+            pair_id = record["metadata"].get("coreference_pair_id")
+            if pair_id is None:
+                continue
+            pair_key = str(pair_id)
+            owner = pair_owners.setdefault(pair_key, split)
+            if owner != split:
+                raise ValueError(f"coreference pair leaked across splits: {pair_key}")
+            pairs.setdefault(pair_key, []).append(record)
+        for pair_id, pair in pairs.items():
+            if len(pair) != 2:
+                raise ValueError(f"coreference pair must contain two records: {pair_id}")
+            if len({_last_user_text(record) for record in pair}) != 1:
+                raise ValueError(f"coreference pair current text drifted: {pair_id}")
+            if {record["metadata"].get("coreference_target") for record in pair} != {
+                "replace_card",
+                "clarification",
+            }:
+                raise ValueError(f"coreference pair targets are invalid: {pair_id}")
+            if {record["metadata"].get("actionable_card_count") for record in pair} != {
+                1,
+                2,
+            }:
+                raise ValueError(f"coreference pair card counts are invalid: {pair_id}")
+            positive = next(
+                record
+                for record in pair
+                if record["metadata"].get("coreference_target") == "replace_card"
+            )
+            tool_targets = [
+                message
+                for message in positive["messages"]
+                if message["role"] == "assistant" and message.get("tool_calls")
+            ]
+            if len(tool_targets) != 1 or tool_targets[0].get("loss") is not True:
+                raise ValueError(f"coreference positive tool decision is not supervised: {pair_id}")
+            history_users = [
+                tuple(
+                    str(message["content"])
+                    for message in record["messages"][:-1]
+                    if message["role"] == "user"
+                )
+                for record in pair
+            ]
+            if history_users[0] != history_users[1]:
+                raise ValueError(f"coreference pair list history drifted: {pair_id}")
+            if "selected" in json.dumps(pair, ensure_ascii=False).lower():
+                raise ValueError(f"coreference pair contains preselection leakage: {pair_id}")
+            for record in pair:
+                entities_by_split[split].update(record["metadata"]["coreference_entity_keys"])
+                families_by_split[split].add(str(record["metadata"]["coreference_phrase_family"]))
+    if entities_by_split["train"] & entities_by_split["validation"]:
+        raise ValueError("coreference entities leaked across train and validation")
+    if families_by_split["train"] & families_by_split["validation"]:
+        raise ValueError("coreference phrase families leaked across train and validation")
 
 
 def _assert_no_cross_split_leakage(
@@ -1457,5 +1532,6 @@ def validate_servicing_alignment_splits(
 ) -> None:
     validate_records(all_records(splits))
     _assert_no_cross_split_leakage(splits)
+    _assert_coreference_pair_integrity(splits)
     if _count_pii_matches(splits):
         raise ValueError("servicing alignment splits contain PII-like text")

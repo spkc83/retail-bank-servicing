@@ -1,8 +1,8 @@
 {
   "alignment_split_counts": {
     "test": 35,
-    "train": 1440,
-    "validation": 232
+    "train": 768,
+    "validation": 200
   },
   "base_manifest_sha256": "1290c8787dcf06df9c594aed9d483588613ba86f7db1b72ccaef9f4cb5680fe9",
   "base_split_counts": {
@@ -11,8 +11,14 @@
     "validation": 179
   },
   "contract": "banking-servicing-alignment-sft-report",
+  "coreference_pair_counts": {
+    "test": 0,
+    "train": 48,
+    "validation": 16
+  },
   "created_at": "2026-07-31T00:00:00Z",
-  "generator_version": "banking-servicing-alignment-sft/v5.2-coreference",
+  "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets",
+  "generator_version": "banking-servicing-alignment-sft/v5.3-counterfactual-coreference",
   "heldout_exact_currents_in_train": [],
   "heldout_long_ngram_leaks_in_train": [],
   "path_counts": {
@@ -22,16 +28,16 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "clarification": 416,
-      "multi_turn": 832,
+      "clarification": 80,
+      "multi_turn": 496,
       "ood": 32,
       "retrieval_grounded_policy": 32,
       "tool_error": 64,
       "tool_success": 64
     },
     "validation": {
-      "clarification": 40,
-      "multi_turn": 144,
+      "clarification": 24,
+      "multi_turn": 128,
       "ood": 8,
       "retrieval_grounded_policy": 8,
       "tool_error": 16,
@@ -54,8 +60,8 @@
       "banking_topic_shift": 32,
       "card_anaphora_action": 64,
       "clarification_answer": 64,
-      "deictic_replace_action": 384,
-      "deictic_replace_ambiguity": 384,
+      "deictic_replace_action": 48,
+      "deictic_replace_ambiguity": 48,
       "external_topic_shift": 32,
       "history_entity_action": 128,
       "history_entity_ambiguity": 32,
@@ -69,8 +75,8 @@
       "banking_topic_shift": 8,
       "card_anaphora_action": 16,
       "clarification_answer": 16,
-      "deictic_replace_action": 32,
-      "deictic_replace_ambiguity": 32,
+      "deictic_replace_action": 16,
+      "deictic_replace_ambiguity": 16,
       "external_topic_shift": 8,
       "history_entity_action": 32,
       "history_entity_ambiguity": 8,
@@ -82,7 +88,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 2281,
-    "validation": 411
+    "train": 1609,
+    "validation": 379
   }
 }

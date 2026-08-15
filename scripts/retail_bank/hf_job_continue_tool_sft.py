@@ -30,7 +30,9 @@ from huggingface_hub import snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
-ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
+ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
+DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
+DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate3"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
@@ -40,16 +42,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--dataset-revision", required=True)
     parser.add_argument("--source-adapter-repo", default=ADAPTER_REPO)
-    parser.add_argument("--source-adapter-revision", required=True)
-    parser.add_argument("--destination-repo", required=True)
-    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-continuation")
-    parser.add_argument("--max-steps", type=int, default=250)
+    parser.add_argument("--source-adapter-revision", default=DEFAULT_SOURCE_ADAPTER_REVISION)
+    parser.add_argument("--destination-repo", default=DEFAULT_DESTINATION_REPO)
+    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate3")
+    parser.add_argument("--max-steps", type=int, default=600)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
-    parser.add_argument("--checkpoint-every", type=int, default=100)
-    parser.add_argument("--sequential-multiplier", type=int, default=5)
-    parser.add_argument("--clarification-multiplier", type=int, default=4)
-    parser.add_argument("--servicing-quality-multiplier", type=int, default=4)
+    parser.add_argument("--checkpoint-every", type=int, default=50)
+    parser.add_argument("--positive-multiplier", type=int, default=10)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=5)
+    parser.add_argument("--policy-faq-multiplier", type=int, default=4)
+    parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     return parser.parse_args()
 
 
@@ -140,15 +143,17 @@ def main() -> int:
             "--max-seq-len",
             "2048",
             "--learning-rate",
-            "1e-5",
+            "5e-6",
             "--checkpoint-every",
             str(args.checkpoint_every),
-            "--sequential-multiplier",
-            str(args.sequential_multiplier),
-            "--clarification-multiplier",
-            str(args.clarification_multiplier),
-            "--servicing-quality-multiplier",
-            str(args.servicing_quality_multiplier),
+            "--positive-multiplier",
+            str(args.positive_multiplier),
+            "--ambiguity-multiplier",
+            str(args.ambiguity_multiplier),
+            "--policy-faq-multiplier",
+            str(args.policy_faq_multiplier),
+            "--tool-outcome-multiplier",
+            str(args.tool_outcome_multiplier),
             "--trackio-project",
             "retail-bank-agent-v5-remediation",
             "--trackio-run-name",

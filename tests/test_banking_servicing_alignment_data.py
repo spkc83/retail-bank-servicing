@@ -5,10 +5,14 @@ import importlib.util
 import json
 import re
 from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
+import hello_slm.banking_servicing_alignment_data as alignment_data
 from hello_slm.banking_servicing_alignment_data import (
     SCREENSHOT_HELDOUT_CURRENTS,
     build_servicing_alignment_splits,
@@ -16,7 +20,12 @@ from hello_slm.banking_servicing_alignment_data import (
     validate_servicing_alignment_splits,
     write_servicing_alignment_dataset,
 )
-from hello_slm.banking_tool_sft_data import prepare, validate_banking_tool_sft_manifest
+from hello_slm.banking_tool_sft_data import (
+    BankingToolSftDataError,
+    prepare,
+    validate_banking_tool_sft_manifest,
+    validate_records,
+)
 
 
 def _last_user(record: dict[str, Any]) -> str:
@@ -49,9 +58,14 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 1440,
-        "validation": 232,
+        "train": 768,
+        "validation": 200,
         "test": 35,
+    }
+    assert report["coreference_pair_counts"] == {
+        "train": 48,
+        "validation": 16,
+        "test": 0,
     }
     train_families = Counter(record["metadata"]["scenario_family"] for record in splits["train"])
     assert train_families == {
@@ -66,8 +80,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
         "tool_outcome_consistency": 128,
-        "deictic_replace_action": 384,
-        "deictic_replace_ambiguity": 384,
+        "deictic_replace_action": 48,
+        "deictic_replace_ambiguity": 48,
     }
     service_case_records = [
         record
@@ -198,8 +212,8 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         for split in ("train", "validation")
     }
 
-    assert len(curricula["train"]) == 768
-    assert len(curricula["validation"]) == 64
+    assert len(curricula["train"]) == 96
+    assert len(curricula["validation"]) == 32
     for split, rows in curricula.items():
         action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
         ambiguous = [row for row in rows if row["expected"]["path"] == "clarification"]
@@ -212,13 +226,65 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         }
         assert all(row["expected"]["tool_calls"][0]["name"] == "replace_card" for row in action)
         assert all(not row["expected"]["tool_calls"] for row in ambiguous)
+        assert all(row["messages"][-1]["loss"] is True for row in action)
+        assert all(
+            next(
+                message
+                for message in row["messages"]
+                if message["role"] == "assistant" and message.get("tool_calls")
+            )["loss"]
+            is True
+            for row in action
+        )
         assert all(
             "last four digits" in str(row["messages"][-1]["content"]).lower() for row in ambiguous
         )
+        action_histories = {
+            str(row["messages"][2]["content"])
+            for row in action
+            if row["messages"][2]["role"] == "assistant"
+        }
+        assert any(history.startswith("You have an active ") for history in action_histories)
+        assert any(history.startswith("Cards on this profile: ") for history in action_histories)
+        assert any(history.startswith("I found ") for history in action_histories)
+        assert any(history.startswith("Card results: ") for history in action_histories)
 
-    train_entities = {row["metadata"]["coreference_entity_key"] for row in curricula["train"]}
+        pairs: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            pairs.setdefault(row["metadata"]["coreference_pair_id"], []).append(row)
+        assert len(pairs) == (48 if split == "train" else 16)
+        for pair_rows in pairs.values():
+            assert len(pair_rows) == 2
+            assert {_last_user(row) for row in pair_rows} == {_last_user(pair_rows[0])}
+            assert {row["metadata"]["coreference_target"] for row in pair_rows} == {
+                "replace_card",
+                "clarification",
+            }
+            assert {row["metadata"]["actionable_card_count"] for row in pair_rows} == {1, 2}
+
+        assert "selected" not in json.dumps(rows, ensure_ascii=False).lower()
+        pair_text = json.dumps(rows, ensure_ascii=False).lower()
+        assert "one active" not in pair_text
+        assert "two active" not in pair_text
+        assert "4821" not in pair_text
+        assert "everyday visa debit" not in pair_text
+
+        prompts = {str(row["metadata"]["coreference_prompt"]) for row in rows}
+        assert any(prompt.startswith("i would like ") for prompt in prompts)
+        assert any(
+            " is the card to " in prompt or " is what i need" in prompt for prompt in prompts
+        )
+        assert any(_last_user(row) == row["metadata"]["coreference_prompt"] for row in rows)
+
+    train_entities = {
+        entity
+        for row in curricula["train"]
+        for entity in row["metadata"]["coreference_entity_keys"]
+    }
     validation_entities = {
-        row["metadata"]["coreference_entity_key"] for row in curricula["validation"]
+        entity
+        for row in curricula["validation"]
+        for entity in row["metadata"]["coreference_entity_keys"]
     }
     assert train_entities.isdisjoint(validation_entities)
     train_phrases = {row["metadata"]["coreference_prompt"] for row in curricula["train"]}
@@ -226,7 +292,24 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
     assert train_phrases.isdisjoint(validation_phrases)
 
 
-def test_candidate2_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
+def test_duplicate_current_requires_one_declared_opposite_target_pair() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    pair = [
+        deepcopy(row)
+        for row in splits["train"]
+        if row["metadata"].get("coreference_pair_id") == "coreference-train-that-card-0"
+    ]
+    assert len(pair) == 2
+    validate_records(pair)
+    pair[1]["metadata"].pop("coreference_pair_id")
+
+    with pytest.raises(ValueError, match="duplicate current user text"):
+        alignment_data._assert_no_duplicate_current(pair, split="train")
+    with pytest.raises(BankingToolSftDataError, match="duplicates normalized user text"):
+        validate_records(pair)
+
+
+def test_candidate3_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
     _base_manifest, base_splits = load_base_sft_splits()
     alignment_splits, _report = build_servicing_alignment_splits()
     rows = [*base_splits["test"], *alignment_splits["test"]]
@@ -275,7 +358,7 @@ def test_v5_alignment_adds_policy_detour_resume_and_unique_targets() -> None:
     assert len(finals) == len(set(finals))
 
 
-def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None:
+def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     base_dir = tmp_path / "base"
     prepare(output_dir=base_dir, pilot_count=120)
     manifest = write_servicing_alignment_dataset(tmp_path / "alignment", base_sft_dir=base_dir)
@@ -283,8 +366,8 @@ def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 1440,
-        "validation": 232,
+        "train": 768,
+        "validation": 200,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
@@ -303,11 +386,10 @@ def test_writer_outputs_manifest_and_schema_valid_splits(tmp_path: Path) -> None
         assert path.is_file()
         assert path.stat().st_size == entry["bytes"]
         assert len(path.read_text(encoding="utf-8").splitlines()) == entry["record_count"]
-    validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json")
-
     report = json.loads((tmp_path / "alignment" / "preparation-report.json").read_text())
     assert report["pii_matches"] == 0
     assert report["heldout_exact_currents_in_train"] == []
+    assert validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json") == manifest
 
 
 def test_release_lock_detects_split_drift(tmp_path: Path) -> None:

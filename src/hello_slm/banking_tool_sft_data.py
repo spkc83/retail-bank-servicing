@@ -8,7 +8,7 @@ import json
 import re
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -561,7 +561,7 @@ def validate_records(
     records = list(records)
     tool_names = set(ALLOWED_ARGS)
     seen_ids: set[str] = set()
-    normalized_users: set[str] = set()
+    normalized_users: dict[str, list[dict[str, Any]]] = {}
     normalized_finals: set[str] = set()
     leaking_tools = [
         str(tool["function"]["name"])
@@ -600,9 +600,10 @@ def validate_records(
         user_key = normalized_user_text(_last_user_message(record)["content"])
         if record.get("metadata", {}).get("split") == "train" and user_key in POC_PRESET_KEYS:
             raise BankingToolSftDataError(f"{record_id} duplicates a POC preset")
-        if user_key in normalized_users:
+        same_current = normalized_users.setdefault(user_key, [])
+        if same_current and not _is_governed_counterfactual_pair([*same_current, record]):
             raise BankingToolSftDataError(f"{record_id} duplicates normalized user text")
-        normalized_users.add(user_key)
+        same_current.append(record)
         final_response = _final_assistant_message(record).get("content")
         if (
             not isinstance(final_response, str)
@@ -806,6 +807,53 @@ def validate_records(
             raise BankingToolSftDataError(f"{record_id} manifest hash mismatch")
     _assert_no_fuzzy_final_duplicates(records)
     _ = synthetic_bank_path
+
+
+def _is_governed_counterfactual_pair(records: Sequence[Mapping[str, Any]]) -> bool:
+    if len(records) != 2:
+        return False
+    metadata = [record.get("metadata") for record in records]
+    if not all(isinstance(item, Mapping) for item in metadata):
+        return False
+    typed_metadata = [item for item in metadata if isinstance(item, Mapping)]
+    pair_ids = {str(item.get("coreference_pair_id", "")) for item in typed_metadata}
+    targets = {str(item.get("coreference_target", "")) for item in typed_metadata}
+    card_counts = {item.get("actionable_card_count") for item in typed_metadata}
+    splits = {str(item.get("split", "")) for item in typed_metadata}
+    entity_keys = {tuple(item.get("coreference_entity_keys", ())) for item in typed_metadata}
+    if (
+        len(pair_ids) != 1
+        or "" in pair_ids
+        or targets != {"replace_card", "clarification"}
+        or card_counts != {1, 2}
+        or len(splits) != 1
+        or "" in splits
+        or len(entity_keys) != 1
+        or () in entity_keys
+    ):
+        return False
+
+    by_target = {
+        str(item.get("coreference_target")): record
+        for record, item in zip(records, typed_metadata, strict=True)
+    }
+    positive = by_target["replace_card"].get("expected")
+    ambiguous = by_target["clarification"].get("expected")
+    if not isinstance(positive, Mapping) or not isinstance(ambiguous, Mapping):
+        return False
+    positive_calls = positive.get("tool_calls")
+    if not isinstance(positive_calls, list) or len(positive_calls) != 1:
+        return False
+    positive_call = positive_calls[0]
+    if not isinstance(positive_call, Mapping):
+        return False
+    return (
+        positive.get("path") == "multi_turn"
+        and positive_call.get("name") == "replace_card"
+        and isinstance(positive_call.get("arguments"), Mapping)
+        and ambiguous.get("path") == "clarification"
+        and ambiguous.get("tool_calls") == []
+    )
 
 
 def _assert_no_fuzzy_final_duplicates(records: Iterable[dict[str, Any]]) -> None:
