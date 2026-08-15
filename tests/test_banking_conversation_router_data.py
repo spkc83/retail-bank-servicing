@@ -411,6 +411,8 @@ def test_state_conditioned_negatives_cover_switch_ood_policy_social_and_orphan()
             row["example_kind"] == "state_ood_detour" and row["domain_label"] == 0
             for row in selected
         )
+    assert sum(row["example_kind"] == "state_orphan_resume" for row in splits["train"]) == 18
+    assert sum(row["example_kind"] == "state_orphan_resume" for row in splits["validation"]) == 6
 
 
 def test_state_social_generalization_spans_all_intents_and_policy_histories() -> None:
