@@ -63,9 +63,7 @@ def _stable_json(value: Any) -> str:
 def _normalize_family(family: str) -> ToolFamily:
     normalized = family.lower().replace("-", "").replace("_", "")
     if normalized not in {"granite", "ibmgranite"}:
-        raise ValueError(
-            f"the active tool wire only supports the Granite family, got {family!r}"
-        )
+        raise ValueError(f"the active tool wire only supports the Granite family, got {family!r}")
     return "granite"
 
 
@@ -143,12 +141,21 @@ class ToolWireAdapter:
         messages: Sequence[Mapping[str, Any]],
         *,
         max_seq_len: int,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> RenderedTrainingExample:
         if max_seq_len <= 0:
             raise ValueError("max_seq_len must be positive")
-        selected, offset = self._select_whole_chain_suffix(messages, max_seq_len=max_seq_len)
+        selected, offset = self._select_whole_chain_suffix(
+            messages,
+            max_seq_len=max_seq_len,
+            tools=tools,
+        )
         self._validate_message_tool_correlation(selected)
-        rendered = self._render_messages(selected, add_generation_prompt=False)
+        rendered = self._render_messages(
+            selected,
+            add_generation_prompt=False,
+            tools=tools,
+        )
         full_ids = self._encode(rendered)
         labels = [IGNORED_LABEL] * len(full_ids)
         spans: list[ToolSpan] = []
@@ -156,10 +163,14 @@ class ToolWireAdapter:
             if message.get("role") != "assistant" or message.get("loss", True) is False:
                 continue
             prefix = self._render_messages(
-                selected[:local_index], add_generation_prompt=True
+                selected[:local_index],
+                add_generation_prompt=True,
+                tools=tools,
             )
             through = self._render_messages(
-                selected[: local_index + 1], add_generation_prompt=False
+                selected[: local_index + 1],
+                add_generation_prompt=False,
+                tools=tools,
             )
             prefix_ids = self._encode(prefix)
             through_ids = self._encode(through)
@@ -183,11 +194,7 @@ class ToolWireAdapter:
                         "chat template is not prefix-stable; assistant-only loss cannot be proven"
                     )
                 through = rendered[:end_char]
-            if (
-                "tool_calls" in message
-                and message.get("tool_calls")
-                and "<tool_call>" in rendered
-            ):
+            if "tool_calls" in message and message.get("tool_calls") and "<tool_call>" in rendered:
                 labeled_fragment = self.tokenizer.decode(
                     full_ids[len(prefix_ids) : len(through_ids)],
                     skip_special_tokens=True,
@@ -274,11 +281,21 @@ class ToolWireAdapter:
         return message
 
     def _select_whole_chain_suffix(
-        self, messages: Sequence[Mapping[str, Any]], *, max_seq_len: int
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        max_seq_len: int,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         copied = [_copy_message(message) for message in messages]
         full_length = len(
-            self._encode(self._render_messages(copied, add_generation_prompt=False))
+            self._encode(
+                self._render_messages(
+                    copied,
+                    add_generation_prompt=False,
+                    tools=tools,
+                )
+            )
         )
         if full_length <= max_seq_len:
             return copied, 0
@@ -299,7 +316,13 @@ class ToolWireAdapter:
             if not _has_assistant_loss(suffix):
                 continue
             suffix_length = len(
-                self._encode(self._render_messages(suffix, add_generation_prompt=False))
+                self._encode(
+                    self._render_messages(
+                        suffix,
+                        add_generation_prompt=False,
+                        tools=tools,
+                    )
+                )
             )
             if suffix_length <= max_seq_len:
                 return suffix, start - len(system_prefix)
@@ -310,13 +333,14 @@ class ToolWireAdapter:
         messages: Sequence[Mapping[str, Any]],
         *,
         add_generation_prompt: bool,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         template_messages = [self._to_template_message(message) for message in messages]
         if hasattr(self.tokenizer, "apply_chat_template"):
             return str(
                 self.tokenizer.apply_chat_template(
                     template_messages,
-                    tools=self.render_tools(),
+                    tools=self.render_tools(tools),
                     tokenize=False,
                     add_generation_prompt=add_generation_prompt,
                 )
@@ -620,8 +644,5 @@ def _fallback_render_message(message: Mapping[str, Any]) -> str:
     if role == "assistant" and message.get("tool_calls"):
         return f"assistant:{_stable_json({'tool_calls': message['tool_calls']})}"
     if role == "tool":
-        return (
-            f"tool {message['name']}[{message['tool_call_id']}]:"
-            f"{message.get('content', '')}"
-        )
+        return f"tool {message['name']}[{message['tool_call_id']}]:{message.get('content', '')}"
     return f"{role}:{message.get('content', '')}"

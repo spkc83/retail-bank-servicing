@@ -17,6 +17,7 @@ from model_service import (
     ModelRuntime,
     ToolCall,
     canonical_conversation,
+    router_diagnostic_fields,
 )
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
 from responses import MODEL_FAILURE_RESPONSE, OOD_RESPONSE, POLICY_NOT_FOUND_RESPONSE
@@ -141,6 +142,10 @@ class LocalBankingController:
                     pinned_exchange=pinned_exchange,
                 )
         except AgentExecutionError as error:
+            route = {
+                **route,
+                "failure_type": type(error.__cause__).__name__,
+            }
             dialogue_state = self.dialogue_states.commit_operations(
                 username,
                 session_hash,
@@ -159,10 +164,10 @@ class LocalBankingController:
                 tool_calls=error.tool_calls,
                 tool_results=error.tool_results,
                 model_passes=error.model_passes,
-                response_path="local model/tool follow-up failure",
+                response_path="local model/tool execution failure",
                 activity=(
-                    "Granite failed after the recorded tool calls; no CPU-authored "
-                    "servicing answer was substituted."
+                    "Granite failed during the recorded generation/tool sequence; "
+                    "diagnostics retain its raw output and any tool calls."
                 ),
                 dialogue_state=dialogue_state,
             )
@@ -360,6 +365,7 @@ def render_local_diagnostics(
     policy_sources: tuple[str, ...] = (),
     dialogue_state: dict[str, Any] | None = None,
 ) -> str:
+    decision = router_diagnostic_fields(route)
     candidates = route.get("capability_candidates", [])
     candidate_text = (
         "\n".join(
@@ -402,8 +408,17 @@ def render_local_diagnostics(
         f"- In-domain probability: `{route.get('banking_probability')}`\n"
         f"- OOD probability: `{route.get('ood_probability')}`\n"
         f"- Context applied: `{route.get('context_applied', False)}`\n"
+        f"- V6 domain: `{decision['domain']}`\n"
+        f"- V6 lane: `{decision['lane']}`\n"
+        f"- V6 family: `{decision['family']}`\n"
+        f"- V6 intent: `{decision['intent']}`\n"
+        f"- V6 action: `{decision['action']}`\n"
+        f"- V6 entity resolution: `{decision['entity_resolution']}`\n"
+        f"- Exposed tools: `{json.dumps(decision['exposed_tools'])}`\n"
         f"- Relation probabilities: "
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
+        f"- Router reason: `{route.get('reason', 'not provided')}`\n"
+        f"- Router failure type: `{route.get('failure_type', 'none')}`\n"
         f"- Response path: `{response_path}`\n\n"
         f"- Policy sources: `{json.dumps(policy_sources)}`\n"
         f"- Dialogue state: `{json.dumps(dialogue_state or {}, sort_keys=True)}`\n\n"

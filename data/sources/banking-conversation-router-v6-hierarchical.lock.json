@@ -4,9 +4,9 @@
   "created_at": "2026-08-15T07:22:17.501073+00:00",
   "format_version": 3,
   "prepared_split_sha256": {
-    "test": "58bc7c10dd11797988e987afd17bdd9f5e0f79b2dbc2a17ed2ea33a8cb176b68",
-    "train": "10b6d4316719f4cd9f162d9faef36a3c5f264bf7a3a0ae759a2c5562993032f3",
-    "validation": "cb9660b696d1b9d4ee81922c0fc042861c8cae9a55a9d0760b02ad98b94646f9"
+    "test": "af2df8e647dd3b521de4999d8266ea7f412b2b527a75c5b46060c2104e3ab8b9",
+    "train": "a75ccf620ce109fb85a430abe427194e477b780cc747e029532cbadef72baf6b",
+    "validation": "a592629f68547ba0b2f2a3b27055ef49c78772220ee3dba3d9e18f605def8641"
   },
   "sources": {
     "UCI/clinc150": {
@@ -67,14 +67,14 @@
         "conversation-router-domain-intent-training"
       ],
       "behavioral_gate_sha256": {
-        "coreference-shadow": "848d9f9564ddea1c789ba64da1679d3c63902f8bbd542b92b4f20690fdadf967"
+        "coreference-shadow": "79f2d04359adb278abc15efc8b750fabf9fbc9a2bd58a6057f1aec2c0374df5f"
       },
-      "manifest_sha256": "eb7ad51bf4107bf2bfb8a54b8412af360c379cc3e0873ddf353357a825b968cf",
-      "path": "/stora/work/home/pavan/learn/hello-SLM/data/banking-servicing-alignment-v5",
+      "manifest_sha256": "0dda904c4cd8ac99a5f38e7a275ab0e93915b302feb4ca43307f2d419ddd4e15",
+      "path": "data/banking-servicing-alignment-v5",
       "split_sha256": {
-        "test": "30d95549644d12c20a5596eda443b2f9519d5ddd6b3f732f84b1464e8138378c",
-        "train": "dcf214b26c24657d2fc6944be4448ebc5fb5afa37d227c4a5939841e94edf8ec",
-        "validation": "d0ccc095756dfc00ebc692b8e70e2026e1195a02457312292e8e849cd0689eda"
+        "test": "015a47ca36676dcb69b6c396a631bc6e0c737ad6140babd7bf233f81461f62aa",
+        "train": "6559351d338f432dd5b05574184bace34cd83ee8852f097eac4219f4ac5b3163",
+        "validation": "0630e925615f489b90a37069f32f66d5a1b4d58900ecff466b1577e0192a4ee1"
       }
     }
   }

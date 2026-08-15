@@ -5,9 +5,9 @@ Governed cross-encoder data for a history-aware OOD, hierarchical intent, action
 Rows include only prior visible user/assistant messages and the current user message.
 They exclude current-turn tool plans, tool results, expected outputs, and final assistant responses.
 
-- Train rows: 16693
-- Validation rows: 4061
-- Test rows: 4895
+- Train rows: 16703
+- Validation rows: 4070
+- Test rows: 4909
 - Intent labels: view_accounts, view_cards, freeze_card, replace_card, view_transactions, dispute_transaction, view_transfers, cancel_transfer, view_service_cases, policy_knowledge, conversation, other_banking
 - Domain labels: out_of_domain, banking, social
 - Lane labels: out_of_domain, servicing, policy, conversation, other_banking

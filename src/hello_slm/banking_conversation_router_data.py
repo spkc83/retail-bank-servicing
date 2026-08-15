@@ -79,11 +79,13 @@ SCREENSHOT_REGRESSION_CURRENTS = frozenset(
     {
         "i didn t ask about mortgage",
         "ok thats the one i want to replace",
+        "what happened with the money i sent recently",
         "was the mailing address updated recently",
         "when was that created",
         "what is that all about when was it created",
         "what about the weather there",
         "why are you repeating yourself",
+        "show my five most recent transactions",
     }
 )
 
@@ -184,6 +186,7 @@ def build_conversation_router_splits(
     for split in ROUTER_SPLITS:
         splits[split].extend(_synthetic_generalization_rows(splits[split], split, seed))
         splits[split].extend(_targeted_use_case_rows(split))
+        splits[split].extend(_transfer_transaction_contrast_rows(split))
         splits[split].extend(_resume_trajectory_rows(split))
         splits[split].extend(_state_conditioned_negative_rows(split))
         splits[split].extend(_ineligible_entity_rows(split))
@@ -257,6 +260,8 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
     if _is_screenshot_regression_text(current):
         return None
     history = _visible_history_before_current(messages)
+    if any(_is_screenshot_regression_text(str(item["content"])) for item in history):
+        return None
     metadata = record.get("metadata")
     if not isinstance(metadata, Mapping):
         metadata = {}
@@ -717,6 +722,125 @@ def _resume_trajectory_rows(split: str) -> list[dict[str, Any]]:
                     trajectory_id=trajectory_id,
                 )
             )
+    return rows
+
+
+def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
+    """Contrast sent-money status with account purchase history under distracting history."""
+
+    prompt_pairs = {
+        "train": (
+            (
+                "Can you check the money I sent a little while ago?",
+                "List my latest card purchases.",
+            ),
+            (
+                "Bring up the status of funds I transferred lately.",
+                "Show recent spending activity on my accounts.",
+            ),
+            (
+                "I want to review how my latest bank transfers turned out.",
+                "Bring up my newest merchant charges.",
+            ),
+            (
+                "Where can I review outgoing transfers I made lately?",
+                "I want to review purchases posted to my account.",
+            ),
+        ),
+        "validation": (
+            (
+                "Can I review funds I sent to people lately?",
+                "Display my latest account transaction history.",
+            ),
+            (
+                "Show the outcome of my latest outgoing bank transfers.",
+                "Let me see recent card purchase activity.",
+            ),
+        ),
+        "test": (
+            (
+                "Where did my most recently transferred funds go?",
+                "Bring up the newest charges in my account activity.",
+            ),
+            (
+                "Let me check the status of recent bank transfers I made.",
+                "Show the most recent purchases recorded on my account.",
+            ),
+        ),
+    }[split]
+    history_variants = {
+        "train": {
+            "social": [
+                {"role": "user", "content": "Good morning."},
+                {"role": "assistant", "content": "Good morning. How can I help?"},
+            ],
+            "balances": [
+                {"role": "user", "content": "Could you show my account balances?"},
+                {"role": "assistant", "content": "I found the balances for your accounts."},
+            ],
+            "social_then_balances": [
+                {"role": "user", "content": "Hi there."},
+                {"role": "assistant", "content": "Hello. What can I help with?"},
+                {"role": "user", "content": "Let me see the balances on my accounts."},
+                {"role": "assistant", "content": "I found your current account balances."},
+            ],
+        },
+        "validation": {
+            "social": [
+                {"role": "user", "content": "Hello there."},
+                {"role": "assistant", "content": "Hello. How may I assist?"},
+            ],
+            "balances": [
+                {"role": "user", "content": "Can I see the balances across my accounts?"},
+                {"role": "assistant", "content": "Your account balances are available."},
+            ],
+            "social_then_balances": [
+                {"role": "user", "content": "Good afternoon."},
+                {"role": "assistant", "content": "Good afternoon. How can I help?"},
+                {"role": "user", "content": "First, bring up my account balances."},
+                {"role": "assistant", "content": "I found the requested balances."},
+            ],
+        },
+        "test": {
+            "social": [
+                {"role": "user", "content": "Hope you are doing well."},
+                {"role": "assistant", "content": "Thank you. How can I help today?"},
+            ],
+            "balances": [
+                {"role": "user", "content": "Please display the balances for my accounts."},
+                {"role": "assistant", "content": "I found the account balance summary."},
+            ],
+            "social_then_balances": [
+                {"role": "user", "content": "Nice to speak with you."},
+                {"role": "assistant", "content": "Likewise. What would you like to do?"},
+                {"role": "user", "content": "Start by showing the balances on my accounts."},
+                {"role": "assistant", "content": "The account balances are ready."},
+            ],
+        },
+    }[split]
+
+    rows = []
+    for pair_index, (transfer_prompt, transaction_prompt) in enumerate(prompt_pairs):
+        for history_family, history in history_variants.items():
+            pair_group = f"transfer-transaction-family|{split}|{history_family}|{pair_index}"
+            for intent, current in (
+                ("view_transfers", transfer_prompt),
+                ("view_transactions", transaction_prompt),
+            ):
+                rows.append(
+                    _make_row(
+                        current=current,
+                        history=history,
+                        domain_label=1,
+                        intent=intent,
+                        relation_names=["topic_shift"],
+                        example_kind="transfer_transaction_semantic_contrast",
+                        source="self-authored-router-v6-transfer-transaction-contrast",
+                        source_split=split,
+                        group_id=pair_group,
+                        trajectory_id=f"{pair_group}|{intent}",
+                    )
+                )
     return rows
 
 
@@ -1521,6 +1645,17 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             "content": "Mortgage applicants are typically at least 18.",
         },
     ]
+    live_transfer_history = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I can help with your banking questions."},
+        {"role": "user", "content": "Show my account balances."},
+        {"role": "assistant", "content": "I found your account balances."},
+    ]
+    live_transaction_history = [
+        *live_transfer_history,
+        {"role": "user", "content": "What happened with the money I sent recently?"},
+        {"role": "assistant", "content": "I could not provide the transfer details."},
+    ]
     return [
         _make_row(
             current="When was that created?",
@@ -1601,6 +1736,28 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             source="self-authored-heldout-regression",
             source_split="test",
             group_id="heldout|weather-topic-shift",
+        ),
+        _make_row(
+            current="What happened with the money I sent recently?",
+            history=live_transfer_history,
+            domain_label=1,
+            intent="view_transfers",
+            relation_names=["topic_shift"],
+            example_kind="heldout_screenshot_regression",
+            source="self-authored-heldout-regression",
+            source_split="test",
+            group_id="heldout|recent-sent-money-status",
+        ),
+        _make_row(
+            current="Show my five most recent transactions.",
+            history=live_transaction_history,
+            domain_label=1,
+            intent="view_transactions",
+            relation_names=["topic_shift"],
+            example_kind="heldout_screenshot_regression",
+            source="self-authored-heldout-regression",
+            source_split="test",
+            group_id="heldout|explicit-recent-transactions",
         ),
     ]
 
@@ -1962,6 +2119,8 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         "state_social_detour",
         "heldout_policy_followup_generalization",
         "heldout_social_generalization",
+        "transfer_transaction_semantic_contrast",
+        "heldout_screenshot_regression",
     }
     for split, rows in splits.items():
         for row in rows:
@@ -1973,7 +2132,13 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
                 counterfactual_pairs[str(pair_id)].add(split)
             if str(row["example_kind"]) in generalization_kinds:
                 state_current_texts[normalize_router_text(str(row["current_text"]))].add(split)
-                if group_id.startswith(("state-policy-family|", "state-social-family|")):
+                if group_id.startswith(
+                    (
+                        "state-policy-family|",
+                        "state-social-family|",
+                        "transfer-transaction-family|",
+                    )
+                ):
                     state_families[group_id].add(split)
     leaking = {group: sorted(values) for group, values in groups.items() if len(values) > 1}
     trajectory_leaks = {

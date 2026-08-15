@@ -341,30 +341,29 @@ class ConversationalBankingAgent:
             serving_tools,
         )
         model_passes.append(first_trace)
-        if not first_output:
-            raise AgentProtocolError("model returned an empty first response")
-        calls = self.tool_adapter.parse_assistant(
-            first_output,
-            turn_key=first_trace.prompt_sha256,
-        )
-        if not calls:
-            return self._complete_without_tools(
-                username=username,
-                session_hash=session_hash,
-                current=current,
-                first_output=first_output,
-                response_path="direct_answer",
-                model_passes=model_passes,
-            )
-        response_path = "base_tool"
-
-        _validate_tool_calls(calls, allowed_tools=public_tools)
         with_tools = [*current]
         all_calls: list[ToolCall] = []
         results: list[dict[str, Any]] = []
-        pending_calls = calls
-        post_tool_passes = 0
         try:
+            if not first_output:
+                raise AgentProtocolError("model returned an empty first response")
+            calls = self.tool_adapter.parse_assistant(
+                first_output,
+                turn_key=first_trace.prompt_sha256,
+            )
+            if not calls:
+                return self._complete_without_tools(
+                    username=username,
+                    session_hash=session_hash,
+                    current=current,
+                    first_output=first_output,
+                    response_path="direct_answer",
+                    model_passes=model_passes,
+                )
+            response_path = "base_tool"
+            _validate_tool_calls(calls, allowed_tools=public_tools)
+            pending_calls = calls
+            post_tool_passes = 0
             while True:
                 _validate_tool_calls(pending_calls, allowed_tools=public_tools)
                 if len(all_calls) + len(pending_calls) > MAX_TOOL_CALLS:
@@ -990,6 +989,35 @@ def _generation_plan(
         "role": "system",
         "content": f"{system['content']}\n\nTURN GUIDANCE: {instruction}",
     }, tools
+
+
+def router_diagnostic_fields(router_result: dict[str, Any]) -> dict[str, Any]:
+    """Return safe route metadata and the exact tool surface shown to Granite."""
+    compatibility_value = "not available (V3 compatibility)"
+    _system, tools = _generation_plan(router_result)
+    tool_names = [
+        str(tool["function"]["name"])
+        for tool in tools
+        if isinstance(tool.get("function"), dict) and isinstance(tool["function"].get("name"), str)
+    ]
+    return {
+        "domain": router_result.get("domain", compatibility_value),
+        "lane": router_result.get("lane", compatibility_value),
+        "family": router_result.get(
+            "family",
+            router_result.get("capability", compatibility_value),
+        ),
+        "intent": router_result.get(
+            "fine_intent",
+            router_result.get("intent", compatibility_value),
+        ),
+        "action": router_result.get("action", compatibility_value),
+        "entity_resolution": router_result.get(
+            "entity_resolution",
+            compatibility_value,
+        ),
+        "exposed_tools": tool_names,
+    }
 
 
 def _policy_system_message(

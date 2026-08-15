@@ -178,7 +178,7 @@ def test_v5_splits_use_hierarchy_actions_relations_and_no_current_turn_leakage()
     assert sum(kinds.values()) > 10
     test_kinds = Counter(row["example_kind"] for row in splits["test"])
     assert test_kinds["external_topic_shift"] >= 1
-    assert test_kinds["heldout_screenshot_regression"] == 7
+    assert test_kinds["heldout_screenshot_regression"] == 9
     assert report["leakage"]["group_split_leak_count"] == 0
     assert report["leakage"]["state_current_text_split_leak_count"] == 0
     assert report["leakage"]["counterfactual_pair_split_leak_count"] == 0
@@ -470,6 +470,53 @@ def test_state_social_generalization_spans_all_intents_and_policy_histories() ->
     assert report["leakage"]["state_current_text_split_leak_count"] == 0
 
 
+def test_transfer_transaction_contrasts_resist_social_and_balance_history() -> None:
+    splits, report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    expected_counts = {"train": 24, "validation": 12, "test": 12}
+    current_by_split: dict[str, set[str]] = {}
+
+    for split, rows in splits.items():
+        contrast = [
+            row for row in rows if row["example_kind"] == "transfer_transaction_semantic_contrast"
+        ]
+        assert len(contrast) == expected_counts[split]
+        assert {row["intent"] for row in contrast} == {
+            "view_transfers",
+            "view_transactions",
+        }
+        assert all(row["action_name"] == "execute_tool" for row in contrast)
+        assert all(row["relation_labels"][RELATION_LABELS.index("topic_shift")] for row in contrast)
+        assert all(row["history"] for row in contrast)
+        assert all(
+            "balance" in str(row["history"]).casefold()
+            or any(
+                greeting in str(row["history"]).casefold()
+                for greeting in ("morning", "hello", "afternoon", "well", "speak")
+            )
+            for row in contrast
+        )
+        grouped = {}
+        for row in contrast:
+            grouped.setdefault(row["group_id"], set()).add(row["intent"])
+        assert grouped
+        assert set(map(frozenset, grouped.values())) == {
+            frozenset({"view_transfers", "view_transactions"})
+        }
+        current_by_split[split] = {
+            normalize_router_text(str(row["current_text"])) for row in contrast
+        }
+
+    assert current_by_split["train"].isdisjoint(current_by_split["validation"])
+    assert current_by_split["train"].isdisjoint(current_by_split["test"])
+    assert current_by_split["validation"].isdisjoint(current_by_split["test"])
+    assert report["leakage"]["group_split_leak_count"] == 0
+    assert report["leakage"]["trajectory_split_leak_count"] == 0
+    assert report["leakage"]["state_current_text_split_leak_count"] == 0
+    assert report["leakage"]["state_paraphrase_family_split_leak_count"] == 0
+
+
 def test_ineligible_entity_supervision_is_present_in_every_split() -> None:
     splits, _report = build_conversation_router_splits(
         sft_records_by_split(),
@@ -487,6 +534,7 @@ def test_ineligible_entity_supervision_is_present_in_every_split() -> None:
         }
         assert all(row["action_name"] == "converse" for row in ineligible)
         assert all(row["entity_resolution_name"] == "ineligible" for row in ineligible)
+
 
 def test_implicit_policy_followups_span_all_canonical_topics_and_act_families() -> None:
     splits, _report = build_conversation_router_splits(
@@ -564,12 +612,46 @@ def test_held_out_screenshot_regressions_are_test_only() -> None:
     assert heldout_current == {
         "i didn t ask about mortgage",
         "ok thats the one i want to replace",
+        "what happened with the money i sent recently",
         "was the mailing address updated recently",
         "when was that created",
         "what is that all about when was it created",
         "what about the weather there",
         "why are you repeating yourself",
+        "show my five most recent transactions",
     }
+    for split in ("train", "validation"):
+        all_current = {normalize_router_text(str(row["current_text"])) for row in splits[split]}
+        assert heldout_current.isdisjoint(all_current)
+        normalized_inputs = [normalize_router_text(str(row["text"])) for row in splits[split]]
+        assert all(
+            heldout_prompt not in rendered
+            for heldout_prompt in heldout_current
+            for rendered in normalized_inputs
+        )
+
+
+def test_sft_row_with_live_regression_prompt_in_history_is_excluded() -> None:
+    records = sft_records_by_split()
+    contaminated = _record(
+        split="train",
+        record_id="history-contaminated",
+        scenario_family="service_cases",
+        user="Continue with a different service request.",
+        assistant="I found the service request.",
+    )
+    contaminated["messages"][1:1] = [
+        {"role": "user", "content": "What happened with the money I sent recently?"},
+        {"role": "assistant", "content": "I could not provide the transfer details."},
+    ]
+    records["train"].append(contaminated)
+
+    splits, _report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+
+    assert all(
+        row["current_text"] != "Continue with a different service request."
+        for row in splits["train"]
+    )
 
 
 def _record(

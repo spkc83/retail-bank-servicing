@@ -4,28 +4,47 @@
       "allowed_use": [
         "post-selection-evaluation-once"
       ],
-      "bytes": 93612,
+      "bytes": 93324,
       "name": "coreference-shadow",
       "pair_count": 16,
       "path": "coreference-shadow.jsonl",
       "record_count": 32,
-      "sha256": "848d9f9564ddea1c789ba64da1679d3c63902f8bbd542b92b4f20690fdadf967",
+      "sha256": "79f2d04359adb278abc15efc8b750fabf9fbc9a2bd58a6057f1aec2c0374df5f",
       "trainable": false
     }
   ],
   "contract": "banking-tool-sft-manifest",
   "created_at": "2026-07-31T00:00:00Z",
   "format_version": 1,
-  "generator_version": "banking-servicing-alignment-sft/v5.6-unverified-replay-quarantine",
+  "generation_contract_model_inputs": "compatible tool schemas only; routing metadata is not rendered",
+  "generation_contract_version": "banking-v6-route-to-generation/v1",
+  "generator_version": "banking-servicing-alignment-sft/v6.0-generation-contract",
   "name": "retail-bank-servicing-alignment-v5",
   "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "report": {
+    "alignment_generation_contract_counts": {
+      "test": {},
+      "train": {
+        "clarify": 353,
+        "converse": 12,
+        "execute_tool": 896,
+        "refuse_ood": 32,
+        "retrieve_policy": 32
+      },
+      "validation": {
+        "clarify": 25,
+        "converse": 4,
+        "execute_tool": 160,
+        "refuse_ood": 8,
+        "retrieve_policy": 8
+      }
+    },
     "alignment_split_counts": {
       "test": 35,
-      "train": 1312,
-      "validation": 200
+      "train": 1325,
+      "validation": 205
     },
-    "base_manifest_sha256": "b07e5acd65165441d5e57c1a4164a6620ac6f59e9ccb1cbb501706f3e2c85327",
+    "base_manifest_sha256": "7fb837ea4abeb9c3db13d4c9fd48e8b67079ab234c0d669d916c4194ce246df3",
     "base_split_counts": {
       "test": 180,
       "train": 841,
@@ -39,7 +58,24 @@
     },
     "created_at": "2026-07-31T00:00:00Z",
     "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets; a normalized current may group multiple pairs only across distinct history forms",
-    "generator_version": "banking-servicing-alignment-sft/v5.6-unverified-replay-quarantine",
+    "generation_contract_counts": {
+      "test": {},
+      "train": {
+        "clarify": 389,
+        "converse": 177,
+        "execute_tool": 1295,
+        "refuse_ood": 58,
+        "retrieve_policy": 247
+      },
+      "validation": {
+        "clarify": 25,
+        "converse": 43,
+        "execute_tool": 265,
+        "refuse_ood": 17,
+        "retrieve_policy": 34
+      }
+    },
+    "generator_version": "banking-servicing-alignment-sft/v6.0-generation-contract",
     "heldout_exact_currents_in_train": [],
     "heldout_long_ngram_leaks_in_train": [],
     "path_counts": {
@@ -49,7 +85,8 @@
         "retrieval_grounded_policy": 4
       },
       "train": {
-        "clarification": 352,
+        "clarification": 353,
+        "conversation": 12,
         "multi_turn": 768,
         "ood": 32,
         "retrieval_grounded_policy": 32,
@@ -57,7 +94,8 @@
         "tool_success": 64
       },
       "validation": {
-        "clarification": 24,
+        "clarification": 25,
+        "conversation": 4,
         "multi_turn": 128,
         "ood": 8,
         "retrieval_grounded_policy": 8,
@@ -86,6 +124,8 @@
         "external_topic_shift": 32,
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
+        "missing_entity_clarification": 1,
+        "natural_social_style": 12,
         "policy_detour": 32,
         "policy_resume": 32,
         "service_case_context": 64,
@@ -101,6 +141,8 @@
         "external_topic_shift": 8,
         "history_entity_action": 32,
         "history_entity_ambiguity": 8,
+        "missing_entity_clarification": 1,
+        "natural_social_style": 4,
         "policy_detour": 8,
         "policy_resume": 8,
         "service_case_context": 16,
@@ -109,17 +151,17 @@
     },
     "split_counts": {
       "test": 215,
-      "train": 2153,
-      "validation": 379
+      "train": 2166,
+      "validation": 384
     }
   },
   "schema_version": "banking-tool-sft/v1",
   "signed": false,
   "source_roles": {
     "released-retail-bank-agent-sft": {
-      "generator_version": null,
+      "generator_version": "banking-tool-sft/v1.6-v6-generation-contract",
       "license": "MIT",
-      "manifest_sha256": "b07e5acd65165441d5e57c1a4164a6620ac6f59e9ccb1cbb501706f3e2c85327",
+      "manifest_sha256": "7fb837ea4abeb9c3db13d4c9fd48e8b67079ab234c0d669d916c4194ce246df3",
       "role": "base-tool-use-sft",
       "trainable": true
     },
@@ -135,31 +177,31 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 6103596,
+      "bytes": 6422984,
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 2153,
-      "sha256": "dcf214b26c24657d2fc6944be4448ebc5fb5afa37d227c4a5939841e94edf8ec"
+      "record_count": 2166,
+      "sha256": "6559351d338f432dd5b05574184bace34cd83ee8852f097eac4219f4ac5b3163"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1073547,
+      "bytes": 1135882,
       "name": "validation",
       "path": "validation.jsonl",
-      "record_count": 379,
-      "sha256": "d0ccc095756dfc00ebc692b8e70e2026e1195a02457312292e8e849cd0689eda"
+      "record_count": 384,
+      "sha256": "0630e925615f489b90a37069f32f66d5a1b4d58900ecff466b1577e0192a4ee1"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 595659,
+      "bytes": 594984,
       "name": "test",
       "path": "test.jsonl",
       "record_count": 215,
-      "sha256": "30d95549644d12c20a5596eda443b2f9519d5ddd6b3f732f84b1464e8138378c"
+      "sha256": "015a47ca36676dcb69b6c396a631bc6e0c737ad6140babd7bf233f81461f62aa"
     }
   ]
 }

@@ -12,9 +12,11 @@ from typing import Any
 
 from hello_slm.banking_tool_sft_data import (
     BANKING_TOOL_SFT_CONTRACT,
+    GENERATION_CONTRACT_VERSION,
     NO_TOOL_OOD_RESPONSE,
     POLICY_CHUNKS,
     SYSTEM_PROMPT,
+    _attach_generation_contract,
     load_canonical_policy_corpus,
     validate_banking_tool_sft_manifest,
     validate_records,
@@ -23,7 +25,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.6-unverified-replay-quarantine"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v6.0-generation-contract"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -120,6 +122,16 @@ def _cached_servicing_alignment_splits() -> tuple[
             split: dict(Counter(row["expected"]["path"] for row in rows))
             for split, rows in splits.items()
         },
+        "generation_contract_counts": {
+            split: dict(
+                Counter(
+                    str(row["expected"]["generation_contract"]["mode"])
+                    for row in rows
+                    if "generation_contract" in row["expected"]
+                )
+            )
+            for split, rows in splits.items()
+        },
         "coreference_pair_counts": {
             split: len(
                 {
@@ -210,6 +222,17 @@ def write_servicing_alignment_dataset(
         "split_counts": {split: len(rows) for split, rows in splits.items()},
         "base_split_counts": {split: len(rows) for split, rows in base_splits.items()},
         "alignment_split_counts": {split: len(rows) for split, rows in alignment_splits.items()},
+        "alignment_generation_contract_counts": alignment_report["generation_contract_counts"],
+        "generation_contract_counts": {
+            split: dict(
+                Counter(
+                    str(row["expected"]["generation_contract"]["mode"])
+                    for row in rows
+                    if "generation_contract" in row["expected"]
+                )
+            )
+            for split, rows in splits.items()
+        },
         "base_manifest_sha256": file_sha256(base_sft_dir / "manifest.json"),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +276,10 @@ def write_servicing_alignment_dataset(
         "contract": "banking-tool-sft-manifest",
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "generator_version": GENERATOR_VERSION,
+        "generation_contract_version": GENERATION_CONTRACT_VERSION,
+        "generation_contract_model_inputs": (
+            "compatible tool schemas only; routing metadata is not rendered"
+        ),
         "policy_corpus_revision": policy_revision,
         "tool_sft": entries,
         "behavioral_gates": behavioral_gates,
@@ -299,6 +326,8 @@ def _train_records() -> list[dict[str, Any]]:
     return [
         *_expand_records(records, split="train"),
         *_deictic_replace_curriculum("train"),
+        *_missing_entity_records("train"),
+        *_social_style_records("train"),
     ]
 
 
@@ -316,6 +345,8 @@ def _validation_records() -> list[dict[str, Any]]:
     return [
         *_expand_records(records, split="validation"),
         *_deictic_replace_curriculum("validation"),
+        *_missing_entity_records("validation"),
+        *_social_style_records("validation"),
     ]
 
 
@@ -1157,6 +1188,139 @@ def _tool_outcome_consistency(split: str) -> list[dict[str, Any]]:
     ]
 
 
+def _social_style_records(split: str) -> list[dict[str, Any]]:
+    examples = {
+        "train": (
+            (
+                "morning",
+                "Good morning, Harbor.",
+                "Good morning! How can I help with your banking today?",
+            ),
+            (
+                "available",
+                "Hi there, are you available?",
+                "Hi! I’m here and ready to help. What would you like to work on?",
+            ),
+            (
+                "starting",
+                "Hey, can we get started?",
+                "Absolutely. What banking question or account task can I help with?",
+            ),
+            (
+                "checkin",
+                "How is your day going?",
+                "I’m doing well and ready to help. How can I assist you today?",
+            ),
+            (
+                "ready",
+                "Are you ready for a banking question?",
+                "Yes, I’m ready. Tell me what you would like help with.",
+            ),
+            (
+                "capabilities",
+                "What kinds of things can you help me with?",
+                "I can help with common banking questions and supported account tasks. "
+                "Where would you like to begin?",
+            ),
+            (
+                "thanks",
+                "Thanks, that cleared things up.",
+                "You’re welcome. I’m here if another banking question comes up.",
+            ),
+            (
+                "appreciation",
+                "I appreciate the clear answer.",
+                "Happy to help. Let me know if you need anything else with your banking.",
+            ),
+            (
+                "all_set",
+                "Great, I am all set now.",
+                "Glad I could help. I’ll be here if you need another banking task.",
+            ),
+            (
+                "pause",
+                "That is all I need for the moment.",
+                "Understood. I’m here whenever you need more banking help.",
+            ),
+            (
+                "return",
+                "I am back with another question.",
+                "Welcome back. What would you like help with this time?",
+            ),
+            (
+                "welcome",
+                "Nice to meet you, Harbor.",
+                "Nice to meet you too. How can I help with your banking today?",
+            ),
+        ),
+        "validation": (
+            (
+                "hello",
+                "Hi Harbor, I have a question.",
+                "Hi! I’m ready to help. What would you like to ask?",
+            ),
+            (
+                "online",
+                "Is the banking assistant online?",
+                "Yes, I’m here and ready. How can I help you today?",
+            ),
+            (
+                "gratitude",
+                "Thank you, that was useful.",
+                "You’re welcome. I’m available if you have another banking question.",
+            ),
+            (
+                "done",
+                "Perfect, that answers what I needed.",
+                "Glad that answered your question. I’m here whenever you need more help.",
+            ),
+        ),
+    }
+    if split not in examples:
+        raise ValueError(f"unsupported social-style split: {split}")
+    return [
+        _record(
+            record_id=f"social_{key}_{split}",
+            split=split,
+            scenario_family="natural_social_style",
+            current=current,
+            final=final,
+            tool_plan=[],
+            grounding_facts=[],
+            path="conversation",
+            pre_messages=[],
+        )
+        for key, current, final in examples[split]
+    ]
+
+
+def _missing_entity_records(split: str) -> list[dict[str, Any]]:
+    suffix = {"train": "in this session", "validation": "from this chat"}[split]
+    final = {
+        "train": (
+            "Which debit card would you like me to replace? Please share the last four "
+            "digits shown with the card in your account view."
+        ),
+        "validation": (
+            "I need to know which card you mean before replacing it. What are the last "
+            "four digits displayed with that card?"
+        ),
+    }[split]
+    return [
+        _record(
+            record_id=f"missing_card_selector_{split}",
+            split=split,
+            scenario_family="missing_entity_clarification",
+            current=f"Please replace my debit card {suffix}.",
+            final=final,
+            tool_plan=[],
+            grounding_facts=["missing_field=last4"],
+            path="clarification",
+            pre_messages=[],
+        )
+    ]
+
+
 def _heldout_regression_records() -> list[dict[str, Any]]:
     return [
         _record(
@@ -1324,7 +1488,7 @@ def _record(
         expected["policy_corpus_revision"] = str(policy["corpus_revision"])
         expected["grounding_facts"] = list(policy["required_claims"])
         expected["forbidden_facts"] = list(policy["forbidden_claims"])
-    return {
+    record = {
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
         "record_id": record_id,
         "messages": messages,
@@ -1361,6 +1525,9 @@ def _record(
             "split_group": f"{scenario_family}|{record_id}",
         },
     }
+    if split in {"train", "validation"}:
+        _attach_generation_contract(record)
+    return record
 
 
 def _varied_final(final: str, *, split: str, realization: int) -> str:

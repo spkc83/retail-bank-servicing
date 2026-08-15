@@ -108,6 +108,72 @@ def test_controller_runs_real_model_tool_loop_and_records_local_nf4_diagnostics(
     assert "Local CUDA / NF4" in result.diagnostics
 
 
+def test_local_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(
+    tmp_path: Path,
+) -> None:
+    class V6Router:
+        def classify(self, _message, _history):
+            return {
+                **StaticRouter().classify("", []),
+                "domain": "banking",
+                "lane": "servicing",
+                "family": "accounts",
+                "intent": "view_accounts",
+                "action": "execute_tool",
+                "entity_resolution": "not_required",
+            }
+
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(
+            [
+                '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>',
+                "Accounts returned.",
+            ]
+        ),
+        router=V6Router(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my accounts.",
+        conversation=[],
+    )
+
+    assert "V6 domain: `banking`" in result.diagnostics
+    assert "V6 lane: `servicing`" in result.diagnostics
+    assert "V6 family: `accounts`" in result.diagnostics
+    assert "V6 intent: `view_accounts`" in result.diagnostics
+    assert "V6 action: `execute_tool`" in result.diagnostics
+    assert "V6 entity resolution: `not_required`" in result.diagnostics
+    assert 'Exposed tools: `["list_accounts"]`' in result.diagnostics
+
+
+def test_local_first_pass_parse_failure_preserves_raw_output_in_diagnostics(
+    tmp_path: Path,
+) -> None:
+    raw_output = '<tool_call>{"name":"list_accounts","arguments":{}}'
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime([raw_output]),
+        router=StaticRouter(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my accounts.",
+        conversation=[],
+    )
+
+    assert result.response == MODEL_FAILURE_RESPONSE
+    assert result.model_call_count == 1
+    assert raw_output in result.diagnostics
+    assert "Router failure type: `AgentProtocolError`" in result.diagnostics
+    assert result.conversation[0] == {"role": "user", "content": "Show my accounts."}
+
+
 def test_controller_uses_stock_response_for_high_confidence_ood(tmp_path: Path) -> None:
     controller = LocalBankingController(
         bank=bank(tmp_path),

@@ -60,8 +60,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 1312,
-        "validation": 200,
+        "train": 1325,
+        "validation": 205,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
@@ -88,6 +88,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "tool_outcome_consistency": 128,
         "deictic_replace_action": 320,
         "deictic_replace_ambiguity": 320,
+        "natural_social_style": 12,
+        "missing_entity_clarification": 1,
     }
     service_case_records = [
         record
@@ -189,6 +191,51 @@ def test_remediation_examples_cover_coreference_ambiguity_and_tool_outcomes() ->
     train_last4 = set(re.findall(r"\b\d{4}\b", json.dumps(train_remediation)))
     validation_last4 = set(re.findall(r"\b\d{4}\b", json.dumps(validation_remediation)))
     assert train_last4.isdisjoint(validation_last4)
+
+
+def test_v6_generation_contract_matches_runtime_tool_exposure_and_social_style() -> None:
+    splits, report = build_servicing_alignment_splits()
+
+    for split in ("train", "validation"):
+        for row in splits[split]:
+            contract = row["expected"]["generation_contract"]
+            assert contract["version"] == "banking-v6-route-to-generation/v1"
+            calls = row["expected"]["tool_calls"]
+            if contract["mode"] == "execute_tool":
+                assert contract["tool_names"] == [calls[0]["name"]]
+                assert len({call["name"] for call in calls}) == 1
+            else:
+                assert contract["tool_names"] == []
+                assert calls == []
+
+    entity_states = {
+        row["expected"]["generation_contract"]["entity_state"]
+        for split in ("train", "validation")
+        for row in splits[split]
+    }
+    assert {"resolved", "missing", "ambiguous", "not_required"} <= entity_states
+
+    social = [
+        row
+        for split in ("train", "validation")
+        for row in splits[split]
+        if row["metadata"]["scenario_family"] == "natural_social_style"
+    ]
+    assert len(social) == 16
+    assert all(row["expected"]["generation_contract"]["mode"] == "converse" for row in social)
+    assert all(not row["expected"]["generation_contract"]["tool_names"] for row in social)
+    assert all("sorry" not in str(row["messages"][-1]["content"]).lower() for row in social)
+    assert all(
+        not str(row["messages"][-1]["content"]).startswith(
+            (
+                "Here is the current update:",
+                "I reviewed the conversation",
+                "For clarity,",
+            )
+        )
+        for row in social
+    )
+    assert report["scenario_family_counts"]["train"]["natural_social_style"] == 12
 
 
 def test_exact_screenshot_currents_are_held_out_from_training() -> None:
@@ -464,9 +511,14 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
 
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
+    assert manifest["generation_contract_version"] == "banking-v6-route-to-generation/v1"
+    assert manifest["generation_contract_model_inputs"] == (
+        "compatible tool schemas only; routing metadata is not rendered"
+    )
+    assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 1312,
-        "validation": 200,
+        "train": 1325,
+        "validation": 205,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]

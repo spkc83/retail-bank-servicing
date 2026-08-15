@@ -50,6 +50,7 @@ from model_service import (
     ModelRuntime,
     ToolCall,
     canonical_conversation,
+    router_diagnostic_fields,
 )
 from dialogue_state import DialogueState, begin_turn, commit_operations, finish_turn
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
@@ -233,7 +234,7 @@ def run_model_turn(
             route,
             error.tool_calls,
             error.tool_results,
-            "9B second-pass failure",
+            "9B execution failure",
             error.model_passes,
             dialogue_state=failed_state.as_dict(),
         )
@@ -243,8 +244,9 @@ def run_model_turn(
             failed_conversation,
             render_snapshot(error.snapshot),
             (
-                "The 9B model failed after executing the tool calls shown in "
-                "diagnostics. No CPU-authored servicing answer was substituted."
+                "The 9B model failed during the recorded generation/tool sequence. "
+                "Diagnostics retain its raw output and any executed tool calls; no "
+                "CPU-authored servicing answer was substituted."
             ),
             f"{failure_diagnostics}\n\nFailure type: `{type(error.__cause__).__name__}`",
             enabled,
@@ -585,6 +587,7 @@ def _render_diagnostics(
     policy_sources: tuple[str, ...] = (),
     dialogue_state: dict[str, Any] | None = None,
 ) -> str:
+    decision = router_diagnostic_fields(route)
     candidates = route.get("capability_candidates")
     if not isinstance(candidates, list):
         candidates = route.get("intent_candidates")
@@ -645,6 +648,13 @@ def _render_diagnostics(
         f"- In-domain probability: `{route.get('banking_probability')}`\n"
         f"- OOD probability: `{route.get('ood_probability')}`\n"
         f"- Conversation context applied: `{route.get('context_applied', False)}`\n"
+        f"- V6 domain: `{decision['domain']}`\n"
+        f"- V6 lane: `{decision['lane']}`\n"
+        f"- V6 family: `{decision['family']}`\n"
+        f"- V6 intent: `{decision['intent']}`\n"
+        f"- V6 action: `{decision['action']}`\n"
+        f"- V6 entity resolution: `{decision['entity_resolution']}`\n"
+        f"- Exposed tools: `{json.dumps(decision['exposed_tools'])}`\n"
         f"- Relation probabilities: "
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
         f"- Router reason: `{route.get('reason', 'not provided')}`\n"

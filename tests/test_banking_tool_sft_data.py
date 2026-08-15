@@ -114,7 +114,14 @@ def test_generate_records_cover_tool_and_non_tool_contracts() -> None:
         "multi_turn",
     } <= cases
 
-    assert any(len(record["expected"]["ordered_calls"]) >= 2 for record in records)
+    assert any(
+        any(
+            message.get("loss") is False and message.get("tool_calls")
+            for message in record["messages"]
+        )
+        and len(record["expected"]["ordered_calls"]) == 1
+        for record in records
+    )
     assert any(
         len([m for m in record["messages"] if m["role"] == "user"]) > 1 for record in records
     )
@@ -169,6 +176,51 @@ def test_v5_customer_facing_contract_is_grounded_varied_and_preset_free() -> Non
     assert any("| Date |" in _final(record) for record in records)
     emergency = next(row for row in records if row["record_id"] == "emergency_card_freeze")
     assert "sorry" in _final(emergency).lower()
+
+
+def test_v6_generation_contract_is_train_only_and_social_targets_are_natural() -> None:
+    records = generate_records(pilot_count=1200, split_seed=711)
+
+    train_and_validation = [
+        row for row in records if row["metadata"]["split"] in {"train", "validation"}
+    ]
+    assert all("generation_contract" in row["expected"] for row in train_and_validation)
+    contracted = [row for row in records if "generation_contract" in row["expected"]]
+    assert contracted
+    assert {row["metadata"]["split"] for row in contracted} <= {"train", "validation"}
+    for row in contracted:
+        contract = row["expected"]["generation_contract"]
+        calls = row["expected"]["tool_calls"]
+        if contract["mode"] == "execute_tool":
+            assert len(contract["tool_names"]) == 1
+            assert {call["name"] for call in calls} == set(contract["tool_names"])
+        else:
+            assert contract["tool_names"] == []
+            assert calls == []
+
+    social = [
+        row
+        for row in records
+        if row["metadata"]["split"] in {"train", "validation"}
+        if row["metadata"]["scenario_family"]
+        in {"small_talk_greeting", "small_talk_checkin", "conversational_thanks"}
+    ]
+    assert social
+    assert all("sorry" not in _final(row).lower() for row in social)
+    assert all(
+        not _final(row).startswith(banking_tool_sft_data.REALIZER_FINAL_PREFIXES[1:])
+        for row in social
+    )
+
+    multistage = [
+        row for row in train_and_validation if "v6_multistage_alignment" in row["metadata"]
+    ]
+    assert multistage
+    for row in multistage:
+        assert row["expected"]["generation_contract"]["tool_names"] == ["freeze_card"]
+        assistant_calls = [message for message in row["messages"] if message.get("tool_calls")]
+        assert [message["loss"] for message in assistant_calls] == [False, True]
+        assert assistant_calls[-1]["tool_calls"][0]["function"]["name"] == "freeze_card"
 
 
 def test_v5_policy_rows_use_the_canonical_runtime_corpus_contract() -> None:
@@ -303,12 +355,12 @@ def test_emergency_freeze_and_followups_cover_real_conversation_shapes() -> None
 
     emergency = by_id["emergency_card_freeze"]
     assert "stolen" in emergency["messages"][1]["content"].lower()
-    assert [call["name"] for call in emergency["expected"]["tool_calls"]] == [
-        "list_cards",
-        "freeze_card",
-    ]
-    discovered_last4 = emergency["messages"][4]["tool_calls"][0]["function"]["arguments"]["last4"]
+    assert [call["name"] for call in emergency["expected"]["tool_calls"]] == ["freeze_card"]
+    assert emergency["messages"][2]["loss"] is False
+    assert emergency["messages"][2]["tool_calls"][0]["function"]["name"] == "list_cards"
+    discovered_last4 = emergency["messages"][5]["tool_calls"][0]["function"]["arguments"]["last4"]
     assert discovered_last4 in json.dumps(emergency["messages"][3]["content"])
+    assert discovered_last4 in emergency["messages"][4]["content"]
 
     summary = by_id["action_summary_followup"]
     assert [message["role"] for message in summary["messages"]] == [
@@ -441,6 +493,14 @@ def test_prepare_writes_manifest_report_and_is_split_isolated(tmp_path: Path) ->
 
     manifest = validate_banking_tool_sft_manifest(tmp_path / "tool-sft" / "manifest.json")
     assert manifest["contract"] == "banking-tool-sft-manifest"
+    assert manifest["generation_contract_version"] == "banking-v6-route-to-generation/v1"
+    assert manifest["generation_contract_model_inputs"] == (
+        "compatible tool schemas only; routing metadata is not rendered"
+    )
+    assert report["checks"]["generation_contract_records"] > 0
+    assert {"execute_tool", "converse", "retrieve_policy", "refuse_ood"} <= set(
+        report["checks"]["generation_modes"]
+    )
     assert [entry["name"] for entry in manifest["tool_sft"]] == [
         "train",
         "validation",

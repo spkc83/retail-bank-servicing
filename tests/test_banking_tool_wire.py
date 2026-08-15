@@ -27,13 +27,11 @@ class TemplateTokenizer:
             role = message["role"]
             if role == "assistant" and message.get("tool_calls"):
                 parts.append(
-                    "assistant:"
-                    + json.dumps({"tool_calls": message["tool_calls"]}, sort_keys=True)
+                    "assistant:" + json.dumps({"tool_calls": message["tool_calls"]}, sort_keys=True)
                 )
             elif role == "tool":
                 parts.append(
-                    f"tool {message['name']}[{message['tool_call_id']}]:"
-                    f"{message['content']}"
+                    f"tool {message['name']}[{message['tool_call_id']}]:{message['content']}"
                 )
             else:
                 parts.append(f"{role}:{message.get('content', '')}")
@@ -55,6 +53,17 @@ class TemplateTokenizer:
     @staticmethod
     def _ids(text):
         return [ord(char) for char in text]
+
+
+class ToolAwareTokenizer(TemplateTokenizer):
+    def __init__(self) -> None:
+        self.tool_sets = []
+
+    def apply_chat_template(self, messages, *, tools=None, **kwargs):
+        self.tool_sets.append(
+            tuple(tool["function"]["name"] for tool in tools) if tools is not None else None
+        )
+        return super().apply_chat_template(messages, tools=tools, **kwargs)
 
 
 MANIFEST = [
@@ -195,9 +204,7 @@ def test_whole_chain_truncation_drops_older_chain_without_splitting_latest() -> 
 
 
 def test_whole_chain_truncation_rejects_split_latest_chain() -> None:
-    adapter = ToolWireAdapter(
-        TemplateTokenizer(), family="granite", public_tool_manifest=MANIFEST
-    )
+    adapter = ToolWireAdapter(TemplateTokenizer(), family="granite", public_tool_manifest=MANIFEST)
 
     with pytest.raises(ValueError, match="no complete user-to-final-assistant tool chain"):
         adapter.render_training(tool_chain_messages(), max_seq_len=40)
@@ -273,6 +280,52 @@ def test_granite_renders_the_public_tool_contract() -> None:
     assert rendered_tools[0]["type"] == "function"
     assert rendered_tools[0]["function"]["name"] == "list_cards"
     assert adapter.render_generation(tool_chain_messages()[:1])["tools"] == rendered_tools
+
+
+def test_training_render_can_match_v6_single_tool_and_no_tool_contracts() -> None:
+    tokenizer = ToolAwareTokenizer()
+    adapter = ToolWireAdapter(tokenizer, family="granite", public_tool_manifest=MANIFEST)
+    single_call = [
+        {"role": "user", "content": "Freeze card 4821.", "loss": False},
+        {
+            "role": "assistant",
+            "content": None,
+            "loss": True,
+            "tool_calls": [
+                {
+                    "id": "call_freeze_0",
+                    "index": 0,
+                    "type": "function",
+                    "function": {"name": "freeze_card", "arguments": {"last4": "4821"}},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_freeze_0",
+            "name": "freeze_card",
+            "content": {"ok": True, "result": {"card": {"last4": "4821"}}},
+            "loss": False,
+        },
+        {"role": "assistant", "content": "Your card ending in 4821 is frozen.", "loss": True},
+    ]
+
+    adapter.render_training(single_call, max_seq_len=2048, tools=[MANIFEST[1]])
+
+    assert tokenizer.tool_sets
+    assert set(tokenizer.tool_sets) == {("freeze_card",)}
+
+    tokenizer.tool_sets.clear()
+    adapter.render_training(
+        [
+            {"role": "user", "content": "Good morning.", "loss": False},
+            {"role": "assistant", "content": "Good morning! How can I help?", "loss": True},
+        ],
+        max_seq_len=2048,
+        tools=[],
+    )
+    assert tokenizer.tool_sets
+    assert set(tokenizer.tool_sets) == {()}
 
 
 def test_non_granite_tool_wire_is_rejected() -> None:

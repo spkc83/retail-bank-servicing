@@ -435,7 +435,11 @@ def tokenize_records(
         messages = record.get("messages")
         if not isinstance(messages, list):
             raise ValueError("record missing messages list")
-        rendered = adapter.render_training(messages, max_seq_len=max_seq_len)
+        rendered = adapter.render_training(
+            messages,
+            max_seq_len=max_seq_len,
+            tools=training_tools_for_record(record, adapter),
+        )
         examples.append(
             {
                 "input_ids": rendered.input_ids,
@@ -444,6 +448,32 @@ def tokenize_records(
             }
         )
     return examples
+
+
+def training_tools_for_record(
+    record: Mapping[str, Any],
+    adapter: ToolWireAdapter,
+) -> list[Mapping[str, Any]] | None:
+    """Resolve V6 tool availability; None preserves legacy all-tool rendering."""
+
+    expected = record.get("expected")
+    if not isinstance(expected, Mapping):
+        return None
+    contract = expected.get("generation_contract")
+    if contract is None:
+        return None
+    if not isinstance(contract, Mapping):
+        raise ValueError("generation_contract must be an object")
+    names = contract.get("tool_names")
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("generation_contract.tool_names must be a list of strings")
+    if len(names) != len(set(names)):
+        raise ValueError("generation_contract.tool_names must be unique")
+    available = {str(tool["name"]): tool for tool in adapter.public_tool_manifest}
+    unknown = [name for name in names if name not in available]
+    if unknown:
+        raise ValueError(f"generation_contract references unknown tools: {unknown}")
+    return [available[name] for name in names]
 
 
 def collate_pretokenized(

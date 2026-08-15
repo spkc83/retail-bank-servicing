@@ -134,6 +134,61 @@ def test_manifest_loader_and_adapter_tokenization(tmp_path: Path) -> None:
     assert (examples[0]["labels"] != -100).any()
 
 
+def test_v6_generation_contract_selects_one_or_no_tools_with_legacy_fallback() -> None:
+    adapter = worker.ToolWireAdapter(
+        worker.SimpleToolTokenizer(),
+        family="granite",
+        public_tool_manifest=worker.PUBLIC_BANKING_TOOL_MANIFEST,
+    )
+    base = worker.tiny_smoke_records()[0]
+    execute = {
+        **base,
+        "expected": {
+            "generation_contract": {
+                "version": "banking-v6-route-to-generation/v1",
+                "mode": "execute_tool",
+                "entity_state": "resolved",
+                "tool_names": ["freeze_card"],
+            }
+        },
+    }
+    converse = {
+        **base,
+        "expected": {
+            "generation_contract": {
+                "version": "banking-v6-route-to-generation/v1",
+                "mode": "converse",
+                "entity_state": "not_required",
+                "tool_names": [],
+            }
+        },
+    }
+
+    assert [tool["name"] for tool in worker.training_tools_for_record(execute, adapter)] == [
+        "freeze_card"
+    ]
+    assert worker.training_tools_for_record(converse, adapter) == []
+    assert worker.training_tools_for_record(base, adapter) is None
+
+
+def test_v6_generation_contract_rejects_unknown_training_tool() -> None:
+    adapter = worker.ToolWireAdapter(
+        worker.SimpleToolTokenizer(),
+        family="granite",
+        public_tool_manifest=worker.PUBLIC_BANKING_TOOL_MANIFEST,
+    )
+    record = {
+        "expected": {
+            "generation_contract": {
+                "tool_names": ["close_account"],
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="unknown tools"):
+        worker.training_tools_for_record(record, adapter)
+
+
 def test_manifest_loader_resolves_relative_paths_from_manifest_directory(tmp_path: Path) -> None:
     data_dir = tmp_path / "nested"
     data_dir.mkdir()

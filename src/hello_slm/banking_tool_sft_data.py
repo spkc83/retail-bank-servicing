@@ -49,7 +49,8 @@ def load_canonical_policy_corpus(
 BANKING_TOOL_SFT_CONTRACT = "banking-tool-sft/v1"
 BANKING_TOOL_SFT_MANIFEST_CONTRACT = "banking-tool-sft-manifest"
 CREATED_AT = "2026-07-29T00:00:00Z"
-GENERATOR_VERSION = "banking-tool-sft/v1.5-explicit-replay-evidence"
+GENERATOR_VERSION = "banking-tool-sft/v1.6-v6-generation-contract"
+GENERATION_CONTRACT_VERSION = "banking-v6-route-to-generation/v1"
 DEFAULT_OUTPUT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
 SPLITS = ("train", "validation", "test")
@@ -252,6 +253,14 @@ REALIZER_FINAL_CLOSERS = (
     "That covers the banking request you made.",
     "I can also explain any item in this result.",
 )
+GENERATION_MODES = frozenset(
+    {"execute_tool", "clarify", "converse", "retrieve_policy", "refuse_ood"}
+)
+ENTITY_STATES = frozenset({"resolved", "missing", "ambiguous", "not_required"})
+ENTITY_REQUIRED_TOOLS = frozenset(
+    {"cancel_transfer", "dispute_transaction", "freeze_card", "replace_card"}
+)
+SOCIAL_FAMILIES = frozenset({"small_talk_greeting", "small_talk_checkin", "conversational_thanks"})
 FAQ_REQUIRED_MARKERS = {
     "faq-overdraft-v1": ("overdraft",),
     "faq-mortgage-opening-v1": ("mortgage", "underwriting", "not guaranteed"),
@@ -420,6 +429,11 @@ def generate_records(
     scenarios = _expand_scenarios(pilot_count)
     records = [_scenario_to_record(scenario, bank_path=bank_path) for scenario in scenarios]
     _assign_splits(records, split_seed=split_seed)
+    for record in records:
+        if record["metadata"]["split"] in {"train", "validation"}:
+            _align_multistage_training_record(record)
+            _attach_generation_contract(record)
+            _align_social_training_target(record)
     validate_records(records, synthetic_bank_path=bank_path)
     return records
 
@@ -468,6 +482,11 @@ def prepare(
         "created_at": CREATED_AT,
         "contract": BANKING_TOOL_SFT_MANIFEST_CONTRACT,
         "schema_version": BANKING_TOOL_SFT_CONTRACT,
+        "generator_version": GENERATOR_VERSION,
+        "generation_contract_version": GENERATION_CONTRACT_VERSION,
+        "generation_contract_model_inputs": (
+            "compatible tool schemas only; routing metadata is not rendered"
+        ),
         "tool_manifest_hash": _tool_manifest_hash(),
         "policy_corpus_revision": _POLICY_CORPUS["corpus_revision"],
         "tool_sft": entries,
@@ -553,6 +572,163 @@ def import_teacher_realizations(
     return realized
 
 
+def generation_contract_for_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return the V6 generation contract without exposing classifier logits to Granite."""
+
+    expected = record.get("expected")
+    metadata = record.get("metadata")
+    if not isinstance(expected, Mapping) or not isinstance(metadata, Mapping):
+        raise BankingToolSftDataError("record is missing expected or metadata fields")
+    calls = expected.get("tool_calls")
+    if not isinstance(calls, list):
+        raise BankingToolSftDataError("record is missing expected tool_calls")
+    tool_names = tuple(dict.fromkeys(str(call.get("name", "")) for call in calls))
+    if any(name not in ALLOWED_ARGS for name in tool_names):
+        raise BankingToolSftDataError("generation contract contains an unknown tool")
+    # The legacy base set contains a few two-stage discovery/action chains. V6 runs
+    # one routed generation at a time, so those records retain the legacy all-tool
+    # rendering rather than claiming a false single-tool contract.
+    if len(tool_names) > 1:
+        return None
+    if tool_names:
+        name = tool_names[0]
+        return {
+            "version": GENERATION_CONTRACT_VERSION,
+            "mode": "execute_tool",
+            "entity_state": "resolved" if name in ENTITY_REQUIRED_TOOLS else "not_required",
+            "tool_names": [name],
+        }
+
+    path = str(expected.get("path", ""))
+    family = str(metadata.get("scenario_family", ""))
+    if path == "clarification":
+        grounding = tuple(str(value) for value in expected.get("grounding_facts", ()))
+        entity_state = (
+            "ambiguous"
+            if "ambigu" in family or any("ambiguous" in fact for fact in grounding)
+            else "missing"
+        )
+        mode = "clarify"
+    elif path == "retrieval_grounded_policy":
+        mode, entity_state = "retrieve_policy", "not_required"
+    elif path == "ood":
+        mode, entity_state = "refuse_ood", "not_required"
+    else:
+        mode, entity_state = "converse", "not_required"
+    return {
+        "version": GENERATION_CONTRACT_VERSION,
+        "mode": mode,
+        "entity_state": entity_state,
+        "tool_names": [],
+    }
+
+
+def _attach_generation_contract(record: dict[str, Any]) -> None:
+    contract = generation_contract_for_record(record)
+    if contract is not None:
+        record["expected"]["generation_contract"] = contract
+
+
+def _align_multistage_training_record(record: dict[str, Any]) -> None:
+    """Convert legacy discovery/action chains into one V6 routed target turn."""
+
+    expected_calls = record.get("expected", {}).get("tool_calls", [])
+    if not isinstance(expected_calls, list) or len(expected_calls) <= 1:
+        return
+    record_id = str(record["record_id"])
+    target_call_messages = [
+        message
+        for message in record["messages"]
+        if message.get("role") == "assistant"
+        and message.get("loss") is True
+        and message.get("tool_calls")
+    ]
+    if len(target_call_messages) != 2:
+        raise BankingToolSftDataError(
+            f"{record_id} unsupported multi-stage target shape for V6 alignment"
+        )
+    discovery, action = target_call_messages
+    discovery_call = discovery["tool_calls"][0]
+    action_call = action["tool_calls"][0]
+    old_discovery_id = str(discovery_call["id"])
+    old_action_id = str(action_call["id"])
+    context_id = f"context_{record_id}_0"
+    target_id = f"call_{record_id}_0"
+    discovery["loss"] = False
+    discovery_call["id"] = context_id
+    action_call["id"] = target_id
+    discovery_result_index = -1
+    for index, message in enumerate(record["messages"]):
+        if message.get("role") != "tool":
+            continue
+        if message.get("tool_call_id") == old_discovery_id:
+            message["tool_call_id"] = context_id
+            discovery_result_index = index
+        elif message.get("tool_call_id") == old_action_id:
+            message["tool_call_id"] = target_id
+    if discovery_result_index < 0:
+        raise BankingToolSftDataError(f"{record_id} missing discovery result for V6 alignment")
+    last4 = str(action_call["function"]["arguments"].get("last4", ""))
+    match = re.search(r"_realization_(\d+)$", record_id)
+    realization = 0 if match is None else int(match.group(1))
+    currents = (
+        f"Please freeze the active card ending in {last4} that you found.",
+        f"Go ahead and freeze the card ending in {last4} from those results.",
+        f"Freeze the card ending in {last4} shown above now.",
+    )
+    current = currents[realization % len(currents)]
+    record["messages"].insert(
+        discovery_result_index + 1,
+        _message("user", current, loss=False),
+    )
+    record["expected"]["ordered_calls"] = [target_id]
+    record["expected"]["tool_calls"] = [dict(expected_calls[-1])]
+    record["metadata"]["v6_multistage_alignment"] = "history-resolved-single-tool"
+
+
+def _validate_generation_contract(
+    record: Mapping[str, Any],
+    *,
+    expected_calls: Sequence[Mapping[str, Any]],
+) -> None:
+    record_id = str(record.get("record_id", ""))
+    expected = record.get("expected")
+    metadata = record.get("metadata")
+    if not isinstance(expected, Mapping) or not isinstance(metadata, Mapping):
+        raise BankingToolSftDataError(f"{record_id} is missing expected or metadata fields")
+    contract = expected.get("generation_contract")
+    if contract is None:
+        # Published V5 rows remain valid and use the trainer's all-tool fallback.
+        return
+    if not isinstance(contract, Mapping):
+        raise BankingToolSftDataError(f"{record_id} has invalid V6 generation contract")
+    mode = str(contract.get("mode", ""))
+    entity_state = str(contract.get("entity_state", ""))
+    tool_names = contract.get("tool_names")
+    if contract.get("version") != GENERATION_CONTRACT_VERSION:
+        raise BankingToolSftDataError(f"{record_id} has stale V6 generation contract")
+    if mode not in GENERATION_MODES or entity_state not in ENTITY_STATES:
+        raise BankingToolSftDataError(f"{record_id} has invalid V6 generation decision")
+    if not isinstance(tool_names, list) or any(name not in ALLOWED_ARGS for name in tool_names):
+        raise BankingToolSftDataError(f"{record_id} has invalid compatible tools")
+    expected_names = list(dict.fromkeys(str(call.get("name", "")) for call in expected_calls))
+    if mode == "execute_tool":
+        if len(tool_names) != 1 or tool_names != expected_names:
+            raise BankingToolSftDataError(
+                f"{record_id} execute_tool must expose exactly its compatible tool"
+            )
+        required_state = "resolved" if tool_names[0] in ENTITY_REQUIRED_TOOLS else "not_required"
+        if entity_state != required_state:
+            raise BankingToolSftDataError(f"{record_id} has incorrect execute_tool entity state")
+    else:
+        if tool_names or expected_names:
+            raise BankingToolSftDataError(f"{record_id} non-tool mode must expose no tools")
+        if mode == "clarify" and entity_state not in {"missing", "ambiguous"}:
+            raise BankingToolSftDataError(f"{record_id} clarification needs unresolved entity")
+        if mode != "clarify" and entity_state != "not_required":
+            raise BankingToolSftDataError(f"{record_id} non-tool response has invalid entity state")
+
+
 def validate_records(
     records: Iterable[dict[str, Any]],
     *,
@@ -597,6 +773,7 @@ def validate_records(
         expected_calls = record.get("expected", {}).get("tool_calls")
         if not isinstance(expected_calls, list):
             raise BankingToolSftDataError(f"{record_id} missing expected tool_calls")
+        _validate_generation_contract(record, expected_calls=expected_calls)
         user_key = normalized_user_text(_last_user_message(record)["content"])
         if record.get("metadata", {}).get("split") == "train" and user_key in POC_PRESET_KEYS:
             raise BankingToolSftDataError(f"{record_id} duplicates a POC preset")
@@ -2030,6 +2207,11 @@ def _build_report(
         for message in record["messages"]
         for call in message.get("tool_calls", [])
     ]
+    generation_contracts = [
+        record["expected"]["generation_contract"]
+        for record in records
+        if "generation_contract" in record["expected"]
+    ]
     paths = Counter(record["expected"]["path"] for record in records)
     canonical = sorted(records, key=lambda record: record["record_id"])
     return {
@@ -2065,6 +2247,13 @@ def _build_report(
                 if message["role"] == "tool" and message["content"]["ok"] is False
             ),
             "paths": dict(paths),
+            "generation_contract_records": len(generation_contracts),
+            "generation_modes": dict(
+                Counter(str(contract["mode"]) for contract in generation_contracts)
+            ),
+            "generation_entity_states": dict(
+                Counter(str(contract["entity_state"]) for contract in generation_contracts)
+            ),
         },
         "source": {
             "name": "self-authored-synthetic",
@@ -2164,8 +2353,11 @@ tool-using model.
 
 The corpus covers all nine public synthetic-bank tools, successful and failed
 tool results, clarification, general banking FAQ, hard-negative private-field
-requests, out-of-domain refusal, multi-turn context, and ordered multi-tool
-calls.
+requests, out-of-domain refusal, and multi-turn context. Train and validation
+rows carry a `{GENERATION_CONTRACT_VERSION}` generation contract: an
+`execute_tool` row exposes exactly one compatible tool schema, while
+clarification, conversation, policy, and refusal rows expose no tools. The
+contract metadata itself is not rendered into the model input.
 
 {path_lines}
 
@@ -2208,9 +2400,7 @@ def _realize_user(template: Scenario, occurrence: int) -> str:
     if template.scenario_family in {
         "action_summary_followup",
         "no_action_followup",
-        "small_talk_greeting",
-        "small_talk_checkin",
-        "conversational_thanks",
+        *SOCIAL_FAMILIES,
     }:
         qualifier = _pick(
             (
@@ -2255,6 +2445,86 @@ def _realize_final(template: Scenario, occurrence: int) -> str:
     prefix = _pick(REALIZER_FINAL_PREFIXES, occurrence)
     closer = _pick(REALIZER_FINAL_CLOSERS, occurrence // len(REALIZER_FINAL_PREFIXES))
     return " ".join(part for part in (prefix, template.final_response.strip(), closer) if part)
+
+
+def _align_social_training_target(record: dict[str, Any]) -> None:
+    family = str(record.get("metadata", {}).get("scenario_family", ""))
+    if family not in SOCIAL_FAMILIES:
+        return
+    record_id = str(record.get("record_id", ""))
+    match = re.search(r"_state_(\d+)_realization_(\d+)$", record_id)
+    occurrence = 0 if match is None else int(match.group(1)) * 3 + int(match.group(2))
+    _final_assistant_message(record)["content"] = _social_final(family, occurrence)
+
+
+def _social_final(family: str, occurrence: int) -> str:
+    if family == "small_talk_greeting":
+        openings = (
+            "Hi!",
+            "Hello!",
+            "Hey there!",
+            "Good to hear from you!",
+            "Welcome!",
+            "Hi, I’m Harbor.",
+            "Hello, I’m Harbor.",
+            "Hi there!",
+        )
+        continuations = (
+            "How can I help with your banking today?",
+            "What banking question can I help you with?",
+            "What would you like help with today?",
+            "How may I assist with your accounts or banking tasks?",
+            "Tell me what you would like to work on.",
+            "I’m ready to help with a banking question or account task.",
+        )
+    elif family == "small_talk_checkin":
+        openings = (
+            "I’m doing well and ready to help.",
+            "I’m here and ready when you are.",
+            "I’m ready to assist.",
+            "I’m available and happy to help.",
+            "Everything is ready on my side.",
+            "I’m here to help with your banking needs.",
+            "I’m ready to get started.",
+            "I’m available to help you today.",
+        )
+        continuations = (
+            "What would you like to work on?",
+            "Which banking question can I help with?",
+            "How can I assist you today?",
+            "Tell me what you need help with.",
+            "What can I help you take care of?",
+            "Where would you like to begin?",
+        )
+    else:
+        openings = (
+            "You’re welcome.",
+            "Happy to help.",
+            "Glad I could help.",
+            "Anytime.",
+            "You’re very welcome.",
+            "Of course.",
+            "My pleasure.",
+            "I’m glad that helped.",
+        )
+        continuations = (
+            "Let me know if another banking question comes up.",
+            "I’m here if you need help with anything else.",
+            "I can help with another banking task whenever you’re ready.",
+            "Reach out whenever you need more banking help.",
+            "Let me know if you would like to work on another account task.",
+            "I’ll be here if you need anything else.",
+        )
+    opening = openings[occurrence % len(openings)]
+    continuation = continuations[(occurrence // len(openings)) % len(continuations)]
+    followups = (
+        "",
+        "We can take it one step at a time.",
+        "I’ll keep the response clear and focused.",
+        "Start wherever is most useful for you.",
+    )
+    followup = followups[(occurrence // (len(openings) * len(continuations))) % len(followups)]
+    return " ".join(part for part in (opening, continuation, followup) if part)
 
 
 def _user_stems(template: Scenario) -> tuple[str, ...]:

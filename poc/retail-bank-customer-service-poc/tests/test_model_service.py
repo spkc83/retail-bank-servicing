@@ -127,6 +127,56 @@ def test_tagged_json_parser_accepts_multiple_ordered_calls_and_ignores_prose() -
     assert calls[1].arguments == {"limit": 3}
 
 
+def test_malformed_first_tool_response_preserves_raw_model_trace() -> None:
+    raw_output = '<tool_call>{"name":"list_accounts","arguments":{}}'
+    agent = ConversationalBankingAgent(bank=bank(), model=RecordingModel([raw_output]))
+
+    with pytest.raises(
+        AgentExecutionError,
+        match="malformed tool-call block",
+    ) as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my accounts.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_accounts",
+            ),
+        )
+
+    assert failure.value.conversation == [{"role": "user", "content": "Show my accounts."}]
+    assert failure.value.tool_calls == ()
+    assert failure.value.tool_results == ()
+    assert len(failure.value.model_passes) == 1
+    assert failure.value.model_passes[0].label == "base"
+    assert failure.value.model_passes[0].raw_output == raw_output
+
+
+def test_invalid_first_tool_response_preserves_raw_model_trace() -> None:
+    raw_output = '<tool_call>{"name":"list_cards","arguments":{}}</tool_call>'
+    agent = ConversationalBankingAgent(bank=bank(), model=RecordingModel([raw_output]))
+
+    with pytest.raises(AgentExecutionError, match="unexposed tool") as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my accounts.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_accounts",
+            ),
+        )
+
+    assert failure.value.conversation[-1] == {
+        "role": "user",
+        "content": "Show my accounts.",
+    }
+    assert failure.value.model_passes[0].raw_output == raw_output
+
+
 @pytest.mark.parametrize(
     "output",
     [

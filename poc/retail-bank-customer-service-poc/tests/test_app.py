@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import importlib
 import sys
 from pathlib import Path
@@ -130,6 +131,38 @@ def test_snapshot_uses_customer_friendly_product_labels(app_module) -> None:
     assert "Savings account" in rendered
     assert "Debit cards" in rendered
     assert "Synthetic backend state" not in rendered
+
+
+def test_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(app_module) -> None:
+    routed = {
+        **route(capability="cards", intent="freeze_card"),
+        "domain": "banking",
+        "lane": "servicing",
+        "family": "cards",
+        "action": "execute_tool",
+        "entity_resolution": "resolved",
+    }
+
+    diagnostics = app_module._render_diagnostics(routed, (), (), "test")
+
+    assert "V6 domain: `banking`" in diagnostics
+    assert "V6 lane: `servicing`" in diagnostics
+    assert "V6 family: `cards`" in diagnostics
+    assert "V6 intent: `freeze_card`" in diagnostics
+    assert "V6 action: `execute_tool`" in diagnostics
+    assert "V6 entity resolution: `resolved`" in diagnostics
+    assert 'Exposed tools: `["freeze_card"]`' in diagnostics
+    assert "list_accounts" not in diagnostics
+
+
+def test_diagnostics_retain_v3_route_compatibility(app_module) -> None:
+    diagnostics = app_module._render_diagnostics(route(), (), (), "test")
+
+    assert "V6 domain: `not available (V3 compatibility)`" in diagnostics
+    assert "V6 intent: `view_transfers`" in diagnostics
+    assert "Exposed tools:" in diagnostics
+    assert "list_accounts" in diagnostics
+    assert "cancel_transfer" in diagnostics
 
 
 def test_response_provenance_uses_only_recorded_path_and_model_passes(app_module) -> None:
@@ -377,6 +410,33 @@ def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics
     assert "`frozen`" in result[3]
     assert result[1][-1]["content"] == app_module.MODEL_FAILURE_RESPONSE
     assert result[-1]["pending_servicing"] is None
+
+
+def test_first_pass_parse_failure_preserves_raw_output_in_diagnostics(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_output = '<tool_call>{"name":"list_accounts","arguments":{}}'
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", lambda *_args: raw_output)
+    monkeypatch.setattr(
+        app_module,
+        "route_query",
+        lambda *_args: {
+            **route(capability="accounts", intent="view_accounts"),
+            "domain": "banking",
+            "family": "accounts",
+            "action": "execute_tool",
+            "entity_resolution": "not_required",
+        },
+    )
+
+    result = app_module.run_model_turn("Show my accounts.", [], [], {}, request())
+
+    assert result[1][-1]["content"] == app_module.MODEL_FAILURE_RESPONSE
+    assert html.escape(raw_output) in result[5]
+    assert 'Exposed tools: `["list_accounts"]`' in result[5]
+    assert "Generation calls: `1`" in result[5]
 
 
 def test_second_pass_failure_does_not_complete_undelivered_read(

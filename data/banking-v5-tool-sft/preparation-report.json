@@ -2,6 +2,19 @@
   "checks": {
     "accepted_records": 1200,
     "error_tool_messages": 82,
+    "generation_contract_records": 1020,
+    "generation_entity_states": {
+      "missing": 36,
+      "not_required": 657,
+      "resolved": 327
+    },
+    "generation_modes": {
+      "clarify": 36,
+      "converse": 204,
+      "execute_tool": 504,
+      "refuse_ood": 35,
+      "retrieve_policy": 241
+    },
     "paths": {
       "clarification": 41,
       "conversation": 123,
@@ -86,7 +99,7 @@
     }
   },
   "summary": {
-    "corpus_fingerprint": "5f1b6b391557158c551529fa4cbcd7e760d96c95b25f66daac641e11afd69247",
+    "corpus_fingerprint": "6e24a3ded9c98c01fae4e01e87a7854e8e7e22cb71d1406378ef815abd9f23c1",
     "split_seed": 711,
     "total_records": 1200
   }
