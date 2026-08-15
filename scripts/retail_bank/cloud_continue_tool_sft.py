@@ -76,46 +76,6 @@ DEFAULT_PROBE_CHECKPOINT_DIR = (
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
 CANDIDATE5_TRAINING_SEED = 20_260_815
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
-CANCELED_CANDIDATE5_SOURCE_COMMIT = "4e86f632f2de0bacc2fa83196463b4d60d6d5a81"
-CANCELED_CANDIDATE5_DATASET_REVISION = "70c9cd9a9075ddbc1bf9aece0253dd62bd769c9d"
-DEFAULT_RESUME_CHECKPOINT_DIR = Path(
-    "/data/retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350"
-)
-DEFAULT_RESUME_CHECKPOINT_STEP = 350
-DEFAULT_RESUME_OUTPUT_DIR = Path(
-    "/data/retail-bank-agent-9b-candidate5-resume-4e86f632-d965816b-70c9cd9a-from350"
-)
-RESUME_CHECKPOINT_FILES = (
-    "adapter_config.json",
-    "adapter_model.safetensors",
-    "optimizer.pt",
-    "rng_state.pth",
-    "scheduler.pt",
-    "trainer_state.json",
-    "training_args.bin",
-)
-RESUME_CHECKPOINT_SIZES = {
-    "adapter_config.json": 1_068,
-    "adapter_model.safetensors": 197_994_512,
-    "optimizer.pt": 396_318_835,
-    "rng_state.pth": 14_709,
-    "scheduler.pt": 1_465,
-    "trainer_state.json": 13_514,
-    "training_args.bin": 5_777,
-}
-RESUME_CHECKPOINT_XET_HASHES = {
-    "adapter_config.json": "a9682f1296289fce43ec798430798468b64c795c13d528c17e4b2024030c3529",
-    "adapter_model.safetensors": "f1af57fc28b05efbac63192b5652b1cf49d3b2504778fa3629b207fb3536940d",
-    "optimizer.pt": "1100817feb246ec0d2ccc847d750dd01ab294af5f38d051a4bee4a9a2b09d532",
-    "rng_state.pth": "0cd6c1c69085489da8c3ce055699dc6b0a46446c64096bf6087bddc7bb6007b5",
-    "scheduler.pt": "25adb42bf10cd7f5dd953b978d0bbd3572b83d502ec96121dfdcc2ebf28cf9d1",
-    "trainer_state.json": "0dbffbed61861d125aa1c65067c03df2620ebc9eb80bb6e2fdddafb52453fa44",
-    "training_args.bin": "57cd397e7cb202aa8682719e1eb2f8132c62f8328c47bbbaa1546a9f9bc0f6ca",
-}
-RESUME_BUCKET_ID = "spkc83/jobs-artifacts"
-RESUME_BUCKET_PREFIX = (
-    "retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350"
-)
 ADAPTER_FILES = (
     "adapter_config.json",
     "adapter_model.safetensors",
@@ -149,11 +109,8 @@ class ContinuationConfig:
     hub_dest: str
     probe_only: bool
     publish_only: bool
-    resume_canceled_candidate5: bool
     probe_checkpoint_dir: Path
     probe_checkpoint_step: int
-    resume_checkpoint_dir: Path
-    resume_checkpoint_step: int
     max_steps: int
     max_train_seconds: int
     batch_size: int
@@ -221,13 +178,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
     parser.add_argument("--publish-only", action="store_true")
-    parser.add_argument("--resume-canceled-candidate5", action="store_true")
     parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
     parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
-    parser.add_argument("--resume-checkpoint-dir", default=str(DEFAULT_RESUME_CHECKPOINT_DIR))
-    parser.add_argument(
-        "--resume-checkpoint-step", type=int, default=DEFAULT_RESUME_CHECKPOINT_STEP
-    )
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--execute-remote", action="store_false", dest="dry_run")
     parser.add_argument("--allow-remote-execution", action="store_true")
@@ -249,11 +201,8 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         hub_dest=str(args.hub_dest),
         probe_only=bool(args.probe_only),
         publish_only=bool(args.publish_only),
-        resume_canceled_candidate5=bool(args.resume_canceled_candidate5),
         probe_checkpoint_dir=Path(args.probe_checkpoint_dir),
         probe_checkpoint_step=int(args.probe_checkpoint_step),
-        resume_checkpoint_dir=Path(args.resume_checkpoint_dir),
-        resume_checkpoint_step=int(args.resume_checkpoint_step),
         max_steps=int(args.max_steps),
         max_train_seconds=int(args.max_train_seconds),
         batch_size=int(args.batch_size),
@@ -483,96 +432,6 @@ def validate_source_checkpoint(path: Path, *, expected_step: int) -> dict[str, A
     }
 
 
-def validate_resume_checkpoint(path: Path, *, expected_step: int) -> dict[str, Any]:
-    resolved = path.resolve()
-    missing = [name for name in RESUME_CHECKPOINT_FILES if not (resolved / name).is_file()]
-    if missing:
-        raise RuntimeError(f"resume checkpoint is missing required files: {missing}")
-    size_mismatches = [
-        name
-        for name, expected_size in RESUME_CHECKPOINT_SIZES.items()
-        if (resolved / name).stat().st_size != expected_size
-    ]
-    if size_mismatches:
-        raise RuntimeError(f"resume checkpoint file size mismatch: {size_mismatches}")
-    state = read_json(resolved / "trainer_state.json")
-    if state.get("global_step") != expected_step:
-        raise RuntimeError(
-            f"resume checkpoint step mismatch: expected {expected_step}, "
-            f"got {state.get('global_step')!r}"
-        )
-    if state.get("max_steps") != 964:
-        raise RuntimeError("resume checkpoint does not preserve the original 964-step horizon")
-    adapter_config = read_json(resolved / "adapter_config.json")
-    if (
-        adapter_config.get("base_model_name_or_path") != BASE_MODEL
-        or adapter_config.get("peft_type") != "LORA"
-        or adapter_config.get("task_type") != "CAUSAL_LM"
-        or adapter_config.get("r") != 32
-        or adapter_config.get("lora_alpha") != 64
-    ):
-        raise RuntimeError("resume checkpoint adapter architecture does not match candidate5")
-    return {
-        "contract": "banking-v5-canceled-checkpoint-resume/v1",
-        "path": str(resolved),
-        "step": expected_step,
-        "original_source_commit": CANCELED_CANDIDATE5_SOURCE_COMMIT,
-        "dataset_revision": CANCELED_CANDIDATE5_DATASET_REVISION,
-        "source_adapter_repo": ADAPTER_REPO,
-        "source_adapter_revision": DEFAULT_SOURCE_ADAPTER_REVISION,
-        "base_model": BASE_MODEL,
-        "base_revision": BASE_REVISION,
-        "max_steps": 964,
-        "optimizer_resumed": True,
-        "bucket_xet_hash": dict(RESUME_CHECKPOINT_XET_HASHES),
-        "file_size": dict(RESUME_CHECKPOINT_SIZES),
-    }
-
-
-def validate_resume_bucket_identity(api: Any) -> None:
-    paths = [f"{RESUME_BUCKET_PREFIX}/{name}" for name in RESUME_CHECKPOINT_XET_HASHES]
-    entries = list(api.get_bucket_paths_info(RESUME_BUCKET_ID, paths))
-    by_name = {Path(entry.path).name: entry for entry in entries}
-    missing = sorted(set(RESUME_CHECKPOINT_XET_HASHES) - set(by_name))
-    if missing:
-        raise RuntimeError(f"resume bucket checkpoint is incomplete: {missing}")
-    mismatches = [
-        name
-        for name, expected_hash in RESUME_CHECKPOINT_XET_HASHES.items()
-        if by_name[name].xet_hash != expected_hash
-    ]
-    if mismatches:
-        raise RuntimeError(f"resume bucket checkpoint xet hash mismatch: {mismatches}")
-
-
-def validate_resume_mode_inputs(
-    config: ContinuationConfig,
-    dataset: Mapping[str, str],
-) -> None:
-    expected = {
-        "resume_checkpoint_dir": (config.resume_checkpoint_dir, DEFAULT_RESUME_CHECKPOINT_DIR),
-        "resume_checkpoint_step": (config.resume_checkpoint_step, DEFAULT_RESUME_CHECKPOINT_STEP),
-        "output_dir": (config.output_dir, DEFAULT_RESUME_OUTPUT_DIR),
-        "max_steps": (config.max_steps, 964),
-        "batch_size": (config.batch_size, 2),
-        "gradient_accumulation_steps": (config.gradient_accumulation_steps, 2),
-        "max_seq_len": (config.max_seq_len, 2048),
-        "learning_rate": (config.learning_rate, 2e-6),
-        "checkpoint_every": (config.checkpoint_every, 50),
-        "positive_multiplier": (config.positive_multiplier, 2),
-        "ambiguity_multiplier": (config.ambiguity_multiplier, 1),
-        "policy_faq_multiplier": (config.policy_faq_multiplier, 4),
-        "tool_outcome_multiplier": (config.tool_outcome_multiplier, 6),
-    }
-    mismatches = [name for name, (actual, wanted) in expected.items() if actual != wanted]
-    if mismatches:
-        raise RuntimeError(f"candidate5 resume settings mismatch: {mismatches}")
-    if dataset.get("revision") != CANCELED_CANDIDATE5_DATASET_REVISION:
-        raise RuntimeError(
-            f"candidate5 resume requires dataset revision {CANCELED_CANDIDATE5_DATASET_REVISION}"
-        )
-
-
 def dataset_identity(manifest_path: Path) -> dict[str, str]:
     validate_banking_tool_sft_manifest(manifest_path)
     repository = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REPO", "")
@@ -639,16 +498,6 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "default_path": str(config.probe_checkpoint_dir),
             "expected_step": config.probe_checkpoint_step,
             "required_dataset_revision": CANDIDATE3_PROBE_DATASET_REVISION,
-        },
-        "canceled_job_resume": {
-            "enabled": config.resume_canceled_candidate5,
-            "checkpoint_path": str(config.resume_checkpoint_dir),
-            "checkpoint_step": config.resume_checkpoint_step,
-            "original_source_commit": CANCELED_CANDIDATE5_SOURCE_COMMIT,
-            "required_dataset_revision": CANCELED_CANDIDATE5_DATASET_REVISION,
-            "output_dir": str(config.output_dir),
-            "optimizer_rng_scheduler": "required and resumed",
-            "max_steps_horizon": 964,
         },
         "training": {
             "max_steps": config.max_steps,
@@ -1445,8 +1294,6 @@ def run_publish_recovery(config: ContinuationConfig) -> dict[str, Any]:
 
 
 def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
-    from huggingface_hub import HfApi  # type: ignore[import-not-found]
-
     assert_remote_execution_allowed(config)
     validate_pinned_model_inputs(config)
     require_exact_revision(os.environ.get("RETAIL_BANK_SOURCE_COMMIT", ""), field="source commit")
@@ -1454,14 +1301,6 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     if config.push_to_hub:
         preflight_destination_repo(config)
     dataset = dataset_identity(config.manifest)
-    resume_checkpoint: dict[str, Any] | None = None
-    if config.resume_canceled_candidate5:
-        validate_resume_mode_inputs(config, dataset)
-        validate_resume_bucket_identity(HfApi(token=os.environ["HF_TOKEN"]))
-        resume_checkpoint = validate_resume_checkpoint(
-            config.resume_checkpoint_dir,
-            expected_step=config.resume_checkpoint_step,
-        )
     config.output_dir.mkdir(parents=True, exist_ok=False)
     seed_training(CANDIDATE5_TRAINING_SEED)
 
@@ -1595,8 +1434,6 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     fingerprint = continuation_fingerprint(
         config, wire_adapter, source_snapshot, mix_report, dataset
     )
-    if resume_checkpoint is not None:
-        fingerprint["resume_checkpoint"] = resume_checkpoint
     behavioral_callback = BehavioralGateCallback(
         model,
         tokenizer,
@@ -1619,11 +1456,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             behavioral_callback,
         ],
     )
-    train_output = trainer.train(
-        resume_from_checkpoint=(
-            str(config.resume_checkpoint_dir) if resume_checkpoint is not None else None
-        )
-    )
+    train_output = trainer.train()
     if config.trackio_project:
         from transformers.integrations import TrackioCallback  # type: ignore[import-not-found]
 
@@ -1674,7 +1507,6 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
         "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
         "shadow_coreference_behavioral_gate": shadow_gate,
-        "resume_checkpoint": resume_checkpoint,
     }
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
@@ -1697,7 +1529,6 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
         "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
         "shadow_coreference_behavioral_gate": shadow_gate,
-        "resume_checkpoint": resume_checkpoint,
         "adapter_sha256": sha256(adapter_dir / "adapter_model.safetensors"),
         "merged_model": None,
         "frozen_release_gates": "pending unchanged frozen evaluation",
@@ -1736,9 +1567,8 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     config = config_from_args(parse_args(argv))
     validate_pinned_model_inputs(config)
-    modes = (config.probe_only, config.publish_only, config.resume_canceled_candidate5)
-    if sum(bool(mode) for mode in modes) > 1:
-        raise ValueError("probe, publish-only, and resume modes are mutually exclusive")
+    if config.probe_only and config.publish_only:
+        raise ValueError("--probe-only and --publish-only are mutually exclusive")
     if config.max_steps < 1 or config.max_train_seconds < 60:
         raise ValueError("continuation caps must allow at least one step and 60 seconds")
     if config.learning_rate <= 0:

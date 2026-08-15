@@ -14,11 +14,8 @@ max_steps="${5:-964}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
 probe_only="${PROBE_ONLY:-0}"
 publish_only="${PUBLISH_ONLY:-0}"
-resume_canceled_candidate5="${RESUME_CANCELED_CANDIDATE5:-0}"
 probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600}"
 probe_checkpoint_step="${PROBE_CHECKPOINT_STEP:-600}"
-resume_checkpoint_dir="${RESUME_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350}"
-resume_checkpoint_step="${RESUME_CHECKPOINT_STEP:-350}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_continue_tool_sft.py"
 worker_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/cloud_continue_tool_sft.py"
 output_dir="/data/retail-bank-agent-9b-candidate5-${source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
@@ -28,13 +25,8 @@ if [[ "$probe_only" == "1" ]]; then
   output_dir="/data/retail-bank-agent-9b-probe-${probe_name}-${source_commit:0:8}-${dataset_revision:0:8}"
 fi
 
-if [[ "$resume_canceled_candidate5" == "1" ]]; then
-  output_dir="/data/retail-bank-agent-9b-candidate5-resume-4e86f632-d965816b-70c9cd9a-from350"
-fi
-
-enabled_modes=$((probe_only + publish_only + resume_canceled_candidate5))
-if (( enabled_modes > 1 )); then
-  echo "PROBE_ONLY, PUBLISH_ONLY, and RESUME_CANCELED_CANDIDATE5 are mutually exclusive." >&2
+if [[ "$probe_only" == "1" && "$publish_only" == "1" ]]; then
+  echo "PROBE_ONLY and PUBLISH_ONLY cannot both be enabled." >&2
   exit 2
 fi
 
@@ -50,16 +42,6 @@ fi
 
 if [[ "$probe_only" == "1" && "$dataset_revision" != "715064e50e7ed2f815dfd3ce19b61f345a466b9d" ]]; then
   echo "PROBE_ONLY requires candidate3 dataset revision 715064e50e7ed2f815dfd3ce19b61f345a466b9d." >&2
-  exit 2
-fi
-
-if [[ "$resume_canceled_candidate5" == "1" && "$dataset_revision" != "70c9cd9a9075ddbc1bf9aece0253dd62bd769c9d" ]]; then
-  echo "RESUME_CANCELED_CANDIDATE5 requires dataset revision 70c9cd9a9075ddbc1bf9aece0253dd62bd769c9d." >&2
-  exit 2
-fi
-
-if [[ "$resume_canceled_candidate5" == "1" && ( "$max_steps" != "964" || "$resume_checkpoint_step" != "350" || "$resume_checkpoint_dir" != "/data/retail-bank-agent-9b-candidate5-4e86f632-d965816b-70c9cd9a/trainer/checkpoint-350" ) ]]; then
-  echo "Candidate5 resume checkpoint, step, and 964-step horizon are immutable." >&2
   exit 2
 fi
 
@@ -139,14 +121,6 @@ fi
 
 if [[ "$publish_only" == "1" ]]; then
   job_args+=(--publish-only)
-fi
-
-if [[ "$resume_canceled_candidate5" == "1" ]]; then
-  job_args+=(
-    --resume-canceled-candidate5
-    --resume-checkpoint-dir "$resume_checkpoint_dir"
-    --resume-checkpoint-step "$resume_checkpoint_step"
-  )
 fi
 
 hf jobs uv run "${job_args[@]}"
