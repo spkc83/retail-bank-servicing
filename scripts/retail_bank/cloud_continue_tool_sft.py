@@ -13,7 +13,7 @@
 #   "trl==0.26.2",
 # ]
 # ///
-"""Continue the released V5 Granite PEFT adapter on remediation data.
+"""Continue the released Granite PEFT adapter on V6 generation-contract data.
 
 The worker composes an exact root-level LoRA adapter over an exact BF16 base,
 retains every record in the training split, evaluates after training, and can
@@ -55,26 +55,27 @@ from cloud_train_tool_sft import (  # type: ignore[import-not-found]
     sha256_file,
     tf32_supported,
     tokenize_records,
+    training_tools_for_record,
 )
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.banking_tool_sft_data import validate_banking_tool_sft_manifest
 
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT"
-REMOTE_CONFIRMATION_VALUE = "banking-v5-peft-remediation"
-CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"
+REMOTE_CONFIRMATION_VALUE = "banking-v6-generation-contract-peft"
+V6_CONTINUATION_PROTOCOL = "retail-bank-peft-v6-generation-contract/v1"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
+DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract"
 DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
-DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate5"
+DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v6-generation-contract"
 DEFAULT_PROBE_CHECKPOINT_DIR = (
     "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600"
 )
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
-CANDIDATE5_TRAINING_SEED = 20_260_815
+V6_TRAINING_SEED = 20_260_815
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
 ADAPTER_FILES = (
     "adapter_config.json",
@@ -511,7 +512,10 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "ambiguity_multiplier": config.ambiguity_multiplier,
             "policy_faq_multiplier": config.policy_faq_multiplier,
             "tool_outcome_multiplier": config.tool_outcome_multiplier,
-            "seed": CANDIDATE5_TRAINING_SEED,
+            "seed": V6_TRAINING_SEED,
+            "generation_contract": (
+                "per-record tool exposure; contractless records preserve legacy all-tool rendering"
+            ),
             "selection_gate": "two consecutive dev passes",
             "shadow_gate": "one post-selection evaluation; never used for adaptation",
             "retained_regression_mix": [
@@ -567,9 +571,9 @@ def build_training_args(config: ContinuationConfig) -> Any:
         optim="adamw_torch_fused",
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
-        seed=CANDIDATE5_TRAINING_SEED,
-        data_seed=CANDIDATE5_TRAINING_SEED,
-        run_name=config.trackio_run_name or "granite-peft-v5-candidate5",
+        seed=V6_TRAINING_SEED,
+        data_seed=V6_TRAINING_SEED,
+        run_name=config.trackio_run_name or "granite-peft-v6-generation-contract",
         push_to_hub=False,
     )
 
@@ -630,7 +634,7 @@ def continuation_fingerprint(
     dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
     require_exact_revision(dataset_revision, field="dataset revision")
     return {
-        "contract": "banking-v5-peft-remediation-fingerprint/v1",
+        "contract": "banking-v6-generation-contract-peft-fingerprint/v1",
         "source_commit": source_commit,
         "base_model": config.base_model,
         "base_revision": config.base_revision,
@@ -643,7 +647,7 @@ def continuation_fingerprint(
         },
         "dataset_identity": dict(dataset),
         "template_hash": adapter.template_hash,
-        "training_seed": CANDIDATE5_TRAINING_SEED,
+        "training_seed": V6_TRAINING_SEED,
         "continuation": {
             "max_steps": config.max_steps,
             "max_train_seconds": config.max_train_seconds,
@@ -858,7 +862,10 @@ def generate_coreference_behavior_report(
         last_user = max(
             index for index, message in enumerate(messages) if message.get("role") == "user"
         )
-        rendered = adapter.render_generation(messages[: last_user + 1])
+        rendered = adapter.render_generation(
+            messages[: last_user + 1],
+            tools=training_tools_for_record(record, adapter),
+        )
         inputs = {
             key: value.to(device)
             for key, value in rendered.items()
@@ -911,7 +918,7 @@ tags:
 - lora
 ---
 
-# Retail Bank Servicing Agent 9B — V5 Remediation PEFT Adapter
+# Retail Bank Servicing Agent 9B — V6 Generation-Contract PEFT Adapter
 
 This repository contains a continued LoRA adapter only. Load the exact BF16 base
 revision and attach this root-level adapter revision with PEFT. No merged base
@@ -990,8 +997,8 @@ def write_publication_bundle_manifest(
         **{f"adapter/{name}": sha256(adapter_dir / name) for name in ADAPTER_FILES},
     }
     manifest = {
-        "contract": "banking-v5-publication-bundle/v1",
-        "candidate_protocol": CANDIDATE5_PROTOCOL,
+        "contract": "banking-v6-generation-contract-publication-bundle/v1",
+        "candidate_protocol": V6_CONTINUATION_PROTOCOL,
         "source_commit": source_commit,
         "dataset_revision": dataset_revision,
         "source_adapter_repo": config.source_adapter_repo,
@@ -1025,8 +1032,8 @@ def validate_publication_bundle(
         raise RuntimeError(f"publication recovery bundle is incomplete: {missing}")
     bundle = read_json(bundle_path)
     expected_identity = {
-        "contract": "banking-v5-publication-bundle/v1",
-        "candidate_protocol": CANDIDATE5_PROTOCOL,
+        "contract": "banking-v6-generation-contract-publication-bundle/v1",
+        "candidate_protocol": V6_CONTINUATION_PROTOCOL,
         "source_commit": source_commit,
         "dataset_revision": dataset_revision,
         "source_adapter_repo": config.source_adapter_repo,
@@ -1063,9 +1070,9 @@ def validate_publication_bundle(
     source_adapter = fingerprint.get("source_adapter")
     publication = result.get("publication")
     if (
-        result.get("contract") != "banking-v5-peft-remediation-result/v1"
+        result.get("contract") != "banking-v6-generation-contract-peft-result/v1"
         or result.get("worker") != "cloud_continue_tool_sft"
-        or metadata.get("contract") != "banking-v5-peft-remediation-metadata/v1"
+        or metadata.get("contract") != "banking-v6-generation-contract-peft-metadata/v1"
         or metadata.get("worker") != "cloud_continue_tool_sft"
         or metadata.get("step") != result.get("steps")
         or metadata.get("eval_metrics") != result.get("eval_metrics")
@@ -1092,7 +1099,7 @@ def validate_publication_bundle(
         or fingerprint.get("base_model") != config.base_model
         or fingerprint.get("base_revision") != config.base_revision
         or fingerprint.get("family") != config.family
-        or fingerprint.get("training_seed") != CANDIDATE5_TRAINING_SEED
+        or fingerprint.get("training_seed") != V6_TRAINING_SEED
         or not isinstance(source_adapter, Mapping)
         or source_adapter.get("repository") != config.source_adapter_repo
         or source_adapter.get("revision") != config.source_adapter_revision
@@ -1173,7 +1180,7 @@ def upload_release(
         repo_id=config.hub_dest,
         repo_type="model",
         operations=operations,
-        commit_message="Publish V5 remediation PEFT adapter atomically",
+        commit_message="Publish V6 generation-contract PEFT adapter atomically",
     )
     revision = str(commit.oid)
     require_exact_revision(revision, field="published adapter revision")
@@ -1302,7 +1309,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         preflight_destination_repo(config)
     dataset = dataset_identity(config.manifest)
     config.output_dir.mkdir(parents=True, exist_ok=False)
-    seed_training(CANDIDATE5_TRAINING_SEED)
+    seed_training(V6_TRAINING_SEED)
 
     from datasets import Dataset as HfDataset  # type: ignore[import-not-found]
     from peft import PeftModel  # type: ignore[import-not-found]
@@ -1328,7 +1335,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         ambiguity_multiplier=config.ambiguity_multiplier,
         policy_faq_multiplier=config.policy_faq_multiplier,
         tool_outcome_multiplier=config.tool_outcome_multiplier,
-        seed=CANDIDATE5_TRAINING_SEED,
+        seed=V6_TRAINING_SEED,
     )
     train_examples = tokenize_records(
         mask_coreference_positive_final_loss(mixed_train_records),
@@ -1495,7 +1502,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         raise RuntimeError(f"continued adapter is missing release files: {missing}")
     actual_step = int(trainer.state.global_step)
     metadata = {
-        "contract": "banking-v5-peft-remediation-metadata/v1",
+        "contract": "banking-v6-generation-contract-peft-metadata/v1",
         "step": actual_step,
         "created_at_unix": int(time.time()),
         "worker": "cloud_continue_tool_sft",
@@ -1511,7 +1518,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
     result = {
-        "contract": "banking-v5-peft-remediation-result/v1",
+        "contract": "banking-v6-generation-contract-peft-result/v1",
         "worker": "cloud_continue_tool_sft",
         "steps": actual_step,
         "source_adapter_repo": config.source_adapter_repo,

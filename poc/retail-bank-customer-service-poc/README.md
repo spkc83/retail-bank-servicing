@@ -39,8 +39,8 @@ bank or perform a real transaction.
 
 | Component | Revision/status |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@7f6a0e77ad231233702039560ced007fdc68bd74` |
-| Router data | `spkc83/retail-bank-conversation-router-data@80c0edfea84b341d2ee4092f5c4a4bbb05405e40` |
+| Router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
+| Router data | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
 | Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
@@ -185,7 +185,7 @@ Plan deployment:
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=7f6a0e77ad231233702039560ced007fdc68bd74
+ROUTER_REVISION=36920330d2502dfcf4d60572eadf1e3e71cd23fa
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

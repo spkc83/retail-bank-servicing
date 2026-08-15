@@ -9,11 +9,11 @@ contract, and run either interface.
 
 | Component | Identity/status |
 | --- | --- |
-| Hierarchical router | `spkc83/retail-bank-conversation-router@7f6a0e77ad231233702039560ced007fdc68bd74` |
-| Router dataset | `spkc83/retail-bank-conversation-router-data@80c0edfea84b341d2ee4092f5c4a4bbb05405e40` |
+| Hierarchical router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
+| Router dataset | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
 | Local router artifact | `artifacts/banking-conversation-router-v6-hierarchical`; release eligible |
 | Router dataset rows | train 16,693; validation 4,061; test 4,895 |
-| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
 | Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2ec64ceacc390f5619d246fbca60dcca67f4a83f`; authenticated chat smoke passed |

@@ -10,7 +10,7 @@ examples.
 | Item | Value |
 | --- | --- |
 | Dataset | `spkc83/retail-bank-conversation-router-data` |
-| Immutable revision | `80c0edfea84b341d2ee4092f5c4a4bbb05405e40` |
+| Immutable revision | `2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
 | Local directory | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
 | Train rows | 16,693 |

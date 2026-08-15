@@ -27,10 +27,10 @@ Published identities:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-80c0edfea84b341d2ee4092f5c4a4bbb05405e40
+2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
 
 spkc83/retail-bank-conversation-router
-7f6a0e77ad231233702039560ced007fdc68bd74
+36920330d2502dfcf4d60572eadf1e3e71cd23fa
 ```
 
 ## POC Orchestration

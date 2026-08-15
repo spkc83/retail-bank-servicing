@@ -143,7 +143,7 @@ def test_remote_launchers_resolve_current_bootstraps(
 url="${@: -1}"
 printf '%s\\n' "$url" >> "$CURL_LOG"
 if [[ "$url" == *"hf_job_continue_tool_sft.py" || "$url" == *"cloud_continue_tool_sft.py" ]]; then
-  printf '%s\\n' 'CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"'
+  printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "retail-bank-peft-v6-generation-contract/v1"'
 fi
 [[ "$url" == *"/scripts/retail_bank/"* ]]
 """,
@@ -178,7 +178,7 @@ printf '%s\\n' "$@" > "$HF_LOG"
     assert f"/scripts/retail_bank/{bootstrap}" in submitted_args
 
 
-def test_continuation_launcher_rejects_source_without_candidate5_protocol(
+def test_continuation_launcher_rejects_source_without_v6_protocol(
     tmp_path: Path,
 ) -> None:
     bin_dir = tmp_path / "bin"
@@ -217,7 +217,7 @@ def test_continuation_launcher_rejects_source_without_candidate5_protocol(
     )
 
     assert completed.returncode == 2
-    assert "required candidate5 protocol" in completed.stderr
+    assert "required V6 continuation protocol" in completed.stderr
     assert not hf_log.exists()
 
 
@@ -228,7 +228,8 @@ def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: 
     curl = bin_dir / "curl"
     curl.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' 'CANDIDATE5_PROTOCOL = \"retail-bank-peft-candidate5/v1\"'\n",
+        "printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "
+        '"retail-bank-peft-v6-generation-contract/v1"\'\n',
         encoding="utf-8",
     )
     curl.chmod(0o755)

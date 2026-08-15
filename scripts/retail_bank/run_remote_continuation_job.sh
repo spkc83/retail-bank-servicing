@@ -9,7 +9,7 @@ fi
 source_commit="$1"
 dataset_revision="$2"
 source_adapter_revision="${3:-d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2}"
-destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5}"
+destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract}"
 max_steps="${5:-964}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
 probe_only="${PROBE_ONLY:-0}"
@@ -18,7 +18,7 @@ probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continu
 probe_checkpoint_step="${PROBE_CHECKPOINT_STEP:-600}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_continue_tool_sft.py"
 worker_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/cloud_continue_tool_sft.py"
-output_dir="/data/retail-bank-agent-9b-candidate5-${source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
+output_dir="/data/retail-bank-agent-9b-peft-v6-generation-contract-${source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
 
 if [[ "$probe_only" == "1" ]]; then
   probe_name="${probe_checkpoint_dir##*/}"
@@ -76,13 +76,13 @@ if ! bootstrap_source=$(curl --fail --silent "$script_url"); then
 fi
 
 if ! worker_source=$(curl --fail --silent "$worker_url"); then
-  echo "Could not resolve candidate5 worker: ${worker_url}" >&2
+  echo "Could not resolve V6 continuation worker: ${worker_url}" >&2
   exit 2
 fi
 
-protocol_marker='CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"'
+protocol_marker='V6_CONTINUATION_PROTOCOL = "retail-bank-peft-v6-generation-contract/v1"'
 if [[ "$bootstrap_source" != *"$protocol_marker"* || "$worker_source" != *"$protocol_marker"* ]]; then
-  echo "SOURCE_COMMIT does not implement the required candidate5 protocol." >&2
+  echo "SOURCE_COMMIT does not implement the required V6 continuation protocol." >&2
   exit 2
 fi
 
@@ -98,7 +98,7 @@ job_args=(
   --timeout "$job_timeout"
   --secrets HF_TOKEN
   --volume hf://buckets/spkc83/jobs-artifacts:/data
-  --label project=retail-bank-agent-v5-peft-remediation
+  --label project=retail-bank-agent-v6-generation-contract
   --label source="${source_commit:0:8}"
   --label parent_adapter="${source_adapter_revision:0:8}"
   "$script_url"

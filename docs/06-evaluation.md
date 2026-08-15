@@ -7,8 +7,8 @@ The project has three evaluation layers:
 3. frozen Granite generation plus end-to-end orchestration tests.
 
 The hierarchical router is published at
-`7f6a0e77ad231233702039560ced007fdc68bd74` from data revision
-`80c0edfea84b341d2ee4092f5c4a4bbb05405e40` and passed the router gates reported
+`36920330d2502dfcf4d60572eadf1e3e71cd23fa` from data revision
+`2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` and passed the router gates reported
 in [05-dual-head-router.md](05-dual-head-router.md#held-out-results). Granite
 PEFT evaluation job `6a7f89edc97db76cbdf31893` ran from source
 `42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five
@@ -68,7 +68,7 @@ The canonical V5 dataset is:
 
 ```text
 spkc83/retail-bank-servicing-alignment-sft
-40a0b68b9f746131ffff32a83e077fd7e4a344d1
+9d7aed545604bb42fb02b7a0919427a0ed2b81e2
 ```
 
 The active evaluation composition is:
@@ -76,7 +76,7 @@ The active evaluation composition is:
 ```text
 base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
 adapter:  spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3
-dataset:  spkc83/retail-bank-servicing-alignment-sft@40a0b68b9f746131ffff32a83e077fd7e4a344d1
+dataset:  spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2
 dtype:    BF16 with adapter autocasting disabled
 ```
 
@@ -91,7 +91,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/cloud_generate_tool_eval.py \
   --adapter-repo spkc83/retail-bank-servicing-agent-9b-peft \
   --adapter-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
   --dataset-repo spkc83/retail-bank-servicing-alignment-sft \
-  --dataset-revision 40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  --dataset-revision 9d7aed545604bb42fb02b7a0919427a0ed2b81e2 \
   --manifest data/banking-servicing-alignment-v5/manifest.json \
   --split test \
   --output-dir artifacts/banking-servicing-agent-v5-eval \
@@ -107,7 +107,7 @@ The failed remote evaluation used the same composition:
 bash scripts/retail_bank/run_remote_tool_eval_job.sh \
   42c89ae6d6b6792268b36e2162c4b19688e4e617 \
   cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
-  40a0b68b9f746131ffff32a83e077fd7e4a344d1 \
+  9d7aed545604bb42fb02b7a0919427a0ed2b81e2 \
   bf16
 ```
 

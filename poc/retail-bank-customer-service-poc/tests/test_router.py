@@ -26,7 +26,7 @@ from router import (
 
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "7f6a0e77ad231233702039560ced007fdc68bd74"
+    assert ROUTER_REVISION == "36920330d2502dfcf4d60572eadf1e3e71cd23fa"
 
 
 class FakeTokenizer:
@@ -314,9 +314,10 @@ def test_v4_poc_joint_decoder_matches_core_conflict_resolution() -> None:
     assert result["intent"] == "replace_card"
     assert result["lane"] == "servicing"
     assert result["lane_candidates"][0]["lane"] == "policy"
-    assert "constraint:joint-decoder-resolved-independent-head-conflict" in result[
-        "constraint_diagnostics"
-    ]
+    assert (
+        "constraint:joint-decoder-resolved-independent-head-conflict"
+        in result["constraint_diagnostics"]
+    )
 
 
 def test_v4_joint_decoder_core_and_poc_parity() -> None:

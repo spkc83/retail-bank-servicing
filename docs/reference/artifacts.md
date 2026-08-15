@@ -8,8 +8,8 @@ artifact.
 
 | Artifact | Identity |
 | --- | --- |
-| Hub model | `spkc83/retail-bank-conversation-router@7f6a0e77ad231233702039560ced007fdc68bd74` |
-| Hub dataset | `spkc83/retail-bank-conversation-router-data@80c0edfea84b341d2ee4092f5c4a4bbb05405e40` |
+| Hub model | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
+| Hub dataset | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
 | Local model | `artifacts/banking-conversation-router-v6-hierarchical` |
 | Local dataset | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
@@ -51,7 +51,7 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
 The runtime loads the base and attaches the adapter without merging: BF16 on

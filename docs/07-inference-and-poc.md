@@ -13,7 +13,7 @@ bank data.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@7f6a0e77ad231233702039560ced007fdc68bd74` |
+| Router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
 | Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
@@ -159,7 +159,7 @@ Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=7f6a0e77ad231233702039560ced007fdc68bd74
+ROUTER_REVISION=36920330d2502dfcf4d60572eadf1e3e71cd23fa
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

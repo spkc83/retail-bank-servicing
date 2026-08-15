@@ -12,7 +12,7 @@
 #   "trl==0.26.2",
 # ]
 # ///
-"""Bootstrap exact V5 PEFT-remediation inputs inside a Hugging Face GPU Job."""
+"""Bootstrap exact V6 generation-contract PEFT inputs in a Hugging Face GPU Job."""
 
 from __future__ import annotations
 
@@ -29,11 +29,11 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
-CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"
+V6_CONTINUATION_PROTOCOL = "retail-bank-peft-v6-generation-contract/v1"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
+DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract"
 DEFAULT_PROBE_CHECKPOINT_DIR = (
     "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600"
 )
@@ -50,7 +50,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-adapter-repo", default=ADAPTER_REPO)
     parser.add_argument("--source-adapter-revision", default=DEFAULT_SOURCE_ADAPTER_REVISION)
     parser.add_argument("--destination-repo", default=DEFAULT_DESTINATION_REPO)
-    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate5")
+    parser.add_argument(
+        "--output-dir",
+        default="/data/retail-bank-agent-9b-peft-v6-generation-contract",
+    )
     parser.add_argument("--max-steps", type=int, default=964)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
@@ -111,12 +114,12 @@ def download_source(source_commit: str, destination: Path) -> Path:
     return roots[0]
 
 
-def validate_candidate5_source(source_root: Path) -> None:
+def validate_v6_source(source_root: Path) -> None:
     worker = source_root / "scripts/retail_bank/cloud_continue_tool_sft.py"
-    marker = f'CANDIDATE5_PROTOCOL = "{CANDIDATE5_PROTOCOL}"'
+    marker = f'V6_CONTINUATION_PROTOCOL = "{V6_CONTINUATION_PROTOCOL}"'
     if not worker.is_file() or marker not in worker.read_text(encoding="utf-8"):
         raise RuntimeError(
-            "source commit does not implement the required candidate5 worker protocol"
+            "source commit does not implement the required V6 continuation worker protocol"
         )
 
 
@@ -138,7 +141,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-continuation-") as temp_dir:
         temp_root = Path(temp_dir)
         source_root = download_source(args.source_commit, temp_root / "source")
-        validate_candidate5_source(source_root)
+        validate_v6_source(source_root)
         dataset_root = Path(
             snapshot_download(
                 repo_id=DATASET_REPO,
@@ -154,7 +157,7 @@ def main() -> int:
         env = {
             **os.environ,
             "PYTHONPATH": str(source_root / "src"),
-            "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT": "banking-v5-peft-remediation",
+            "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT": "banking-v6-generation-contract-peft",
             "RETAIL_BANK_SOURCE_COMMIT": args.source_commit,
             "RETAIL_BANK_TOOL_SFT_DATASET_REPO": DATASET_REPO,
             "RETAIL_BANK_TOOL_SFT_DATASET_REVISION": args.dataset_revision,
@@ -203,9 +206,9 @@ def main() -> int:
             "--tool-outcome-multiplier",
             str(args.tool_outcome_multiplier),
             "--trackio-project",
-            "retail-bank-agent-v5-remediation",
+            "retail-bank-agent-v6-generation-contract",
             "--trackio-run-name",
-            f"granite-peft-candidate5-{args.source_commit[:8]}",
+            f"granite-peft-v6-generation-contract-{args.source_commit[:8]}",
         ]
         command.extend(execution_mode_args(args))
         subprocess.run(command, cwd=source_root, env=env, check=True)

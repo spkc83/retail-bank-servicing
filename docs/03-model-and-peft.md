@@ -156,7 +156,7 @@ The active job uses:
 | Base model | `spkc83/retail-bank-servicing-agent-9b` |
 | Base revision | `1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Dataset | `spkc83/retail-bank-servicing-alignment-sft` |
-| Dataset revision | `40a0b68b9f746131ffff32a83e077fd7e4a344d1` |
+| Dataset revision | `9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
 | Policy corpus revision | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 | Training source commit | `75b56ffff45e75ffbee11c0e0552dc35ae124d21` |
 | Hardware | `rtx-pro-6000` |

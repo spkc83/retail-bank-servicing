@@ -121,19 +121,19 @@ def test_job_bootstrap_rejects_source_adapter_repo_and_revision_overrides() -> N
         JOB.validate_source_adapter(JOB.ADAPTER_REPO, "0" * 40)
 
 
-def test_job_bootstrap_rejects_old_candidate4_worker_protocol(tmp_path: Path) -> None:
+def test_job_bootstrap_rejects_pre_v6_worker_protocol(tmp_path: Path) -> None:
     worker = tmp_path / "scripts/retail_bank/cloud_continue_tool_sft.py"
     worker.parent.mkdir(parents=True)
     worker.write_text('CANDIDATE4_PROTOCOL = "legacy"\n', encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="candidate5 worker protocol"):
-        JOB.validate_candidate5_source(tmp_path)
+    with pytest.raises(RuntimeError, match="V6 continuation worker protocol"):
+        JOB.validate_v6_source(tmp_path)
 
     worker.write_text(
-        f'CANDIDATE5_PROTOCOL = "{JOB.CANDIDATE5_PROTOCOL}"\n',
+        f'V6_CONTINUATION_PROTOCOL = "{JOB.V6_CONTINUATION_PROTOCOL}"\n',
         encoding="utf-8",
     )
-    JOB.validate_candidate5_source(tmp_path)
+    JOB.validate_v6_source(tmp_path)
 
 
 def test_continuation_mix_oversamples_paired_coreference_targets() -> None:
@@ -319,7 +319,7 @@ def test_worker_dry_run_exposes_capped_continuation_plan() -> None:
     assert plan["training_parent"] == "pinned d965 adapter"
     assert plan["base_model"] == "spkc83/retail-bank-servicing-agent-9b"
     assert plan["base_revision"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-    assert plan["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
+    assert plan["hub_dest"] == ("spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract")
     assert plan["training"]["max_steps"] == 964
     assert plan["training"]["max_train_seconds"] == 3_600
     assert plan["training"]["learning_rate"] == 2e-6
@@ -328,6 +328,7 @@ def test_worker_dry_run_exposes_capped_continuation_plan() -> None:
     assert plan["training"]["policy_faq_multiplier"] == 4
     assert plan["training"]["tool_outcome_multiplier"] == 6
     assert plan["training"]["seed"] == 20_260_815
+    assert plan["training"]["generation_contract"].startswith("per-record tool exposure")
     assert plan["training"]["selection_gate"] == "two consecutive dev passes"
     assert plan["release"]["format"] == "root-level PEFT adapter"
     assert plan["release"]["merge"] is False
@@ -388,6 +389,9 @@ def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> No
     assert assignments["BASE_MODEL"] == "spkc83/retail-bank-servicing-agent-9b"
     assert assignments["BASE_REVISION"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
     assert assignments["DATASET_REPO"] == "spkc83/retail-bank-servicing-alignment-sft"
+    assert assignments["DEFAULT_DESTINATION_REPO"] == (
+        "spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract"
+    )
     assert "cloud_continue_tool_sft.py" in source
     assert "cloud_train_tool_sft.py" not in source
     assert "--source-adapter-revision" in source
@@ -448,7 +452,7 @@ def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_c
     assert "SOURCE_ADAPTER_REPO must be a Hugging Face repository id" in launcher
     assert "DESTINATION_REPO must differ from the source adapter repository" in launcher
     assert (
-        "retail-bank-agent-9b-candidate5-${source_commit:0:8}-"
+        "retail-bank-agent-9b-peft-v6-generation-contract-${source_commit:0:8}-"
         "${source_adapter_revision:0:8}-${dataset_revision:0:8}"
     ) in launcher
     assert "hf jobs uv run" in launcher
@@ -495,6 +499,44 @@ def test_worker_evaluates_before_atomic_adapter_upload_without_merging() -> None
     assert "CommitOperationAdd" in source
     assert "api.create_commit(" in source
     assert "api.upload_folder(" not in source
+
+
+def test_continuation_behavioral_generation_uses_per_record_tool_contract() -> None:
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    behavior_body = source.split("def generate_coreference_behavior_report", 1)[1].split(
+        "def render_model_card", 1
+    )[0]
+
+    assert "tools=training_tools_for_record(record, adapter)" in behavior_body
+
+
+def test_continuation_contract_resolution_matches_training_with_legacy_fallback() -> None:
+    adapter = SimpleNamespace(
+        public_tool_manifest=[
+            {"name": "freeze_card"},
+            {"name": "list_transactions"},
+        ]
+    )
+    execute = {
+        "expected": {
+            "generation_contract": {
+                "mode": "execute_tool",
+                "tool_names": ["freeze_card"],
+            }
+        }
+    }
+    converse = {
+        "expected": {
+            "generation_contract": {
+                "mode": "converse",
+                "tool_names": [],
+            }
+        }
+    }
+
+    assert WORKER.training_tools_for_record(execute, adapter) == [{"name": "freeze_card"}]
+    assert WORKER.training_tools_for_record(converse, adapter) == []
+    assert WORKER.training_tools_for_record({"expected": {}}, adapter) is None
 
 
 def test_worker_enables_input_grads_for_trainable_peft_checkpointing() -> None:
@@ -688,7 +730,7 @@ def _release_bundle(tmp_path: Path) -> tuple[Any, dict[str, Any], Path, Path]:
     for name in WORKER.ADAPTER_FILES:
         (adapter_dir / name).write_bytes(f"release:{name}".encode())
     result: dict[str, Any] = {
-        "contract": "banking-v5-peft-remediation-result/v1",
+        "contract": "banking-v6-generation-contract-peft-result/v1",
         "worker": "cloud_continue_tool_sft",
         "base_model": WORKER.BASE_MODEL,
         "base_revision": WORKER.BASE_REVISION,
@@ -725,19 +767,19 @@ def _release_bundle(tmp_path: Path) -> tuple[Any, dict[str, Any], Path, Path]:
     metadata_path.write_text(
         json.dumps(
             {
-                "contract": "banking-v5-peft-remediation-metadata/v1",
+                "contract": "banking-v6-generation-contract-peft-metadata/v1",
                 "worker": "cloud_continue_tool_sft",
                 "step": result["steps"],
                 "eval_metrics": result["eval_metrics"],
                 "coreference_behavioral_gate": result["coreference_behavioral_gate"],
                 "shadow_coreference_behavioral_gate": result["shadow_coreference_behavioral_gate"],
                 "fingerprint": {
-                    "contract": "banking-v5-peft-remediation-fingerprint/v1",
+                    "contract": "banking-v6-generation-contract-peft-fingerprint/v1",
                     "source_commit": "a" * 40,
                     "base_model": WORKER.BASE_MODEL,
                     "base_revision": WORKER.BASE_REVISION,
                     "family": "granite",
-                    "training_seed": WORKER.CANDIDATE5_TRAINING_SEED,
+                    "training_seed": WORKER.V6_TRAINING_SEED,
                     "source_adapter": {
                         "repository": WORKER.ADAPTER_REPO,
                         "revision": WORKER.DEFAULT_SOURCE_ADAPTER_REVISION,

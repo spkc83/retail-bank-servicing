@@ -8,7 +8,7 @@ Stop at the first failed prerequisite or release gate.
 ```text
 Router data:
   spkc83/retail-bank-conversation-router-data
-  80c0edfea84b341d2ee4092f5c4a4bbb05405e40
+  2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
 
 Router base:
   distilbert/distilbert-base-uncased
@@ -16,7 +16,7 @@ Router base:
 
 Router release:
   spkc83/retail-bank-conversation-router
-  7f6a0e77ad231233702039560ced007fdc68bd74
+  36920330d2502dfcf4d60572eadf1e3e71cd23fa
 
 Granite PEFT:
   spkc83/retail-bank-servicing-agent-9b-peft
@@ -88,7 +88,7 @@ The training identity is already pinned:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-80c0edfea84b341d2ee4092f5c4a4bbb05405e40
+2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
 ```
 
 For a future dataset, upload its directory and capture the returned commit:
@@ -139,7 +139,7 @@ The release selected epoch 2 and passed every gate.
 Publication requires the exact dataset revision:
 
 ```bash
-ROUTER_DATA_REVISION=80c0edfea84b341d2ee4092f5c4a4bbb05405e40
+ROUTER_DATA_REVISION=2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
 
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
   --dataset-dir data/banking-conversation-router-v6-hierarchical \
@@ -150,7 +150,7 @@ PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
 ```
 
 Capture the returned commit. For this release it is
-`7f6a0e77ad231233702039560ced007fdc68bd74`. Re-read the published
+`36920330d2502dfcf4d60572eadf1e3e71cd23fa`. Re-read the published
 `router_config.json` and confirm `format_version: 4` plus the exact data
 revision.
 
@@ -158,7 +158,7 @@ revision.
 
 ```bash
 export RETAIL_BANK_ROUTER_ID=spkc83/retail-bank-conversation-router
-export RETAIL_BANK_ROUTER_REVISION=7f6a0e77ad231233702039560ced007fdc68bd74
+export RETAIL_BANK_ROUTER_REVISION=36920330d2502dfcf4d60572eadf1e3e71cd23fa
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
@@ -178,7 +178,7 @@ exposed tool schema, model passes, and immutable revisions.
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=7f6a0e77ad231233702039560ced007fdc68bd74
+ROUTER_REVISION=36920330d2502dfcf4d60572eadf1e3e71cd23fa
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
