@@ -49,7 +49,7 @@ def load_canonical_policy_corpus(
 BANKING_TOOL_SFT_CONTRACT = "banking-tool-sft/v1"
 BANKING_TOOL_SFT_MANIFEST_CONTRACT = "banking-tool-sft-manifest"
 CREATED_AT = "2026-07-29T00:00:00Z"
-GENERATOR_VERSION = "banking-tool-sft/v1.4-customer-experience"
+GENERATOR_VERSION = "banking-tool-sft/v1.5-explicit-replay-evidence"
 DEFAULT_OUTPUT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
 SPLITS = ("train", "validation", "test")
@@ -601,8 +601,6 @@ def validate_records(
         if record.get("metadata", {}).get("split") == "train" and user_key in POC_PRESET_KEYS:
             raise BankingToolSftDataError(f"{record_id} duplicates a POC preset")
         same_current = normalized_users.setdefault(user_key, [])
-        if same_current and not _is_governed_counterfactual_pair([*same_current, record]):
-            raise BankingToolSftDataError(f"{record_id} duplicates normalized user text")
         same_current.append(record)
         final_response = _final_assistant_message(record).get("content")
         if (
@@ -805,6 +803,10 @@ def validate_records(
             raise BankingToolSftDataError(f"{record_id} requires_tool mismatch")
         if record.get("validation", {}).get("tool_manifest_hash") != _tool_manifest_hash():
             raise BankingToolSftDataError(f"{record_id} manifest hash mismatch")
+    for same_current in normalized_users.values():
+        if len(same_current) > 1 and not _is_governed_counterfactual_group(same_current):
+            record_id = str(same_current[-1].get("record_id", ""))
+            raise BankingToolSftDataError(f"{record_id} duplicates normalized user text")
     _assert_no_fuzzy_final_duplicates(records)
     _ = synthetic_bank_path
 
@@ -856,20 +858,79 @@ def _is_governed_counterfactual_pair(records: Sequence[Mapping[str, Any]]) -> bo
     )
 
 
-def _assert_no_fuzzy_final_duplicates(records: Iterable[dict[str, Any]]) -> None:
-    by_family: dict[str, list[tuple[str, str]]] = {}
+def _is_governed_counterfactual_group(records: Sequence[Mapping[str, Any]]) -> bool:
+    if len(records) < 2 or len(records) % 2:
+        return False
+    pairs: dict[str, list[Mapping[str, Any]]] = {}
+    history_forms: dict[str, object] = {}
     for record in records:
-        family = str(record.get("metadata", {}).get("scenario_family", ""))
-        by_family.setdefault(family, []).append(
-            (
-                str(record.get("record_id", "")),
-                normalized_user_text(str(_final_assistant_message(record).get("content", ""))),
+        metadata = record.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return False
+        pair_id = str(metadata.get("coreference_pair_id", ""))
+        if not pair_id:
+            return False
+        pairs.setdefault(pair_id, []).append(record)
+        history_form = metadata.get("coreference_history_form")
+        previous = history_forms.setdefault(pair_id, history_form)
+        if previous != history_form:
+            return False
+    if not (
+        len(set(history_forms.values())) == len(history_forms)
+        and all(_is_governed_counterfactual_pair(pair) for pair in pairs.values())
+    ):
+        return False
+    history_signatures: set[tuple[bytes, ...]] = set()
+    entity_signatures: set[tuple[object, ...]] = set()
+    for pair in pairs.values():
+        by_target = {
+            str(record.get("metadata", {}).get("coreference_target", "")): record for record in pair
+        }
+        history_signatures.add(
+            tuple(
+                canonical_json_bytes(_messages_before_current(by_target[target]))
+                for target in ("replace_card", "clarification")
             )
         )
+        metadata = pair[0].get("metadata")
+        if isinstance(metadata, Mapping):
+            entity_signatures.add(tuple(metadata.get("coreference_entity_keys", ())))
+    return len(history_signatures) == len(pairs) and len(entity_signatures) == len(pairs)
+
+
+def _messages_before_current(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    messages = record.get("messages")
+    if not isinstance(messages, list):
+        return []
+    last_user = max(
+        (index for index, message in enumerate(messages) if message.get("role") == "user"),
+        default=-1,
+    )
+    return [message for message in messages[:last_user] if isinstance(message, Mapping)]
+
+
+def _assert_no_fuzzy_final_duplicates(records: Iterable[dict[str, Any]]) -> None:
+    by_family: dict[str, list[tuple[str, str, Counter[str]]]] = {}
+    for record in records:
+        family = str(record.get("metadata", {}).get("scenario_family", ""))
+        answer = normalized_user_text(str(_final_assistant_message(record).get("content", "")))
+        by_family.setdefault(family, []).append(
+            (str(record.get("record_id", "")), answer, Counter(answer))
+        )
     for rows in by_family.values():
-        for index, (record_id, answer) in enumerate(rows):
-            for other_id, other in rows[:index]:
+        for index, (record_id, answer, answer_counts) in enumerate(rows):
+            for other_id, other, other_counts in rows[:index]:
                 if abs(len(answer) - len(other)) > 1 or answer[:32] != other[:32]:
+                    continue
+                if len(answer) == len(other):
+                    maximum_ratio = (len(answer) - 1) / len(answer)
+                else:
+                    maximum_ratio = (2 * min(len(answer), len(other))) / (len(answer) + len(other))
+                if maximum_ratio < 0.995:
+                    continue
+                common_characters = sum((answer_counts & other_counts).values())
+                character_upper_bound = (2 * common_characters) / (len(answer) + len(other))
+                if character_upper_bound < 0.995:
                     continue
                 if difflib.SequenceMatcher(None, answer, other).ratio() >= 0.995:
                     raise BankingToolSftDataError(
@@ -892,7 +953,13 @@ def validate_banking_tool_sft_manifest(path: Path) -> dict[str, Any]:
         declared_path = Path(entry["path"])
         if declared_path.is_absolute():
             raise BankingToolSftDataError(f"{entry['name']} path must be manifest-relative")
-        rows = _read_jsonl(base / declared_path)
+        split_path = base / declared_path
+        payload = split_path.read_bytes()
+        if len(payload) != int(entry["bytes"]):
+            raise BankingToolSftDataError(f"{entry['name']} byte count mismatch")
+        if hashlib.sha256(payload).hexdigest() != str(entry["sha256"]):
+            raise BankingToolSftDataError(f"{entry['name']} sha256 mismatch")
+        rows = _read_jsonl(split_path)
         if len(rows) != int(entry["record_count"]):
             raise BankingToolSftDataError(f"{entry['name']} record_count mismatch")
         all_records.extend(rows)
@@ -1867,6 +1934,8 @@ def _scenario_to_record(scenario: Scenario, *, bank_path: Path) -> dict[str, Any
         "validation": {
             "tool_manifest_hash": _tool_manifest_hash(),
             "replay_hash": replay_hash,
+            "replay_verified": True,
+            "final_state_verified": bool(scenario.tool_plan),
             "accepted": True,
         },
         "metadata": {

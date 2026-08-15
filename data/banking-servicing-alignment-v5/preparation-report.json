@@ -1,10 +1,10 @@
 {
   "alignment_split_counts": {
     "test": 35,
-    "train": 768,
+    "train": 1312,
     "validation": 200
   },
-  "base_manifest_sha256": "1290c8787dcf06df9c594aed9d483588613ba86f7db1b72ccaef9f4cb5680fe9",
+  "base_manifest_sha256": "b07e5acd65165441d5e57c1a4164a6620ac6f59e9ccb1cbb501706f3e2c85327",
   "base_split_counts": {
     "test": 180,
     "train": 841,
@@ -13,12 +13,12 @@
   "contract": "banking-servicing-alignment-sft-report",
   "coreference_pair_counts": {
     "test": 0,
-    "train": 48,
+    "train": 320,
     "validation": 16
   },
   "created_at": "2026-07-31T00:00:00Z",
-  "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets",
-  "generator_version": "banking-servicing-alignment-sft/v5.4-decorrelated-coreference",
+  "duplicate_current_policy": "only declared two-record coreference pairs with opposite targets; a normalized current may group multiple pairs only across distinct history forms",
+  "generator_version": "banking-servicing-alignment-sft/v5.6-unverified-replay-quarantine",
   "heldout_exact_currents_in_train": [],
   "heldout_long_ngram_leaks_in_train": [],
   "path_counts": {
@@ -28,8 +28,8 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "clarification": 80,
-      "multi_turn": 496,
+      "clarification": 352,
+      "multi_turn": 768,
       "ood": 32,
       "retrieval_grounded_policy": 32,
       "tool_error": 64,
@@ -60,8 +60,8 @@
       "banking_topic_shift": 32,
       "card_anaphora_action": 64,
       "clarification_answer": 64,
-      "deictic_replace_action": 48,
-      "deictic_replace_ambiguity": 48,
+      "deictic_replace_action": 320,
+      "deictic_replace_ambiguity": 320,
       "external_topic_shift": 32,
       "history_entity_action": 128,
       "history_entity_ambiguity": 32,
@@ -88,7 +88,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 1609,
+    "train": 2153,
     "validation": 379
   }
 }

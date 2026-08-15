@@ -13,8 +13,10 @@ from typing import Any
 import pytest
 
 import hello_slm.banking_servicing_alignment_data as alignment_data
+import hello_slm.banking_tool_sft_data as tool_sft_data
 from hello_slm.banking_servicing_alignment_data import (
     SCREENSHOT_HELDOUT_CURRENTS,
+    build_coreference_shadow_gate,
     build_servicing_alignment_splits,
     load_base_sft_splits,
     validate_servicing_alignment_splits,
@@ -58,15 +60,19 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 768,
+        "train": 1312,
         "validation": 200,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
-        "train": 48,
+        "train": 320,
         "validation": 16,
         "test": 0,
     }
+    assert report["duplicate_current_policy"] == (
+        "only declared two-record coreference pairs with opposite targets; "
+        "a normalized current may group multiple pairs only across distinct history forms"
+    )
     train_families = Counter(record["metadata"]["scenario_family"] for record in splits["train"])
     assert train_families == {
         "service_case_context": 64,
@@ -80,8 +86,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
         "tool_outcome_consistency": 128,
-        "deictic_replace_action": 48,
-        "deictic_replace_ambiguity": 48,
+        "deictic_replace_action": 320,
+        "deictic_replace_ambiguity": 320,
     }
     service_case_records = [
         record
@@ -212,7 +218,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         for split in ("train", "validation")
     }
 
-    assert len(curricula["train"]) == 96
+    assert len(curricula["train"]) == 640
     assert len(curricula["validation"]) == 32
     for split, rows in curricula.items():
         action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
@@ -252,7 +258,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         pairs: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             pairs.setdefault(row["metadata"]["coreference_pair_id"], []).append(row)
-        assert len(pairs) == (48 if split == "train" else 16)
+        assert len(pairs) == (320 if split == "train" else 16)
         for pair_rows in pairs.values():
             assert len(pair_rows) == 2
             assert {_last_user(row) for row in pair_rows} == {_last_user(pair_rows[0])}
@@ -263,7 +269,16 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
             assert {row["metadata"]["actionable_card_count"] for row in pair_rows} == {1, 2}
 
         assert "selected" not in json.dumps(rows, ensure_ascii=False).lower()
-        pair_text = json.dumps(rows, ensure_ascii=False).lower()
+        pair_text = json.dumps(
+            [
+                {
+                    "messages": row["messages"],
+                    "coreference_entity_keys": row["metadata"]["coreference_entity_keys"],
+                }
+                for row in rows
+            ],
+            ensure_ascii=False,
+        ).lower()
         assert "one active" not in pair_text
         assert "two active" not in pair_text
         assert "4821" not in pair_text
@@ -286,11 +301,20 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
             assert len({row["metadata"]["coreference_tier"] for row in same_form}) == 4
         for family in {row["metadata"]["coreference_phrase_family"] for row in action_rows}:
             same_family = [
-                row
-                for row in action_rows
-                if row["metadata"]["coreference_phrase_family"] == family
+                row for row in action_rows if row["metadata"]["coreference_phrase_family"] == family
             ]
-            assert len({row["metadata"]["coreference_product"] for row in same_family}) == 4
+            if split == "train":
+                assert {
+                    (
+                        row["metadata"]["coreference_prompt_form"],
+                        row["metadata"]["coreference_history_form"],
+                    )
+                    for row in same_family
+                } == {(prompt, history) for prompt in range(4) for history in range(4)}
+                assert len({row["metadata"]["coreference_product"] for row in same_family}) >= 8
+                assert len({row["metadata"]["coreference_tier"] for row in same_family}) == 4
+            else:
+                assert len({row["metadata"]["coreference_product"] for row in same_family}) == 4
 
     train_entities = {
         entity
@@ -313,7 +337,7 @@ def test_duplicate_current_requires_one_declared_opposite_target_pair() -> None:
     pair = [
         deepcopy(row)
         for row in splits["train"]
-        if row["metadata"].get("coreference_pair_id") == "coreference-train-that-card-0"
+        if row["metadata"].get("coreference_pair_id") == "coreference-train-that-card-0-0"
     ]
     assert len(pair) == 2
     validate_records(pair)
@@ -325,7 +349,23 @@ def test_duplicate_current_requires_one_declared_opposite_target_pair() -> None:
         validate_records(pair)
 
 
-def test_candidate4_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
+def test_grouped_counterfactual_rejects_forged_history_metadata() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    pair = [
+        deepcopy(row)
+        for row in splits["train"]
+        if row["metadata"].get("coreference_pair_id") == "coreference-train-that-card-0-0"
+    ]
+    forged = deepcopy(pair)
+    for index, row in enumerate(forged):
+        row["record_id"] = f"forged-history-{index}"
+        row["metadata"]["coreference_pair_id"] = "forged-history-pair"
+        row["metadata"]["coreference_history_form"] = 1
+
+    assert tool_sft_data._is_governed_counterfactual_group([*pair, *forged]) is False
+
+
+def test_candidate5_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
     _base_manifest, base_splits = load_base_sft_splits()
     alignment_splits, _report = build_servicing_alignment_splits()
     rows = [*base_splits["test"], *alignment_splits["test"]]
@@ -342,6 +382,49 @@ def test_candidate4_preserves_all_215_test_behavior_fields_byte_equivalent() -> 
     assert hashlib.sha256(encoded).hexdigest() == (
         "4ac64ad9177273edb19c0752f94b71da51337b388cffe8cd03b5a9d9718c186e"
     )
+
+
+def test_alignment_rows_quarantine_unverified_replay_claims() -> None:
+    splits, _report = build_servicing_alignment_splits()
+
+    for record in (row for rows in splits.values() for row in rows):
+        validation = record["validation"]
+        assert validation["accepted"] is False
+        assert validation["schema_accepted"] is True
+        assert validation["replay_hash"] is None
+        assert validation["replay_verified"] is False
+        assert validation["final_state_verified"] is False
+
+
+def test_candidate5_shadow_gate_is_untouched_and_isolated() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    shadow = build_coreference_shadow_gate()
+
+    assert len(shadow) == 32
+    assert len({row["metadata"]["coreference_pair_id"] for row in shadow}) == 16
+    assert {row["metadata"]["coreference_target"] for row in shadow} == {
+        "replace_card",
+        "clarification",
+    }
+    assert all(row["metadata"]["trainable"] is False for row in shadow)
+    shadow_entities = {
+        entity for row in shadow for entity in row["metadata"]["coreference_entity_keys"]
+    }
+    governed_entities = {
+        entity
+        for split in ("train", "validation")
+        for row in splits[split]
+        for entity in row["metadata"].get("coreference_entity_keys", ())
+    }
+    assert shadow_entities.isdisjoint(governed_entities)
+    shadow_families = {row["metadata"]["coreference_phrase_family"] for row in shadow}
+    governed_families = {
+        row["metadata"]["coreference_phrase_family"]
+        for split in ("train", "validation")
+        for row in splits[split]
+        if "coreference_phrase_family" in row["metadata"]
+    }
+    assert shadow_families.isdisjoint(governed_families)
 
 
 def test_v5_alignment_adds_policy_detour_resume_and_unique_targets() -> None:
@@ -382,7 +465,7 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 768,
+        "train": 1312,
         "validation": 200,
         "test": 35,
     }
@@ -397,6 +480,18 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
         "validation",
         "test",
     }
+    assert manifest["behavioral_gates"] == [
+        {
+            "name": "coreference-shadow",
+            "path": "coreference-shadow.jsonl",
+            "record_count": 32,
+            "pair_count": 16,
+            "sha256": manifest["behavioral_gates"][0]["sha256"],
+            "bytes": manifest["behavioral_gates"][0]["bytes"],
+            "allowed_use": ["post-selection-evaluation-once"],
+            "trainable": False,
+        }
+    ]
     for entry in manifest["tool_sft"]:
         path = tmp_path / "alignment" / entry["path"]
         assert path.is_file()
@@ -406,6 +501,19 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     assert report["pii_matches"] == 0
     assert report["heldout_exact_currents_in_train"] == []
     assert validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json") == manifest
+
+    train_path = tmp_path / "alignment" / "train.jsonl"
+    original_train = train_path.read_bytes()
+    lines = original_train.splitlines(keepends=True)
+    lines[0], lines[1] = lines[1], lines[0]
+    train_path.write_bytes(b"".join(lines))
+    with pytest.raises(BankingToolSftDataError, match="train sha256 mismatch"):
+        validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json")
+    mutated_train = bytearray(original_train)
+    mutated_train[0] = ord("[") if mutated_train[0] != ord("[") else ord("{")
+    train_path.write_bytes(mutated_train)
+    with pytest.raises(BankingToolSftDataError, match="train sha256 mismatch"):
+        validate_banking_tool_sft_manifest(tmp_path / "alignment" / "manifest.json")
 
 
 def test_release_lock_detects_split_drift(tmp_path: Path) -> None:

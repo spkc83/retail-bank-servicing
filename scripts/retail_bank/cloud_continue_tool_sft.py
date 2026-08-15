@@ -57,23 +57,24 @@ from cloud_train_tool_sft import (  # type: ignore[import-not-found]
     tokenize_records,
 )
 from hello_slm.banking_tool_wire import ToolWireAdapter
+from hello_slm.banking_tool_sft_data import validate_banking_tool_sft_manifest
 
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT"
 REMOTE_CONFIRMATION_VALUE = "banking-v5-peft-remediation"
+CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
+DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
 DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
-DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate4"
+DEFAULT_OUTPUT_DIR = "/data/retail-bank-agent-9b-peft-v5-candidate5"
 DEFAULT_PROBE_CHECKPOINT_DIR = (
-    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/"
-    "trainer/checkpoint-600"
+    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600"
 )
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
-CANDIDATE4_TRAINING_SEED = 20_260_814
+CANDIDATE5_TRAINING_SEED = 20_260_815
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
 ADAPTER_FILES = (
     "adapter_config.json",
@@ -83,6 +84,7 @@ ADAPTER_FILES = (
     "tokenizer_config.json",
     "training_args.bin",
 )
+PUBLICATION_BUNDLE_FILE = "publication_bundle_manifest.json"
 POLICY_FAQ_FAMILIES = frozenset(
     {
         "faq_mortgage",
@@ -106,6 +108,7 @@ class ContinuationConfig:
     family: str
     hub_dest: str
     probe_only: bool
+    publish_only: bool
     probe_checkpoint_dir: Path
     probe_checkpoint_step: int
     max_steps: int
@@ -126,6 +129,32 @@ class ContinuationConfig:
     trackio_run_name: str | None
 
 
+@dataclass
+class ConsecutiveGateTracker:
+    required_passes: int = 2
+    last_step: int | None = None
+    consecutive_passes: int = 0
+    first_passing_step: int | None = None
+    selected_step: int | None = None
+
+    def observe(self, *, step: int, passed: bool) -> bool:
+        if self.last_step == step:
+            return False
+        self.last_step = step
+        if not passed:
+            self.consecutive_passes = 0
+            return False
+        if self.first_passing_step is None:
+            self.first_passing_step = step
+        self.consecutive_passes += 1
+        if self.consecutive_passes < self.required_passes:
+            return False
+        if self.selected_step is None:
+            self.selected_step = step
+            return True
+        return False
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
@@ -136,18 +165,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-revision", default=BASE_REVISION)
     parser.add_argument("--family", choices=("granite",), default="granite")
     parser.add_argument("--hub-dest", default=DEFAULT_HUB_DEST)
-    parser.add_argument("--max-steps", type=int, default=600)
+    parser.add_argument("--max-steps", type=int, default=964)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--max-seq-len", type=int, default=2048)
-    parser.add_argument("--learning-rate", type=float, default=3e-6)
+    parser.add_argument("--learning-rate", type=float, default=2e-6)
     parser.add_argument("--checkpoint-every", type=int, default=50)
-    parser.add_argument("--positive-multiplier", type=int, default=10)
-    parser.add_argument("--ambiguity-multiplier", type=int, default=5)
+    parser.add_argument("--positive-multiplier", type=int, default=2)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=1)
     parser.add_argument("--policy-faq-multiplier", type=int, default=4)
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--publish-only", action="store_true")
     parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
     parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
     parser.add_argument("--dry-run", action="store_true", default=True)
@@ -170,6 +200,7 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         family=str(args.family),
         hub_dest=str(args.hub_dest),
         probe_only=bool(args.probe_only),
+        publish_only=bool(args.publish_only),
         probe_checkpoint_dir=Path(args.probe_checkpoint_dir),
         probe_checkpoint_step=int(args.probe_checkpoint_step),
         max_steps=int(args.max_steps),
@@ -210,6 +241,13 @@ def validate_pinned_model_inputs(config: ContinuationConfig) -> None:
         raise RuntimeError("source adapter repository must use owner/name form")
     if config.base_model != BASE_MODEL or config.base_revision != BASE_REVISION:
         raise RuntimeError(f"base must be exactly {BASE_MODEL}@{BASE_REVISION}")
+    if (
+        config.source_adapter_repo != ADAPTER_REPO
+        or config.source_adapter_revision != DEFAULT_SOURCE_ADAPTER_REVISION
+    ):
+        raise RuntimeError(
+            f"source adapter must be exactly {ADAPTER_REPO}@{DEFAULT_SOURCE_ADAPTER_REVISION}"
+        )
     require_exact_revision(config.source_adapter_revision, field="--source-adapter-revision")
     require_exact_revision(config.base_revision, field="--base-revision")
 
@@ -395,6 +433,7 @@ def validate_source_checkpoint(path: Path, *, expected_step: int) -> dict[str, A
 
 
 def dataset_identity(manifest_path: Path) -> dict[str, str]:
+    validate_banking_tool_sft_manifest(manifest_path)
     repository = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REPO", "")
     revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
     if repository != DATASET_REPO:
@@ -408,6 +447,38 @@ def dataset_identity(manifest_path: Path) -> dict[str, str]:
         "revision": revision,
         "manifest_sha256": manifest_sha256,
     }
+
+
+def load_shadow_gate_records(manifest_path: Path) -> list[dict[str, Any]]:
+    manifest = read_json(manifest_path)
+    gates = manifest.get("behavioral_gates")
+    if not isinstance(gates, list):
+        raise RuntimeError("dataset manifest is missing behavioral_gates")
+    matches = [gate for gate in gates if gate.get("name") == "coreference-shadow"]
+    if len(matches) != 1 or not isinstance(matches[0], Mapping):
+        raise RuntimeError("dataset manifest must contain one coreference-shadow gate")
+    gate = matches[0]
+    if gate.get("allowed_use") != ["post-selection-evaluation-once"]:
+        raise RuntimeError("coreference shadow gate has an invalid allowed_use contract")
+    if gate.get("trainable") is not False:
+        raise RuntimeError("coreference shadow gate must be non-trainable")
+    path = manifest_path.parent / str(gate.get("path", ""))
+    expected_sha = require_sha256(gate.get("sha256"), field="shadow gate SHA256")
+    if not path.is_file() or sha256(path) != expected_sha:
+        raise RuntimeError("coreference shadow gate digest mismatch")
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    if len(records) != gate.get("record_count") or len(records) != 32:
+        raise RuntimeError("coreference shadow gate must contain exactly 32 records")
+    invalid_trainability = [
+        str(record.get("record_id", ""))
+        for record in records
+        if record.get("metadata", {}).get("trainable") is not False
+    ]
+    if invalid_trainability:
+        raise RuntimeError(
+            f"coreference shadow rows must set metadata.trainable=false: {invalid_trainability}"
+        )
+    return records
 
 
 def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
@@ -440,7 +511,9 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "ambiguity_multiplier": config.ambiguity_multiplier,
             "policy_faq_multiplier": config.policy_faq_multiplier,
             "tool_outcome_multiplier": config.tool_outcome_multiplier,
-            "seed": CANDIDATE4_TRAINING_SEED,
+            "seed": CANDIDATE5_TRAINING_SEED,
+            "selection_gate": "two consecutive dev passes",
+            "shadow_gate": "one post-selection evaluation; never used for adaptation",
             "retained_regression_mix": [
                 "single-tool",
                 "tool-error",
@@ -494,9 +567,9 @@ def build_training_args(config: ContinuationConfig) -> Any:
         optim="adamw_torch_fused",
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
-        seed=CANDIDATE4_TRAINING_SEED,
-        data_seed=CANDIDATE4_TRAINING_SEED,
-        run_name=config.trackio_run_name or "granite-peft-v5-candidate4",
+        seed=CANDIDATE5_TRAINING_SEED,
+        data_seed=CANDIDATE5_TRAINING_SEED,
+        run_name=config.trackio_run_name or "granite-peft-v5-candidate5",
         push_to_hub=False,
     )
 
@@ -554,6 +627,8 @@ def continuation_fingerprint(
 ) -> dict[str, Any]:
     source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
     require_exact_revision(source_commit, field="source commit")
+    dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
+    require_exact_revision(dataset_revision, field="dataset revision")
     return {
         "contract": "banking-v5-peft-remediation-fingerprint/v1",
         "source_commit": source_commit,
@@ -568,7 +643,7 @@ def continuation_fingerprint(
         },
         "dataset_identity": dict(dataset),
         "template_hash": adapter.template_hash,
-        "training_seed": CANDIDATE4_TRAINING_SEED,
+        "training_seed": CANDIDATE5_TRAINING_SEED,
         "continuation": {
             "max_steps": config.max_steps,
             "max_train_seconds": config.max_train_seconds,
@@ -857,6 +932,176 @@ def json_bytes(payload: Mapping[str, Any]) -> bytes:
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
 
 
+def destination_repo_state(api: Any, repo_id: str) -> str:
+    from huggingface_hub.errors import RepositoryNotFoundError  # type: ignore[import-not-found]
+
+    try:
+        api.repo_info(repo_id=repo_id, repo_type="model")
+    except RepositoryNotFoundError:
+        return "absent"
+    files = list(api.list_repo_files(repo_id=repo_id, repo_type="model"))
+    return "empty" if not files else "nonempty"
+
+
+def require_publishable_destination(api: Any, repo_id: str) -> str:
+    state = destination_repo_state(api, repo_id)
+    if state == "nonempty":
+        raise RuntimeError(f"destination model repository is not empty: {repo_id}")
+    return state
+
+
+def preflight_destination_repo(config: ContinuationConfig) -> str:
+    from huggingface_hub import HfApi  # type: ignore[import-not-found]
+
+    api = HfApi(token=os.environ["HF_TOKEN"])
+    return require_publishable_destination(api, config.hub_dest)
+
+
+def validate_release_file_hashes(result: Mapping[str, Any], adapter_dir: Path) -> None:
+    actual_adapter_sha = sha256(adapter_dir / "adapter_model.safetensors")
+    expected_adapter_sha = require_sha256(result.get("adapter_sha256"), field="adapter SHA256")
+    if actual_adapter_sha != expected_adapter_sha:
+        raise RuntimeError("adapter digest changed before atomic publication")
+    declared_files = result.get("release_file_sha256", {})
+    if not isinstance(declared_files, Mapping):
+        raise RuntimeError("release_file_sha256 must be an object when present")
+    for name, declared_sha in declared_files.items():
+        if name not in ADAPTER_FILES:
+            raise RuntimeError(f"release hash declares an unsupported file: {name}")
+        expected_sha = require_sha256(declared_sha, field=f"release file {name} SHA256")
+        if sha256(adapter_dir / name) != expected_sha:
+            raise RuntimeError(f"release file digest mismatch: {name}")
+
+
+def write_publication_bundle_manifest(
+    config: ContinuationConfig,
+    *,
+    result_path: Path,
+    metadata_path: Path,
+) -> Path:
+    source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
+    require_exact_revision(source_commit, field="source commit")
+    dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
+    require_exact_revision(dataset_revision, field="dataset revision")
+    adapter_dir = config.output_dir / "adapter"
+    files = {
+        result_path.name: sha256(result_path),
+        metadata_path.name: sha256(metadata_path),
+        **{f"adapter/{name}": sha256(adapter_dir / name) for name in ADAPTER_FILES},
+    }
+    manifest = {
+        "contract": "banking-v5-publication-bundle/v1",
+        "candidate_protocol": CANDIDATE5_PROTOCOL,
+        "source_commit": source_commit,
+        "dataset_revision": dataset_revision,
+        "source_adapter_repo": config.source_adapter_repo,
+        "source_adapter_revision": config.source_adapter_revision,
+        "base_model": config.base_model,
+        "base_revision": config.base_revision,
+        "destination_repo": config.hub_dest,
+        "files": files,
+    }
+    path = config.output_dir / PUBLICATION_BUNDLE_FILE
+    write_json(path, manifest)
+    return path
+
+
+def validate_publication_bundle(
+    config: ContinuationConfig,
+    *,
+    source_commit: str,
+    dataset_revision: str,
+) -> tuple[dict[str, Any], Path, Path, Path]:
+    require_exact_revision(source_commit, field="source commit")
+    require_exact_revision(dataset_revision, field="dataset revision")
+    root = config.output_dir
+    result_path = root / "continuation_training_result.json"
+    metadata_path = root / "continuation_training_metadata.json"
+    bundle_path = root / PUBLICATION_BUNDLE_FILE
+    required = [result_path, metadata_path, bundle_path]
+    required.extend(root / "adapter" / name for name in ADAPTER_FILES)
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"publication recovery bundle is incomplete: {missing}")
+    bundle = read_json(bundle_path)
+    expected_identity = {
+        "contract": "banking-v5-publication-bundle/v1",
+        "candidate_protocol": CANDIDATE5_PROTOCOL,
+        "source_commit": source_commit,
+        "dataset_revision": dataset_revision,
+        "source_adapter_repo": config.source_adapter_repo,
+        "source_adapter_revision": config.source_adapter_revision,
+        "base_model": config.base_model,
+        "base_revision": config.base_revision,
+        "destination_repo": config.hub_dest,
+    }
+    mismatches = [key for key, value in expected_identity.items() if bundle.get(key) != value]
+    if mismatches:
+        raise RuntimeError(f"publication recovery bundle identity mismatch: {mismatches}")
+    declared = bundle.get("files")
+    if not isinstance(declared, Mapping):
+        raise RuntimeError("publication recovery bundle is missing file digests")
+    expected_paths = {
+        result_path.name: result_path,
+        metadata_path.name: metadata_path,
+        **{f"adapter/{name}": root / "adapter" / name for name in ADAPTER_FILES},
+    }
+    if set(declared) != set(expected_paths):
+        raise RuntimeError("publication recovery bundle file set mismatch")
+    for name, path in expected_paths.items():
+        expected_sha = require_sha256(declared[name], field=f"bundle file {name} SHA256")
+        if sha256(path) != expected_sha:
+            raise RuntimeError(f"publication recovery bundle digest mismatch: {name}")
+    result = read_json(result_path)
+    metadata = read_json(metadata_path)
+    fingerprint = metadata.get("fingerprint")
+    if not isinstance(fingerprint, Mapping):
+        raise RuntimeError("publication recovery metadata is missing its fingerprint")
+    dataset = result.get("dataset_identity")
+    if not isinstance(dataset, Mapping):
+        raise RuntimeError("publication recovery result is missing dataset identity")
+    source_adapter = fingerprint.get("source_adapter")
+    publication = result.get("publication")
+    if (
+        result.get("contract") != "banking-v5-peft-remediation-result/v1"
+        or result.get("worker") != "cloud_continue_tool_sft"
+        or metadata.get("contract") != "banking-v5-peft-remediation-metadata/v1"
+        or metadata.get("worker") != "cloud_continue_tool_sft"
+        or metadata.get("step") != result.get("steps")
+        or metadata.get("eval_metrics") != result.get("eval_metrics")
+        or metadata.get("coreference_behavioral_gate") != result.get("coreference_behavioral_gate")
+        or metadata.get("shadow_coreference_behavioral_gate")
+        != result.get("shadow_coreference_behavioral_gate")
+        or result.get("source_adapter_repo") != config.source_adapter_repo
+        or result.get("source_adapter_revision") != config.source_adapter_revision
+        or result.get("base_model") != config.base_model
+        or result.get("base_revision") != config.base_revision
+        or result.get("pushed_to_hub") != config.hub_dest
+        or result.get("published_adapter_revision") is not None
+        or result.get("merged_model") is not None
+        or publication
+        != {
+            "requested": True,
+            "destination_repo": config.hub_dest,
+            "atomic_bundle": True,
+        }
+        or dataset.get("repository") != DATASET_REPO
+        or dataset.get("revision") != dataset_revision
+        or fingerprint.get("source_commit") != source_commit
+        or fingerprint.get("dataset_identity") != dataset
+        or fingerprint.get("base_model") != config.base_model
+        or fingerprint.get("base_revision") != config.base_revision
+        or fingerprint.get("family") != config.family
+        or fingerprint.get("training_seed") != CANDIDATE5_TRAINING_SEED
+        or not isinstance(source_adapter, Mapping)
+        or source_adapter.get("repository") != config.source_adapter_repo
+        or source_adapter.get("revision") != config.source_adapter_revision
+    ):
+        raise RuntimeError("publication recovery result or metadata identity mismatch")
+    validate_release_file_hashes(result, root / "adapter")
+    return result, result_path, metadata_path, bundle_path
+
+
 def upload_release(
     config: ContinuationConfig,
     *,
@@ -881,16 +1126,25 @@ def upload_release(
     if not isinstance(behavioral_gate, Mapping):
         raise RuntimeError("training result is missing the coreference behavioral gate")
     validate_coreference_behavioral_gate(behavioral_gate)
+    shadow_gate = result.get("shadow_coreference_behavioral_gate")
+    if not isinstance(shadow_gate, Mapping):
+        raise RuntimeError("training result is missing the shadow coreference gate")
+    validate_coreference_behavioral_gate(shadow_gate)
+    if result.get("consecutive_dev_passes") != 2:
+        raise RuntimeError("training result must record two consecutive passing dev gates")
     if read_json(result_path) != dict(result):
         raise RuntimeError("training result file does not match the atomic release payload")
-    api = HfApi(token=os.environ["HF_TOKEN"])
-    api.create_repo(
-        config.hub_dest,
-        repo_type="model",
-        private=False,
-        exist_ok=False,
-    )
     adapter_dir = config.output_dir / "adapter"
+    validate_release_file_hashes(result, adapter_dir)
+    api = HfApi(token=os.environ["HF_TOKEN"])
+    destination_state = require_publishable_destination(api, config.hub_dest)
+    if destination_state == "absent":
+        api.create_repo(
+            config.hub_dest,
+            repo_type="model",
+            private=False,
+            exist_ok=False,
+        )
     operations = [
         CommitOperationAdd(path_in_repo=name, path_or_fileobj=adapter_dir / name)
         for name in ADAPTER_FILES
@@ -907,6 +1161,14 @@ def upload_release(
             ),
         ]
     )
+    bundle_path = config.output_dir / PUBLICATION_BUNDLE_FILE
+    if bundle_path.is_file():
+        operations.append(
+            CommitOperationAdd(path_in_repo=PUBLICATION_BUNDLE_FILE, path_or_fileobj=bundle_path)
+        )
+    # Recheck after all Hub preflight/create calls and immediately before the
+    # atomic commit so a local mutation cannot invalidate declared provenance.
+    validate_release_file_hashes(result, adapter_dir)
     commit = api.create_commit(
         repo_id=config.hub_dest,
         repo_type="model",
@@ -1002,14 +1264,45 @@ def run_checkpoint_probe(config: ContinuationConfig) -> dict[str, Any]:
     return result
 
 
+def run_publish_recovery(config: ContinuationConfig) -> dict[str, Any]:
+    from huggingface_hub import HfApi  # type: ignore[import-not-found]
+
+    assert_remote_execution_allowed(config)
+    validate_pinned_model_inputs(config)
+    if not config.push_to_hub:
+        raise RuntimeError("publication recovery requires --push-to-hub")
+    source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
+    dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
+    dataset = dataset_identity(config.manifest)
+    if dataset["revision"] != dataset_revision:
+        raise RuntimeError("publication recovery dataset revision mismatch")
+    require_publishable_destination(HfApi(token=os.environ["HF_TOKEN"]), config.hub_dest)
+    result, result_path, metadata_path, _bundle_path = validate_publication_bundle(
+        config,
+        source_commit=source_commit,
+        dataset_revision=dataset_revision,
+    )
+    revision = upload_release(
+        config,
+        result=result,
+        result_path=result_path,
+        metadata_path=metadata_path,
+    )
+    recovered = {**result, "published_adapter_revision": revision, "publish_recovery": True}
+    write_json(result_path, recovered)
+    return recovered
+
+
 def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     assert_remote_execution_allowed(config)
     validate_pinned_model_inputs(config)
     require_exact_revision(os.environ.get("RETAIL_BANK_SOURCE_COMMIT", ""), field="source commit")
     ensure_unique_release_output(config)
+    if config.push_to_hub:
+        preflight_destination_repo(config)
     dataset = dataset_identity(config.manifest)
     config.output_dir.mkdir(parents=True, exist_ok=False)
-    seed_training(CANDIDATE4_TRAINING_SEED)
+    seed_training(CANDIDATE5_TRAINING_SEED)
 
     from datasets import Dataset as HfDataset  # type: ignore[import-not-found]
     from peft import PeftModel  # type: ignore[import-not-found]
@@ -1028,13 +1321,14 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     )
     train_records = load_manifest_records(config.manifest, "train")
     validation_records = load_manifest_records(config.manifest, "validation")
+    shadow_records = load_shadow_gate_records(config.manifest)
     mixed_train_records, mix_report = build_continuation_mix(
         train_records,
         positive_multiplier=config.positive_multiplier,
         ambiguity_multiplier=config.ambiguity_multiplier,
         policy_faq_multiplier=config.policy_faq_multiplier,
         tool_outcome_multiplier=config.tool_outcome_multiplier,
-        seed=CANDIDATE4_TRAINING_SEED,
+        seed=CANDIDATE5_TRAINING_SEED,
     )
     train_examples = tokenize_records(
         mask_coreference_positive_final_loss(mixed_train_records),
@@ -1105,11 +1399,13 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             self.output_dir = output_dir
             self.last_report: dict[str, Any] | None = None
             self.last_report_path: Path | None = None
-            self.first_passing_step: int | None = None
+            self.gate_tracker = ConsecutiveGateTracker()
 
         def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
             del args, kwargs
             step = int(state.global_step)
+            if self.gate_tracker.last_step == step:
+                return control
             report = generate_coreference_behavior_report(
                 self.model_ref,
                 self.tokenizer_ref,
@@ -1117,9 +1413,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
                 self.records_ref,
                 cumulative_step=step,
             )
-            report_path = (
-                self.output_dir / "behavioral-evaluations" / f"step-{step:04d}.json"
-            )
+            report_path = self.output_dir / "behavioral-evaluations" / f"step-{step:04d}.json"
             write_json(report_path, report)
             self.last_report = report
             self.last_report_path = report_path
@@ -1129,9 +1423,10 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             try:
                 validate_coreference_behavioral_gate(metrics)
             except RuntimeError:
+                self.gate_tracker.observe(step=step, passed=False)
                 return control
-            if self.first_passing_step is None:
-                self.first_passing_step = step
+            if not self.gate_tracker.observe(step=step, passed=True):
+                return control
             control.should_training_stop = True
             control.should_save = True
             return control
@@ -1167,14 +1462,30 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
 
         trainer.remove_callback(TrackioCallback)
     eval_metrics = validate_eval_metrics(trainer.evaluate())
-    if (
-        behavioral_callback.last_report is None
-        or behavioral_callback.last_report_path is None
-    ):
+    trainer.remove_callback(BehavioralGateCallback)
+    if behavioral_callback.last_report is None or behavioral_callback.last_report_path is None:
         raise RuntimeError("training completed without a persisted coreference behavior report")
     behavioral_gate = persist_and_validate_coreference_report(
         behavioral_callback.last_report,
         behavioral_callback.last_report_path,
+    )
+    if behavioral_callback.gate_tracker.selected_step is None:
+        raise RuntimeError("training completed without two consecutive passing dev gates")
+    shadow_report = generate_coreference_behavior_report(
+        model,
+        tokenizer,
+        wire_adapter,
+        shadow_records,
+        cumulative_step=behavioral_callback.gate_tracker.selected_step,
+    )
+    shadow_report_path = (
+        config.output_dir
+        / "behavioral-evaluations"
+        / f"shadow-selected-step-{behavioral_callback.gate_tracker.selected_step:04d}.json"
+    )
+    shadow_gate = persist_and_validate_coreference_report(
+        shadow_report,
+        shadow_report_path,
     )
     adapter_dir = config.output_dir / "adapter"
     trainer.save_model(str(adapter_dir))
@@ -1192,7 +1503,10 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
         "coreference_behavioral_gate": behavioral_gate,
-        "first_passing_behavioral_step": behavioral_callback.first_passing_step,
+        "first_passing_behavioral_step": behavioral_callback.gate_tracker.first_passing_step,
+        "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
+        "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
+        "shadow_coreference_behavioral_gate": shadow_gate,
     }
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
@@ -1211,7 +1525,10 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": eval_metrics,
         "coreference_behavioral_gate": behavioral_gate,
-        "first_passing_behavioral_step": behavioral_callback.first_passing_step,
+        "first_passing_behavioral_step": behavioral_callback.gate_tracker.first_passing_step,
+        "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
+        "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
+        "shadow_coreference_behavioral_gate": shadow_gate,
         "adapter_sha256": sha256(adapter_dir / "adapter_model.safetensors"),
         "merged_model": None,
         "frozen_release_gates": "pending unchanged frozen evaluation",
@@ -1224,6 +1541,11 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     }
     result_path = config.output_dir / "continuation_training_result.json"
     write_json(result_path, result)
+    write_publication_bundle_manifest(
+        config,
+        result_path=result_path,
+        metadata_path=metadata_path,
+    )
     del trainer
     del model
     del base
@@ -1245,12 +1567,16 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     config = config_from_args(parse_args(argv))
     validate_pinned_model_inputs(config)
+    if config.probe_only and config.publish_only:
+        raise ValueError("--probe-only and --publish-only are mutually exclusive")
     if config.max_steps < 1 or config.max_train_seconds < 60:
         raise ValueError("continuation caps must allow at least one step and 60 seconds")
     if config.learning_rate <= 0:
         raise ValueError("--learning-rate must be positive")
     if config.dry_run:
         print(json.dumps(build_dry_run_plan(config), indent=2, sort_keys=True))
+    elif config.publish_only:
+        print(json.dumps(run_publish_recovery(config), indent=2, sort_keys=True))
     elif config.probe_only:
         print(json.dumps(run_checkpoint_probe(config), indent=2, sort_keys=True))
     else:

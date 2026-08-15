@@ -35,7 +35,6 @@ COUNTERFACTUAL_GATE_CONTRACT = "banking-counterfactual-eval-gate/v1"
 _PERFECT_COUNTERFACTUAL_METRICS = (
     "tool_name_accuracy",
     "tool_argument_accuracy",
-    "executable_tool_success",
     "multi_tool_exact_sequence",
     "clarification_appropriateness",
     "grounded_final_factuality",
@@ -1068,8 +1067,11 @@ def _record_envelope(
         },
         "validation": {
             "tool_manifest_hash": _tool_manifest_hash(),
-            "replay_hash": f"sha256:{_sha256_text(record_id + '|replay')}",
-            "accepted": True,
+            "replay_hash": None,
+            "replay_verified": False,
+            "final_state_verified": False,
+            "schema_accepted": True,
+            "accepted": False,
             "training_allowed": False,
         },
         "metadata": metadata,

@@ -29,13 +29,13 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 
 SOURCE_REPO = "spkc83/retail-bank-servicing"
+CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 DEFAULT_SOURCE_ADAPTER_REVISION = "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2"
-DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
+DEFAULT_DESTINATION_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
 DEFAULT_PROBE_CHECKPOINT_DIR = (
-    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/"
-    "trainer/checkpoint-600"
+    "/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600"
 )
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
@@ -50,16 +50,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-adapter-repo", default=ADAPTER_REPO)
     parser.add_argument("--source-adapter-revision", default=DEFAULT_SOURCE_ADAPTER_REVISION)
     parser.add_argument("--destination-repo", default=DEFAULT_DESTINATION_REPO)
-    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate4")
-    parser.add_argument("--max-steps", type=int, default=600)
+    parser.add_argument("--output-dir", default="/data/retail-bank-agent-9b-candidate5")
+    parser.add_argument("--max-steps", type=int, default=964)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=50)
-    parser.add_argument("--positive-multiplier", type=int, default=10)
-    parser.add_argument("--ambiguity-multiplier", type=int, default=5)
+    parser.add_argument("--positive-multiplier", type=int, default=2)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=1)
     parser.add_argument("--policy-faq-multiplier", type=int, default=4)
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--publish-only", action="store_true")
     parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
     parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
     return parser.parse_args()
@@ -70,7 +71,17 @@ def require_exact_revision(value: str, *, field: str) -> None:
         raise ValueError(f"{field} must be an exact 40-character lowercase Git revision")
 
 
+def validate_source_adapter(repository: str, revision: str) -> None:
+    require_exact_revision(revision, field="--source-adapter-revision")
+    if repository != ADAPTER_REPO or revision != DEFAULT_SOURCE_ADAPTER_REVISION:
+        raise ValueError(
+            f"source adapter must be exactly {ADAPTER_REPO}@{DEFAULT_SOURCE_ADAPTER_REVISION}"
+        )
+
+
 def execution_mode_args(args: argparse.Namespace) -> list[str]:
+    if args.publish_only:
+        return ["--publish-only", "--push-to-hub"]
     if args.probe_only:
         return [
             "--probe-only",
@@ -100,10 +111,21 @@ def download_source(source_commit: str, destination: Path) -> Path:
     return roots[0]
 
 
+def validate_candidate5_source(source_root: Path) -> None:
+    worker = source_root / "scripts/retail_bank/cloud_continue_tool_sft.py"
+    marker = f'CANDIDATE5_PROTOCOL = "{CANDIDATE5_PROTOCOL}"'
+    if not worker.is_file() or marker not in worker.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            "source commit does not implement the required candidate5 worker protocol"
+        )
+
+
 def main() -> int:
     args = parse_args()
     require_exact_revision(args.dataset_revision, field="--dataset-revision")
-    require_exact_revision(args.source_adapter_revision, field="--source-adapter-revision")
+    validate_source_adapter(args.source_adapter_repo, args.source_adapter_revision)
+    if args.probe_only and args.publish_only:
+        raise ValueError("--probe-only and --publish-only are mutually exclusive")
     if args.destination_repo == args.source_adapter_repo:
         raise ValueError("--destination-repo must differ from the source adapter repository")
     if args.probe_only and args.dataset_revision != CANDIDATE3_PROBE_DATASET_REVISION:
@@ -116,6 +138,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-continuation-") as temp_dir:
         temp_root = Path(temp_dir)
         source_root = download_source(args.source_commit, temp_root / "source")
+        validate_candidate5_source(source_root)
         dataset_root = Path(
             snapshot_download(
                 repo_id=DATASET_REPO,
@@ -168,7 +191,7 @@ def main() -> int:
             "--max-seq-len",
             "2048",
             "--learning-rate",
-            "3e-6",
+            "2e-6",
             "--checkpoint-every",
             str(args.checkpoint_every),
             "--positive-multiplier",
@@ -182,7 +205,7 @@ def main() -> int:
             "--trackio-project",
             "retail-bank-agent-v5-remediation",
             "--trackio-run-name",
-            f"granite-peft-candidate4-{args.source_commit[:8]}",
+            f"granite-peft-candidate5-{args.source_commit[:8]}",
         ]
         command.extend(execution_mode_args(args))
         subprocess.run(command, cwd=source_root, env=env, check=True)

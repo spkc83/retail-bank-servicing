@@ -55,6 +55,10 @@ def test_records_are_deterministic_evaluation_only_and_cover_pairs() -> None:
     assert len(first) >= 18
     assert all(record["metadata"]["split"] == "test" for record in first)
     assert all(record["metadata"]["trainable"] is False for record in first)
+    assert all(record["validation"]["accepted"] is False for record in first)
+    assert all(record["validation"]["replay_hash"] is None for record in first)
+    assert all(record["validation"]["replay_verified"] is False for record in first)
+    assert all(record["validation"]["final_state_verified"] is False for record in first)
     assert all(
         record["provenance"]["generator_version"] == "banking-counterfactual-eval/v1"
         for record in first
@@ -205,6 +209,7 @@ def test_counterfactual_gate_accepts_reference_outputs_and_rejects_pair_swap() -
     )
 
     assert counterfactual_gate_failures(report, records) == []
+    assert report["metrics"]["executable_tool_success"]["denominator"] == 0
 
     paired = [
         record

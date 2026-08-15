@@ -6,6 +6,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.4-decorrelated-coreference"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v5.6-unverified-replay-quarantine"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -91,7 +92,8 @@ FINAL_CLOSERS = (
 )
 
 
-def build_servicing_alignment_splits() -> tuple[
+@lru_cache(maxsize=1)
+def _cached_servicing_alignment_splits() -> tuple[
     dict[str, list[dict[str, Any]]],
     dict[str, Any],
 ]:
@@ -129,7 +131,8 @@ def build_servicing_alignment_splits() -> tuple[
             for split, rows in splits.items()
         },
         "duplicate_current_policy": (
-            "only declared two-record coreference pairs with opposite targets"
+            "only declared two-record coreference pairs with opposite targets; "
+            "a normalized current may group multiple pairs only across distinct history forms"
         ),
         "pii_matches": _count_pii_matches(splits),
         "heldout_exact_currents_in_train": _heldout_exact_currents_in_train(splits),
@@ -142,6 +145,26 @@ def build_servicing_alignment_splits() -> tuple[
     if report["heldout_long_ngram_leaks_in_train"]:
         raise ValueError("long held-out screenshot n-grams leaked into training")
     return splits, report
+
+
+def build_servicing_alignment_splits() -> tuple[
+    dict[str, list[dict[str, Any]]],
+    dict[str, Any],
+]:
+    splits, report = _cached_servicing_alignment_splits()
+    return deepcopy(splits), deepcopy(report)
+
+
+def build_coreference_shadow_gate() -> list[dict[str, Any]]:
+    records = _deictic_replace_curriculum("shadow")
+    for record in records:
+        record["metadata"]["trainable"] = False
+    validate_records(records)
+    _assert_no_duplicate_current(records, split="shadow")
+    _assert_coreference_pair_integrity({"train": [], "validation": records})
+    if _count_pii_matches({"shadow": records}):
+        raise ValueError("coreference shadow gate contains PII-like text")
+    return records
 
 
 def load_base_sft_splits(
@@ -172,6 +195,8 @@ def write_servicing_alignment_dataset(
     synthetic_bank_path: Path = DEFAULT_SYNTHETIC_BANK_PATH,
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
+    shadow_records = build_coreference_shadow_gate()
+    _assert_shadow_isolation(alignment_splits, shadow_records)
     base_manifest, base_splits = load_base_sft_splits(base_sft_dir)
     policy_revision = load_canonical_policy_corpus()["corpus_revision"]
     if base_manifest.get("policy_corpus_revision") != policy_revision:
@@ -207,6 +232,20 @@ def write_servicing_alignment_dataset(
                 ],
             }
         )
+    shadow_path = output_dir / "coreference-shadow.jsonl"
+    shadow_path.write_bytes(_jsonl_bytes(shadow_records))
+    behavioral_gates = [
+        {
+            "name": "coreference-shadow",
+            "path": shadow_path.name,
+            "record_count": len(shadow_records),
+            "pair_count": len(shadow_records) // 2,
+            "sha256": _sha256_bytes(shadow_path.read_bytes()),
+            "bytes": shadow_path.stat().st_size,
+            "allowed_use": ["post-selection-evaluation-once"],
+            "trainable": False,
+        }
+    ]
     manifest = {
         "format_version": 1,
         "name": "retail-bank-servicing-alignment-v5",
@@ -216,6 +255,7 @@ def write_servicing_alignment_dataset(
         "generator_version": GENERATOR_VERSION,
         "policy_corpus_revision": policy_revision,
         "tool_sft": entries,
+        "behavioral_gates": behavioral_gates,
         "source_roles": {
             "released-retail-bank-agent-sft": {
                 "role": "base-tool-use-sft",
@@ -644,6 +684,46 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "prompt": "that card is the one to swap out",
                 "product": "Forest",
             },
+            {
+                "phrase_family": "prior-reference-bridge",
+                "prompt": "the card you mentioned should be replaced",
+                "product": "Beacon",
+            },
+            {
+                "phrase_family": "result-reference-bridge",
+                "prompt": "replace the card shown in those results",
+                "product": "Canyon",
+            },
+            {
+                "phrase_family": "fresh-copy-bridge",
+                "prompt": "send a fresh version of that card",
+                "product": "Delta",
+            },
+            {
+                "phrase_family": "proceed-reference-bridge",
+                "prompt": "continue with replacing the referenced card",
+                "product": "Elm",
+            },
+            {
+                "phrase_family": "previous-reply-bridge",
+                "prompt": "replace the card from your previous reply",
+                "product": "Fjord",
+            },
+            {
+                "phrase_family": "result-item-bridge",
+                "prompt": "the card in those results needs replacement",
+                "product": "Grove",
+            },
+            {
+                "phrase_family": "duplicate-card-bridge",
+                "prompt": "issue another physical card matching it",
+                "product": "Haven",
+            },
+            {
+                "phrase_family": "continue-action-bridge",
+                "prompt": "proceed with a replacement for the card mentioned",
+                "product": "Indigo",
+            },
         )
     if split == "validation":
         return (
@@ -666,6 +746,29 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "phrase_family": "replacement-reference",
                 "prompt": "go ahead with replacing that card",
                 "product": "Aspen",
+            },
+        )
+    if split == "shadow":
+        return (
+            {
+                "phrase_family": "earlier-response-shadow",
+                "prompt": "use the card identified in your earlier response",
+                "product": "Quartz",
+            },
+            {
+                "phrase_family": "results-reference-shadow",
+                "prompt": "the card displayed above is the replacement target",
+                "product": "Birch",
+            },
+            {
+                "phrase_family": "fresh-card-shadow",
+                "prompt": "arrange a fresh card corresponding to that one",
+                "product": "Willow",
+            },
+            {
+                "phrase_family": "resume-replacement-shadow",
+                "prompt": "resume the replacement for the card already referenced",
+                "product": "Stone",
             },
         )
     raise ValueError(f"unsupported coreference curriculum split: {split}")
@@ -704,24 +807,43 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
     )
     tiers = ("Everyday Debit", "Rewards Debit", "Travel Debit", "Cashback Debit")
     records: list[dict[str, Any]] = []
-    number_base = 6100 if split == "train" else 2100
-    other_number_base = 8100 if split == "train" else 4100
+    number_base = {"train": 6100, "validation": 2100, "shadow": 3100}[split]
+    other_number_base = {"train": 8100, "validation": 4100, "shadow": 5100}[split]
     pair_index = 0
     specs = _coreference_curriculum_specs(split)
     products = tuple(spec["product"] for spec in specs)
     for family_index, spec in enumerate(specs):
-        for realization, prompt_form in enumerate(prompt_forms):
+        combinations = (
+            (
+                (prompt_index, history_index)
+                for prompt_index in range(len(prompt_forms))
+                for history_index in range(len(sole_card_history_forms))
+            )
+            if split == "train"
+            else (
+                (realization, (3 * family_index + realization) % len(sole_card_history_forms))
+                for realization in range(len(prompt_forms))
+            )
+        )
+        for prompt_index, history_form in combinations:
             pair_index += 1
             family = spec["phrase_family"]
-            prompt = prompt_form.format(prompt=spec["prompt"])
-            product = products[(family_index + (3 * realization)) % len(products)]
-            tier = tiers[(family_index + realization) % len(tiers)]
-            history_form = (3 * family_index + realization) % len(sole_card_history_forms)
+            prompt = prompt_forms[prompt_index].format(prompt=spec["prompt"])
+            if split == "train":
+                product = products[
+                    (family_index + (3 * prompt_index) + (5 * history_form)) % len(products)
+                ]
+                tier = tiers[(family_index + prompt_index + history_form) % len(tiers)]
+                realization_key = f"{prompt_index}-{history_form}"
+            else:
+                product = products[(family_index + (3 * prompt_index)) % len(products)]
+                tier = tiers[(family_index + prompt_index) % len(tiers)]
+                realization_key = str(prompt_index)
             card_name = f"{product} {tier}"
             other_card_name = f"{product} {tier.replace('Debit', 'Credit')}"
             card_last4 = f"{number_base + pair_index:04d}"
             other_card_last4 = f"{other_number_base + pair_index:04d}"
-            pair_id = f"coreference-{split}-{family}-{realization}"
+            pair_id = f"coreference-{split}-{family}-{realization_key}"
             history_user = "List the cards on my profile."
             history_values = {
                 "card_name": card_name,
@@ -733,12 +855,17 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
             multiple_card_history = multiple_card_history_forms[history_form].format(
                 **history_values
             )
+            action_final = (
+                f"Replacement is pending for your {card_name} ending in {card_last4}."
+                if split == "validation"
+                else f"{card_name} ending in {card_last4} now has replacement pending."
+            )
             action = _record(
-                record_id=f"deictic_replace_{family}_{split}_{realization}",
+                record_id=f"deictic_replace_{family}_{split}_{realization_key}",
                 split=split,
                 scenario_family="deictic_replace_action",
                 current=prompt,
-                final=(f"Replacement is pending for your {card_name} ending in {card_last4}."),
+                final=action_final,
                 tool_plan=[("replace_card", {"last4": card_last4})],
                 grounding_facts=[
                     f"card.last4={card_last4}",
@@ -760,7 +887,7 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                 ],
             )
             ambiguity = _record(
-                record_id=f"deictic_ambiguous_{family}_{split}_{realization}",
+                record_id=f"deictic_ambiguous_{family}_{split}_{realization_key}",
                 split=split,
                 scenario_family="deictic_replace_ambiguity",
                 current=prompt,
@@ -790,7 +917,7 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                         "coreference_pair_id": pair_id,
                         "coreference_phrase_family": family,
                         "coreference_prompt": prompt,
-                        "coreference_prompt_form": realization,
+                        "coreference_prompt_form": prompt_index,
                         "coreference_history_form": history_form,
                         "coreference_product": product,
                         "coreference_tier": tier,
@@ -1124,7 +1251,6 @@ def _expand_records(
             record["split_keys"]["realization_seed"] = (
                 f"servicing-alignment-{split}-{realization:03d}"
             )
-            record["validation"]["replay_hash"] = f"sha256:{_sha256_text(new_id + '|replay')}"
             record["metadata"]["split_group"] = f"{record['metadata']['scenario_family']}|{new_id}"
             expanded.append(record)
     return expanded
@@ -1219,8 +1345,11 @@ def _record(
         },
         "validation": {
             "tool_manifest_hash": _tool_manifest_hash(),
-            "replay_hash": f"sha256:{_sha256_text(record_id + '|replay')}",
-            "accepted": True,
+            "replay_hash": None,
+            "replay_verified": False,
+            "final_state_verified": False,
+            "schema_accepted": True,
+            "accepted": False,
         },
         "metadata": {
             "record_type": "tool_use_sft",
@@ -1393,13 +1522,21 @@ def _assert_no_duplicate_current(records: Sequence[dict[str, Any]], *, split: st
     for normalized, duplicates in seen.items():
         if len(duplicates) == 1:
             continue
-        pair_ids = {row["metadata"].get("coreference_pair_id") for row in duplicates}
-        targets = {row["metadata"].get("coreference_target") for row in duplicates}
-        if (
-            len(duplicates) == 2
-            and len(pair_ids) == 1
-            and None not in pair_ids
-            and targets == {"replace_card", "clarification"}
+        pairs: dict[str, list[dict[str, Any]]] = {}
+        for row in duplicates:
+            pair_id = str(row["metadata"].get("coreference_pair_id", ""))
+            pairs.setdefault(pair_id, []).append(row)
+        history_forms = {
+            rows[0]["metadata"].get("coreference_history_form")
+            for pair_id, rows in pairs.items()
+            if pair_id and len(rows) == 2
+        }
+        if len(history_forms) == len(pairs) and all(
+            pair_id
+            and len(rows) == 2
+            and {row["metadata"].get("coreference_target") for row in rows}
+            == {"replace_card", "clarification"}
+            for pair_id, rows in pairs.items()
         ):
             continue
         raise ValueError(f"duplicate current user text in {split}: {normalized}")
@@ -1468,6 +1605,44 @@ def _assert_coreference_pair_integrity(
         raise ValueError("coreference entities leaked across train and validation")
     if families_by_split["train"] & families_by_split["validation"]:
         raise ValueError("coreference phrase families leaked across train and validation")
+
+
+def _assert_shadow_isolation(
+    splits: Mapping[str, Sequence[dict[str, Any]]],
+    shadow_records: Sequence[dict[str, Any]],
+) -> None:
+    shadow_entities = {
+        str(entity)
+        for record in shadow_records
+        for entity in record["metadata"]["coreference_entity_keys"]
+    }
+    shadow_families = {
+        str(record["metadata"]["coreference_phrase_family"]) for record in shadow_records
+    }
+    shadow_prompts = {_normalize(_last_user_text(record)) for record in shadow_records}
+    governed = [*splits["train"], *splits["validation"]]
+    governed_entities = {
+        str(entity)
+        for record in governed
+        for entity in record["metadata"].get("coreference_entity_keys", ())
+    }
+    governed_families = {
+        str(record["metadata"]["coreference_phrase_family"])
+        for record in governed
+        if "coreference_phrase_family" in record["metadata"]
+    }
+    governed_prompts = {_normalize(_last_user_text(record)) for record in governed}
+    if shadow_entities & governed_entities:
+        raise ValueError("coreference shadow entities leaked into train or dev")
+    if shadow_families & governed_families:
+        raise ValueError("coreference shadow phrase families leaked into train or dev")
+    if shadow_prompts & governed_prompts:
+        raise ValueError("coreference shadow prompts leaked into train or dev")
+    shadow_as_train = {"train": list(shadow_records)}
+    if _heldout_exact_currents_in_train(shadow_as_train):
+        raise ValueError("held-out screenshot current leaked into coreference shadow")
+    if _heldout_long_ngram_leaks_in_train(shadow_as_train):
+        raise ValueError("held-out screenshot n-gram leaked into coreference shadow")
 
 
 def _assert_no_cross_split_leakage(

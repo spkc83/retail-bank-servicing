@@ -24,6 +24,7 @@ def _record(
     *,
     expected: dict,
     messages: list[dict] | None = None,
+    validation: dict | None = None,
 ) -> dict:
     return {
         "schema_version": "banking-tool-eval/v1",
@@ -34,6 +35,7 @@ def _record(
             "transfers": [{"recipient": "River Consulting", "status": "pending"}],
         },
         "expected": expected,
+        "validation": validation or {},
     }
 
 
@@ -181,6 +183,7 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
                 "grounding_facts": ["4821", "frozen"],
                 "forbidden_facts": ["replacement pending"],
             },
+            validation={"replay_verified": True, "final_state_verified": True},
         ),
         _record(
             "faq",
@@ -250,6 +253,55 @@ def test_replay_final_state_grounding_faq_credentials_and_ood_metrics() -> None:
     assert report["metrics"]["ood_small_talk_response_path"]["denominator"] == 1
     assert report["metrics"]["credential_request_rate"]["numerator"] == 0
     assert report["metrics"]["credential_request_rate"]["denominator"] == 5
+
+
+@pytest.mark.parametrize("source", ["alignment-placeholder", "reviewed-asr-overlay"])
+def test_unverified_final_state_hash_is_excluded_from_executable_metric(source: str) -> None:
+    final_hash = state_hash({"cards": [{"last4": "4821", "status": "frozen"}]})
+    record = _record(
+        source,
+        expected={
+            "requires_tool": True,
+            "tool_calls": [{"name": "freeze_card", "arguments": {"last4": "4821"}}],
+            "final_state_hash": final_hash,
+        },
+        validation={"accepted": True, "replay_verified": False},
+    )
+    report = evaluate_records(
+        [record],
+        model=StaticPredictionModel(
+            {source: ('<tool_call>{"name":"freeze_card","arguments":{"last4":"4821"}}</tool_call>')}
+        ),
+        adapter=TaggedJsonToolAdapter(),
+    )
+
+    assert report["metrics"]["executable_tool_success"] == {
+        "numerator": 0,
+        "denominator": 0,
+        "score": None,
+    }
+    assert report["records"][source]["executable_tool_success"] is None
+
+
+def test_real_base_generator_replay_evidence_counts_exact_call_as_executable() -> None:
+    record = next(row for row in generate_records(pilot_count=120) if row["expected"]["tool_calls"])
+    calls = "".join(
+        "<tool_call>" + json.dumps(call, separators=(",", ":")) + "</tool_call>"
+        for call in record["expected"]["tool_calls"]
+    )
+    report = evaluate_records(
+        [record],
+        model=StaticPredictionModel({record["record_id"]: calls}),
+        adapter=TaggedJsonToolAdapter(),
+    )
+
+    assert record["validation"]["replay_verified"] is True
+    assert record["validation"]["final_state_verified"] is True
+    assert report["metrics"]["executable_tool_success"] == {
+        "numerator": 1,
+        "denominator": 1,
+        "score": 1.0,
+    }
 
 
 def test_canonical_policy_eval_rejects_correct_citation_with_wrong_fact() -> None:
@@ -338,9 +390,7 @@ def test_credential_metric_distinguishes_safety_warnings_from_requests(
     )
 
     assert report["records"]["credential_language"]["credential_request"] is expected_request
-    assert report["metrics"]["credential_request_rate"]["numerator"] == int(
-        expected_request
-    )
+    assert report["metrics"]["credential_request_rate"]["numerator"] == int(expected_request)
 
 
 def test_account_grounding_requires_the_requested_balance_values() -> None:

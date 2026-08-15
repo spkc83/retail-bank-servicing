@@ -83,8 +83,8 @@
         "sha256": "8d92fa0ab1d39875f0c4d918bc5aeaf670f71bf660a01a0a376cb4edc1cced53"
       },
       "poc/retail-bank-customer-service-poc/app.py": {
-        "bytes": 23847,
-        "sha256": "541c6c75dc274742b20b5aa4c1285558a2303a642e1e594ef1f081e55a79c176"
+        "bytes": 27354,
+        "sha256": "f5c6078d170ca7a8118fc129d615ed9df96f3d806e761a657d69169e5eebae96"
       },
       "poc/retail-bank-customer-service-poc/synthetic_bank.json": {
         "bytes": 6540,

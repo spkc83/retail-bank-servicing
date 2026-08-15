@@ -4,17 +4,26 @@ import ast
 import hashlib
 import importlib.util
 import json
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 WORKER_PATH = Path("scripts/retail_bank/cloud_continue_tool_sft.py")
 JOB_PATH = Path("scripts/retail_bank/hf_job_continue_tool_sft.py")
 LAUNCHER_PATH = Path("scripts/retail_bank/run_remote_continuation_job.sh")
+
+
+def _repository_not_found() -> Exception:
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    request = httpx.Request("GET", "https://huggingface.co/api/models/example/repo")
+    return RepositoryNotFoundError("absent", response=httpx.Response(404, request=request))
 
 
 def _load_worker() -> ModuleType:
@@ -97,6 +106,34 @@ def test_continuation_requires_exact_model_revision() -> None:
         WORKER.validate_pinned_model_inputs(replace(config, base_revision="0" * 40))
     with pytest.raises(RuntimeError, match="owner/name"):
         WORKER.validate_pinned_model_inputs(replace(config, source_adapter_repo="invalid"))
+    with pytest.raises(RuntimeError, match="source adapter must be exactly"):
+        WORKER.validate_pinned_model_inputs(
+            replace(config, source_adapter_repo="example/other-adapter")
+        )
+    with pytest.raises(RuntimeError, match="source adapter must be exactly"):
+        WORKER.validate_pinned_model_inputs(replace(config, source_adapter_revision="0" * 40))
+
+
+def test_job_bootstrap_rejects_source_adapter_repo_and_revision_overrides() -> None:
+    with pytest.raises(ValueError, match="source adapter must be exactly"):
+        JOB.validate_source_adapter("example/other-adapter", JOB.DEFAULT_SOURCE_ADAPTER_REVISION)
+    with pytest.raises(ValueError, match="source adapter must be exactly"):
+        JOB.validate_source_adapter(JOB.ADAPTER_REPO, "0" * 40)
+
+
+def test_job_bootstrap_rejects_old_candidate4_worker_protocol(tmp_path: Path) -> None:
+    worker = tmp_path / "scripts/retail_bank/cloud_continue_tool_sft.py"
+    worker.parent.mkdir(parents=True)
+    worker.write_text('CANDIDATE4_PROTOCOL = "legacy"\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="candidate5 worker protocol"):
+        JOB.validate_candidate5_source(tmp_path)
+
+    worker.write_text(
+        f'CANDIDATE5_PROTOCOL = "{JOB.CANDIDATE5_PROTOCOL}"\n',
+        encoding="utf-8",
+    )
+    JOB.validate_candidate5_source(tmp_path)
 
 
 def test_continuation_mix_oversamples_paired_coreference_targets() -> None:
@@ -282,19 +319,45 @@ def test_worker_dry_run_exposes_capped_continuation_plan() -> None:
     assert plan["training_parent"] == "pinned d965 adapter"
     assert plan["base_model"] == "spkc83/retail-bank-servicing-agent-9b"
     assert plan["base_revision"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-    assert plan["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate4"
-    assert plan["training"]["max_steps"] == 600
+    assert plan["hub_dest"] == "spkc83/retail-bank-servicing-agent-9b-peft-v5-candidate5"
+    assert plan["training"]["max_steps"] == 964
     assert plan["training"]["max_train_seconds"] == 3_600
-    assert plan["training"]["learning_rate"] == 3e-6
-    assert plan["training"]["positive_multiplier"] == 10
-    assert plan["training"]["ambiguity_multiplier"] == 5
+    assert plan["training"]["learning_rate"] == 2e-6
+    assert plan["training"]["positive_multiplier"] == 2
+    assert plan["training"]["ambiguity_multiplier"] == 1
     assert plan["training"]["policy_faq_multiplier"] == 4
     assert plan["training"]["tool_outcome_multiplier"] == 6
-    assert plan["training"]["seed"] == 20_260_814
+    assert plan["training"]["seed"] == 20_260_815
+    assert plan["training"]["selection_gate"] == "two consecutive dev passes"
     assert plan["release"]["format"] == "root-level PEFT adapter"
     assert plan["release"]["merge"] is False
     assert plan["release"]["evaluation_before_publish"] is True
     assert plan["remote_guard"]["currently_allowed"] is False
+
+
+def test_consecutive_gate_accepts_final_non_interval_step_and_ignores_duplicate() -> None:
+    tracker = WORKER.ConsecutiveGateTracker()
+
+    assert tracker.observe(step=900, passed=False) is False
+    assert tracker.observe(step=950, passed=True) is False
+    assert tracker.observe(step=950, passed=True) is False
+    assert tracker.consecutive_passes == 1
+    assert tracker.observe(step=964, passed=True) is True
+    assert tracker.selected_step == 964
+    assert tracker.consecutive_passes == 2
+    assert tracker.observe(step=964, passed=True) is False
+    assert tracker.consecutive_passes == 2
+
+
+def test_consecutive_gate_resets_after_a_failed_checkpoint() -> None:
+    tracker = WORKER.ConsecutiveGateTracker()
+
+    assert tracker.observe(step=850, passed=True) is False
+    assert tracker.observe(step=900, passed=False) is False
+    assert tracker.observe(step=950, passed=True) is False
+    assert tracker.observe(step=964, passed=True) is True
+    assert tracker.first_passing_step == 850
+    assert tracker.selected_step == 964
 
 
 def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> None:
@@ -331,17 +394,19 @@ def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> No
     assert "--source-adapter-repo" in source
     assert "--destination-repo" in source
     assert "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT" in source
-    assert '"3e-6"' in source
+    assert '"2e-6"' in source
 
 
 def test_job_probe_command_never_requests_publication() -> None:
     probe = SimpleNamespace(
         probe_only=True,
+        publish_only=False,
         probe_checkpoint_dir="/data/run/trainer/checkpoint-550",
         probe_checkpoint_step=550,
     )
     training = SimpleNamespace(
         probe_only=False,
+        publish_only=False,
         probe_checkpoint_dir="unused",
         probe_checkpoint_step=0,
     )
@@ -357,6 +422,8 @@ def test_job_probe_command_never_requests_publication() -> None:
     ]
     assert "--push-to-hub" not in probe_args
     assert JOB.execution_mode_args(training) == ["--push-to-hub"]
+    recovery = SimpleNamespace(publish_only=True, probe_only=False)
+    assert JOB.execution_mode_args(recovery) == ["--publish-only", "--push-to-hub"]
 
 
 def test_worker_probe_requires_exact_source_and_candidate3_dataset_revisions() -> None:
@@ -373,13 +440,15 @@ def test_worker_probe_requires_exact_source_and_candidate3_dataset_revisions() -
 def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_cap() -> None:
     launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
 
-    assert "--timeout 5h" in launcher
+    assert 'job_timeout="5h"' in launcher
+    assert 'job_timeout="30m"' in launcher
+    assert 'job_flavor="cpu-basic"' in launcher
     assert "--volume hf://buckets/spkc83/jobs-artifacts:/data" in launcher
     assert "SOURCE_ADAPTER_REVISION must be the exact 40-character lowercase Git commit" in launcher
     assert "SOURCE_ADAPTER_REPO must be a Hugging Face repository id" in launcher
     assert "DESTINATION_REPO must differ from the source adapter repository" in launcher
     assert (
-        "retail-bank-agent-9b-candidate4-${source_commit:0:8}-"
+        "retail-bank-agent-9b-candidate5-${source_commit:0:8}-"
         "${source_adapter_revision:0:8}-${dataset_revision:0:8}"
     ) in launcher
     assert "hf jobs uv run" in launcher
@@ -387,25 +456,40 @@ def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_c
     assert "/scripts/banking_v2/hf_job_continue_tool_sft.py" not in launcher
     assert 'script_url="$legacy_script_url"' not in launcher
     assert "rm " not in launcher
-    assert 'max_steps="${5:-600}"' in launcher
+    assert 'max_steps="${5:-964}"' in launcher
     assert "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2" in launcher
     assert "checkpoint-600" in launcher
     assert "PROBE_ONLY" in launcher
     assert "715064e50e7ed2f815dfd3ce19b61f345a466b9d" in launcher
+    assert "Source adapter must be exactly" in launcher
 
 
 def test_worker_evaluates_before_atomic_adapter_upload_without_merging() -> None:
     source = WORKER_PATH.read_text(encoding="utf-8")
     remote_body = source.split("def run_remote_continuation", 1)[1].split("def main", 1)[0]
+    upload_branch = remote_body.index("revision = upload_release(")
 
-    assert remote_body.index(
-        "eval_metrics = validate_eval_metrics(trainer.evaluate())"
-    ) < remote_body.index("if config.push_to_hub:")
+    assert (
+        remote_body.index("eval_metrics = validate_eval_metrics(trainer.evaluate())")
+        < upload_branch
+    )
     assert remote_body.index("behavioral_gate = persist_and_validate_coreference_report(") < (
-        remote_body.index("if config.push_to_hub:")
+        upload_branch
     )
     assert "class BehavioralGateCallback" in remote_body
+    assert remote_body.index("preflight_destination_repo(config)") < remote_body.index(
+        "snapshot_source_adapter(config)"
+    )
     assert 'self.output_dir / "behavioral-evaluations"' in remote_body
+    assert "ConsecutiveGateTracker()" in remote_body
+    assert "trainer.remove_callback(BehavioralGateCallback)" in remote_body
+    assert remote_body.index("eval_metrics = validate_eval_metrics(trainer.evaluate())") < (
+        remote_body.index("trainer.remove_callback(BehavioralGateCallback)")
+    )
+    assert "shadow-selected-step-" in remote_body
+    assert remote_body.index("shadow_report = generate_coreference_behavior_report(") < (
+        upload_branch
+    )
     assert "merge_and_unload" not in source
     assert "merged-fp16" not in source
     assert "CommitOperationAdd" in source
@@ -514,6 +598,9 @@ def test_atomic_upload_creates_new_repo_and_places_adapter_at_root(
         (adapter_dir / name).write_bytes(f"release:{name}".encode())
     result_path = tmp_path / "continuation_training_result.json"
     metadata_path = tmp_path / "continuation_training_metadata.json"
+    adapter_sha = hashlib.sha256(
+        (adapter_dir / "adapter_model.safetensors").read_bytes()
+    ).hexdigest()
     result: dict[str, Any] = {
         "base_model": WORKER.BASE_MODEL,
         "base_revision": WORKER.BASE_REVISION,
@@ -521,13 +608,19 @@ def test_atomic_upload_creates_new_repo_and_places_adapter_at_root(
         "source_adapter_revision": WORKER.DEFAULT_SOURCE_ADAPTER_REVISION,
         "dataset_identity": {"repository": WORKER.DATASET_REPO, "revision": "d" * 40},
         "steps": 250,
-        "adapter_sha256": "a" * 64,
+        "adapter_sha256": adapter_sha,
         "eval_metrics": {"eval_loss": 0.21, "eval_runtime": 12.0},
         "coreference_behavioral_gate": {
             "positive_tool_argument_accuracy": 1.0,
             "ambiguity_accuracy": 1.0,
             "pair_flip_accuracy": 1.0,
         },
+        "shadow_coreference_behavioral_gate": {
+            "positive_tool_argument_accuracy": 1.0,
+            "ambiguity_accuracy": 1.0,
+            "pair_flip_accuracy": 1.0,
+        },
+        "consecutive_dev_passes": 2,
         "pushed_to_hub": "example/new-remediation-adapter",
     }
     result_path.write_text(json.dumps(result), encoding="utf-8")
@@ -537,9 +630,18 @@ def test_atomic_upload_creates_new_repo_and_places_adapter_at_root(
         def __init__(self) -> None:
             self.create_repo_call: dict[str, Any] | None = None
             self.create_commit_call: dict[str, Any] | None = None
+            self.exists = False
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if not self.exists:
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return []
 
         def create_repo(self, repo_id: str, **kwargs: Any) -> None:
             self.create_repo_call = {"repo_id": repo_id, **kwargs}
+            self.exists = True
 
         def create_commit(self, **kwargs: Any) -> SimpleNamespace:
             self.create_commit_call = kwargs
@@ -578,6 +680,331 @@ def test_atomic_upload_creates_new_repo_and_places_adapter_at_root(
         "continuation_training_metadata.json",
         "README.md",
     }
+
+
+def _release_bundle(tmp_path: Path) -> tuple[Any, dict[str, Any], Path, Path]:
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    for name in WORKER.ADAPTER_FILES:
+        (adapter_dir / name).write_bytes(f"release:{name}".encode())
+    result: dict[str, Any] = {
+        "contract": "banking-v5-peft-remediation-result/v1",
+        "worker": "cloud_continue_tool_sft",
+        "base_model": WORKER.BASE_MODEL,
+        "base_revision": WORKER.BASE_REVISION,
+        "source_adapter_repo": WORKER.ADAPTER_REPO,
+        "source_adapter_revision": WORKER.DEFAULT_SOURCE_ADAPTER_REVISION,
+        "dataset_identity": {"repository": WORKER.DATASET_REPO, "revision": "d" * 40},
+        "steps": 964,
+        "adapter_sha256": hashlib.sha256(
+            (adapter_dir / "adapter_model.safetensors").read_bytes()
+        ).hexdigest(),
+        "eval_metrics": {"eval_loss": 0.21},
+        "coreference_behavioral_gate": {
+            "positive_tool_argument_accuracy": 1.0,
+            "ambiguity_accuracy": 1.0,
+            "pair_flip_accuracy": 1.0,
+        },
+        "shadow_coreference_behavioral_gate": {
+            "positive_tool_argument_accuracy": 1.0,
+            "ambiguity_accuracy": 1.0,
+            "pair_flip_accuracy": 1.0,
+        },
+        "consecutive_dev_passes": 2,
+        "merged_model": None,
+        "pushed_to_hub": "example/new-remediation-adapter",
+        "publication": {
+            "requested": True,
+            "destination_repo": "example/new-remediation-adapter",
+            "atomic_bundle": True,
+        },
+    }
+    result_path = tmp_path / "continuation_training_result.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    metadata_path = tmp_path / "continuation_training_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "contract": "banking-v5-peft-remediation-metadata/v1",
+                "worker": "cloud_continue_tool_sft",
+                "step": result["steps"],
+                "eval_metrics": result["eval_metrics"],
+                "coreference_behavioral_gate": result["coreference_behavioral_gate"],
+                "shadow_coreference_behavioral_gate": result["shadow_coreference_behavioral_gate"],
+                "fingerprint": {
+                    "contract": "banking-v5-peft-remediation-fingerprint/v1",
+                    "source_commit": "a" * 40,
+                    "base_model": WORKER.BASE_MODEL,
+                    "base_revision": WORKER.BASE_REVISION,
+                    "family": "granite",
+                    "training_seed": WORKER.CANDIDATE5_TRAINING_SEED,
+                    "source_adapter": {
+                        "repository": WORKER.ADAPTER_REPO,
+                        "revision": WORKER.DEFAULT_SOURCE_ADAPTER_REVISION,
+                    },
+                    "dataset_identity": result["dataset_identity"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = replace(
+        WORKER.config_from_args(WORKER.parse_args([])),
+        output_dir=tmp_path,
+        hub_dest="example/new-remediation-adapter",
+    )
+    return config, result, result_path, metadata_path
+
+
+def test_atomic_upload_rejects_adapter_mutation_before_hub_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+    (tmp_path / "adapter" / "adapter_model.safetensors").write_bytes(b"mutated")
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    with pytest.raises(RuntimeError, match="adapter digest changed"):
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+
+
+def test_atomic_upload_rechecks_adapter_after_hub_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+
+    class FakeApi:
+        commit_called = False
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            return None
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            (tmp_path / "adapter" / "adapter_model.safetensors").write_bytes(b"late mutation")
+            return []
+
+        def create_commit(self, **_kwargs: Any) -> SimpleNamespace:
+            self.commit_called = True
+            return SimpleNamespace(oid="e" * 40)
+
+    api = FakeApi()
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda token: api)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    with pytest.raises(RuntimeError, match="adapter digest changed"):
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+    assert api.commit_called is False
+
+
+def test_atomic_upload_validates_optional_release_file_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+    result["release_file_sha256"] = {"adapter_config.json": "0" * 64}
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    with pytest.raises(RuntimeError, match="release file digest mismatch"):
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+
+
+def test_destination_repo_states_absent_empty_and_nonempty() -> None:
+    class FakeApi:
+        def __init__(self, state: str) -> None:
+            self.state = state
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if self.state == "absent":
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return [] if self.state == "empty" else ["README.md"]
+
+    assert WORKER.require_publishable_destination(FakeApi("absent"), "example/repo") == "absent"
+    assert WORKER.require_publishable_destination(FakeApi("empty"), "example/repo") == "empty"
+    with pytest.raises(RuntimeError, match="not empty"):
+        WORKER.require_publishable_destination(FakeApi("nonempty"), "example/repo")
+
+
+def test_atomic_upload_retries_an_existing_empty_repo_after_commit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.exists = False
+            self.create_count = 0
+            self.commit_count = 0
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if not self.exists:
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return []
+
+        def create_repo(self, *_args: Any, **_kwargs: Any) -> None:
+            self.exists = True
+            self.create_count += 1
+
+        def create_commit(self, **_kwargs: Any) -> SimpleNamespace:
+            self.commit_count += 1
+            if self.commit_count == 1:
+                raise RuntimeError("simulated commit failure")
+            return SimpleNamespace(oid="e" * 40)
+
+    api = FakeApi()
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda token: api)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+    assert (
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+        == "e" * 40
+    )
+    assert api.create_count == 1
+    assert api.commit_count == 2
+
+
+def test_publish_only_recovery_reuses_bundle_after_atomic_commit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+    config = replace(
+        config,
+        dry_run=False,
+        allow_remote_execution=True,
+        push_to_hub=True,
+        publish_only=True,
+    )
+    monkeypatch.setenv(WORKER.REMOTE_CONFIRMATION_ENV, WORKER.REMOTE_CONFIRMATION_VALUE)
+    monkeypatch.setenv("RETAIL_BANK_SOURCE_COMMIT", "a" * 40)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REPO", WORKER.DATASET_REPO)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "d" * 40)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    WORKER.write_publication_bundle_manifest(
+        config,
+        result_path=result_path,
+        metadata_path=metadata_path,
+    )
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.exists = False
+            self.commits = 0
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if not self.exists:
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return []
+
+        def create_repo(self, *_args: Any, **_kwargs: Any) -> None:
+            self.exists = True
+
+        def create_commit(self, **_kwargs: Any) -> SimpleNamespace:
+            self.commits += 1
+            if self.commits == 1:
+                raise RuntimeError("simulated commit failure")
+            return SimpleNamespace(oid="e" * 40)
+
+    api = FakeApi()
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda token: api)
+    monkeypatch.setattr(
+        WORKER,
+        "dataset_identity",
+        lambda _path: {
+            "repository": WORKER.DATASET_REPO,
+            "revision": "d" * 40,
+        },
+    )
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        WORKER.upload_release(
+            config,
+            result=result,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+
+    recovered = WORKER.run_publish_recovery(config)
+
+    assert recovered["publish_recovery"] is True
+    assert recovered["published_adapter_revision"] == "e" * 40
+    assert api.commits == 2
+
+
+def test_publish_only_recovery_rejects_incomplete_and_mismatched_bundles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incomplete_config = replace(
+        WORKER.config_from_args(WORKER.parse_args([])),
+        output_dir=tmp_path / "incomplete",
+    )
+    with pytest.raises(RuntimeError, match="bundle is incomplete"):
+        WORKER.validate_publication_bundle(
+            incomplete_config,
+            source_commit="a" * 40,
+            dataset_revision="d" * 40,
+        )
+
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    config, _result, result_path, metadata_path = _release_bundle(complete)
+    monkeypatch.setenv("RETAIL_BANK_SOURCE_COMMIT", "a" * 40)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "d" * 40)
+    bundle_path = WORKER.write_publication_bundle_manifest(
+        config,
+        result_path=result_path,
+        metadata_path=metadata_path,
+    )
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["destination_repo"] = "example/wrong-destination"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="bundle identity mismatch"):
+        WORKER.validate_publication_bundle(
+            config,
+            source_commit="a" * 40,
+            dataset_revision="d" * 40,
+        )
 
 
 @pytest.mark.parametrize(
@@ -687,9 +1114,7 @@ def test_source_checkpoint_requires_exact_step_and_records_adapter_digest(
 ) -> None:
     (tmp_path / "adapter_model.safetensors").write_bytes(b"candidate3-checkpoint")
     (tmp_path / "adapter_config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "trainer_state.json").write_text(
-        json.dumps({"global_step": 600}), encoding="utf-8"
-    )
+    (tmp_path / "trainer_state.json").write_text(json.dumps({"global_step": 600}), encoding="utf-8")
 
     identity = WORKER.validate_source_checkpoint(tmp_path, expected_step=600)
 
@@ -699,3 +1124,68 @@ def test_source_checkpoint_requires_exact_step_and_records_adapter_digest(
     assert identity["adapter_sha256"] == hashlib.sha256(b"candidate3-checkpoint").hexdigest()
     with pytest.raises(RuntimeError, match="step mismatch"):
         WORKER.validate_source_checkpoint(tmp_path, expected_step=550)
+
+
+def test_shadow_gate_loader_requires_non_trainable_exact_digest(tmp_path: Path) -> None:
+    records = [_record(f"shadow-{index}", path="clarification") for index in range(32)]
+    for record in records:
+        record["metadata"]["trainable"] = False
+    shadow = tmp_path / "coreference-shadow.jsonl"
+    shadow.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(shadow.read_bytes()).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "behavioral_gates": [
+                    {
+                        "name": "coreference-shadow",
+                        "path": shadow.name,
+                        "record_count": 32,
+                        "sha256": digest,
+                        "allowed_use": ["post-selection-evaluation-once"],
+                        "trainable": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert len(WORKER.load_shadow_gate_records(manifest)) == 32
+    payload = json.loads(manifest.read_text())
+    payload["behavioral_gates"][0]["trainable"] = True
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="non-trainable"):
+        WORKER.load_shadow_gate_records(manifest)
+
+    payload["behavioral_gates"][0]["trainable"] = False
+    records[0]["metadata"]["trainable"] = True
+    shadow.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    payload["behavioral_gates"][0]["sha256"] = hashlib.sha256(shadow.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="rows must set metadata.trainable=false"):
+        WORKER.load_shadow_gate_records(manifest)
+
+
+def test_worker_dataset_identity_rejects_a_hash_invalid_manifest_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = tmp_path / "dataset"
+    shutil.copytree(Path("data/banking-servicing-alignment-v5"), dataset)
+    train = dataset / "train.jsonl"
+    payload = bytearray(train.read_bytes())
+    payload[0] = ord("[") if payload[0] != ord("[") else ord("{")
+    train.write_bytes(payload)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REPO", WORKER.DATASET_REPO)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "d" * 40)
+
+    with pytest.raises(ValueError, match="train sha256 mismatch"):
+        WORKER.dataset_identity(dataset / "manifest.json")

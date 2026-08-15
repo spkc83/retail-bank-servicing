@@ -15,7 +15,7 @@
   "tool_manifest_hash": "sha256:1eb463390ad06a0b31bf3954a794c25015730285bde913fd3df7980cda9c568d",
   "tool_sft": [
     {
-      "bytes": 2446567,
+      "bytes": 2497469,
       "licenses": [
         "MIT"
       ],
@@ -24,10 +24,10 @@
       "record_count": 841,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "185538db0fdd0b2323de17daa34fdfe0d8d1e20f1bb9ae88d68721ea604b299a"
+      "sha256": "b08b2df39a45d82bd8d8b89a3575d6f01453b7fa8901d3a5efb104ca0de6bbe2"
     },
     {
-      "bytes": 514291,
+      "bytes": 525105,
       "licenses": [
         "MIT"
       ],
@@ -36,10 +36,10 @@
       "record_count": 179,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "0b49ce3f944a85f37122869954676c7981b2d52c8d5d6ba97dec895413c34572"
+      "sha256": "cbb134289f0c63566e8d08c7c22f7c5c053db69a1dbae32fb84b4e7f373da18b"
     },
     {
-      "bytes": 504230,
+      "bytes": 515129,
       "licenses": [
         "MIT"
       ],
@@ -48,7 +48,7 @@
       "record_count": 180,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "b61d2d11fe9e6bf5af0fcba61cecda5c14ca73abf8f6a4c70f83d35acfdf0341"
+      "sha256": "fa42b3c799384938e38ab470dd2f7a3e26f3746feea2a25a0289ec9f8bdc1840"
     }
   ]
 }

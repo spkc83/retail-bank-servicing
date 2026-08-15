@@ -100,7 +100,11 @@ def test_remote_launcher_mounts_durable_job_bucket() -> None:
         ),
         (
             "run_remote_continuation_job.sh",
-            ("a" * 40, "b" * 40, "c" * 40),
+            (
+                "a" * 40,
+                "b" * 40,
+                "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+            ),
             "hf_job_continue_tool_sft.py",
         ),
         (
@@ -138,6 +142,9 @@ def test_remote_launchers_resolve_current_bootstraps(
         """#!/usr/bin/env bash
 url="${@: -1}"
 printf '%s\\n' "$url" >> "$CURL_LOG"
+if [[ "$url" == *"hf_job_continue_tool_sft.py" || "$url" == *"cloud_continue_tool_sft.py" ]]; then
+  printf '%s\\n' 'CANDIDATE5_PROTOCOL = "retail-bank-peft-candidate5/v1"'
+fi
 [[ "$url" == *"/scripts/retail_bank/"* ]]
 """,
         encoding="utf-8",
@@ -167,8 +174,89 @@ printf '%s\\n' "$@" > "$HF_LOG"
     requested_urls = curl_log.read_text(encoding="utf-8").splitlines()
     submitted_args = hf_log.read_text(encoding="utf-8")
     assert requested_urls[0].endswith(f"/scripts/retail_bank/{bootstrap}")
-    assert len(requested_urls) == 1
+    assert len(requested_urls) == (2 if launcher == "run_remote_continuation_job.sh" else 1)
     assert f"/scripts/retail_bank/{bootstrap}" in submitted_args
+
+
+def test_continuation_launcher_rejects_source_without_candidate5_protocol(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' 'CANDIDATE4_PROTOCOL = true'\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text(
+        "#!/usr/bin/env bash\nprintf 'called\\n' > \"$HF_LOG\"\n",
+        encoding="utf-8",
+    )
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "required candidate5 protocol" in completed.stderr
+    assert not hf_log.exists()
+
+
+def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'CANDIDATE5_PROTOCOL = \"retail-bank-peft-candidate5/v1\"'\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n', encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+        "PUBLISH_ONLY": "1",
+    }
+
+    subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=True,
+        env=env,
+    )
+    submitted = hf_log.read_text(encoding="utf-8")
+    assert "cpu-basic" in submitted
+    assert "30m" in submitted
+    assert "--publish-only" in submitted
 
 
 def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:

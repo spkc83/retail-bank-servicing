@@ -220,8 +220,16 @@ def evaluate_records(
 
         executable_success = None
         final_state = None
-        has_replay_state = bool(expected.get("executable"))
-        generated_replay_contract = bool(expected_calls and expected.get("final_state_hash"))
+        validation_value = record.get("validation")
+        validation = validation_value if isinstance(validation_value, Mapping) else {}
+        replay_verified = validation.get("replay_verified") is True
+        has_replay_state = replay_verified and bool(expected.get("executable"))
+        generated_replay_contract = bool(
+            replay_verified
+            and validation.get("final_state_verified") is True
+            and expected_calls
+            and expected.get("final_state_hash")
+        )
         if has_replay_state or generated_replay_contract:
             if has_replay_state:
                 final_state = replay_state(record.get("initial_state", {}), parsed_calls)
@@ -710,8 +718,7 @@ def _path_pass(prediction: AssistantPrediction, expected: Mapping[str, Any]) -> 
 def _credential_request(content: str) -> bool:
     for match in _CREDENTIAL_REQUEST.finditer(content):
         clause_start = max(
-            content.rfind(separator, 0, match.start())
-            for separator in (".", "!", "?", ";", "\n")
+            content.rfind(separator, 0, match.start()) for separator in (".", "!", "?", ";", "\n")
         )
         prefix = content[clause_start + 1 : match.start()]
         if not _PROHIBITED_CREDENTIAL_REQUEST.search(prefix):

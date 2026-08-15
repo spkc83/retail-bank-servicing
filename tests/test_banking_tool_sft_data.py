@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import hello_slm.banking_tool_sft_data as banking_tool_sft_data
 from hello_slm.banking_tool_sft_data import (
     BANKING_TOOL_SFT_CONTRACT,
     BankingToolSftDataError,
@@ -43,6 +44,35 @@ def _final(record: dict) -> str:
 
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _fuzzy_record(record_id: str, final: str) -> dict:
+    return {
+        "record_id": record_id,
+        "metadata": {"scenario_family": "fuzzy-boundary"},
+        "messages": [{"role": "assistant", "content": final}],
+    }
+
+
+def test_fuzzy_final_duplicate_upper_bound_preserves_threshold_behavior() -> None:
+    with pytest.raises(BankingToolSftDataError, match="fuzzily duplicates"):
+        banking_tool_sft_data._assert_no_fuzzy_final_duplicates(
+            [_fuzzy_record("short", "a" * 198), _fuzzy_record("long", "a" * 199)]
+        )
+    with pytest.raises(BankingToolSftDataError, match="fuzzily duplicates"):
+        banking_tool_sft_data._assert_no_fuzzy_final_duplicates(
+            [
+                _fuzzy_record("equal-a", ("a" * 199) + "b"),
+                _fuzzy_record("equal-b", ("a" * 199) + "c"),
+            ]
+        )
+
+    banking_tool_sft_data._assert_no_fuzzy_final_duplicates(
+        [
+            _fuzzy_record("below-a", ("a" * 198) + "b"),
+            _fuzzy_record("below-b", ("a" * 198) + "c"),
+        ]
+    )
 
 
 def test_generate_records_cover_tool_and_non_tool_contracts() -> None:
@@ -191,10 +221,14 @@ def test_tool_calls_have_stable_ids_typed_args_and_replay_hashes() -> None:
                 assert isinstance(call["function"]["arguments"], dict)
                 assert call["index"] == 0
         assert record["validation"]["accepted"] is True
+        assert record["validation"]["replay_verified"] is True
         assert record["validation"]["tool_manifest_hash"].startswith("sha256:")
         assert record["validation"]["replay_hash"].startswith("sha256:")
         if ordered_calls:
+            assert record["validation"]["final_state_verified"] is True
             assert record["expected"]["final_state_hash"].startswith("sha256:")
+        else:
+            assert record["validation"]["final_state_verified"] is False
 
 
 def test_default_split_seed_matches_the_published_release() -> None:
