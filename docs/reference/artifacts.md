@@ -8,8 +8,8 @@ artifact.
 
 | Artifact | Identity |
 | --- | --- |
-| Hub model | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
-| Hub dataset | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
+| Hub model | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
+| Hub dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
 | Local model | `artifacts/banking-conversation-router-v6-hierarchical` |
 | Local dataset | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
@@ -21,12 +21,12 @@ artifact.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 16,693 | `10b6d4316719f4cd9f162d9faef36a3c5f264bf7a3a0ae759a2c5562993032f3` |
-| `validation.jsonl` | 4,061 | `cb9660b696d1b9d4ee81922c0fc042861c8cae9a55a9d0760b02ad98b94646f9` |
-| `test.jsonl` | 4,895 | `58bc7c10dd11797988e987afd17bdd9f5e0f79b2dbc2a17ed2ea33a8cb176b68` |
+| `train.jsonl` | 16,720 | `a03a35a384a80d39c10455d32d28a20a902f5ac11da5d18a279c1604fe96e38f` |
+| `validation.jsonl` | 4,077 | `83ecf3f221ec03d858a99fbdb1f0cebd5172157444a296418529674b62f0a7b3` |
+| `test.jsonl` | 4,913 | `64a0e7e6c6c0016979116da7e08a75f01fafb603e70b39caa0c8467345df61d9` |
 
 The dataset manifest SHA-256 recorded in the model is
-`0886dd8037e59d73b41c4ee60cde57dc865c85494309accd821d8a423681da11`.
+`caae2209063beb9370d0f3a6fc166e4c35658fafdd2420b21e5920c6c9e90de5`.
 
 ### Router artifact files
 

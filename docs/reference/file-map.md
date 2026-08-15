@@ -16,7 +16,7 @@ This map links the active hierarchical-router design to implementation files.
 
 | Path | Responsibility |
 | --- | --- |
-| [`../../data/banking-conversation-router-v6-hierarchical`](../../data/banking-conversation-router-v6-hierarchical) | 16,693/4,061/4,895 train/validation/test rows. |
+| [`../../data/banking-conversation-router-v6-hierarchical`](../../data/banking-conversation-router-v6-hierarchical) | 16,720/4,077/4,913 train/validation/test rows. |
 | [`../../data/sources/banking-conversation-router-v6-hierarchical.lock.json`](../../data/sources/banking-conversation-router-v6-hierarchical.lock.json) | Pinned external source and prepared split digests. |
 | [`../../artifacts/banking-conversation-router-v6-hierarchical/router_config.json`](../../artifacts/banking-conversation-router-v6-hierarchical/router_config.json) | Format-4 labels, thresholds, guidance contract, and immutable dataset revision. |
 | [`../../artifacts/banking-conversation-router-v6-hierarchical/metrics.json`](../../artifacts/banking-conversation-router-v6-hierarchical/metrics.json) | Training/calibration history, held-out metrics, counterfactual tests, and release status. |
@@ -27,10 +27,10 @@ Published identities:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
+073e61156885a8a2074c7254d76f00634058429a
 
 spkc83/retail-bank-conversation-router
-36920330d2502dfcf4d60572eadf1e3e71cd23fa
+c0d71b433fd1eef510fce36f6308eb36e423e329
 ```
 
 ## POC Orchestration

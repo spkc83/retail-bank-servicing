@@ -9,10 +9,10 @@ contract, and run either interface.
 
 | Component | Identity/status |
 | --- | --- |
-| Hierarchical router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
-| Router dataset | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
+| Hierarchical router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
+| Router dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
 | Local router artifact | `artifacts/banking-conversation-router-v6-hierarchical`; release eligible |
-| Router dataset rows | train 16,693; validation 4,061; test 4,895 |
+| Router dataset rows | train 16,720; validation 4,077; test 4,913 |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
 | Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |

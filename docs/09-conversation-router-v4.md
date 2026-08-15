@@ -146,21 +146,21 @@ records:
 - 0 held-out route, intent, or relation regression errors;
 - 0 trajectory runtime-transition errors;
 - 0 in-domain false refusals;
-- 0.004668 OOD false-accept rate;
-- 0.999315 intent macro F1;
-- 0.997324 action macro F1;
-- 1.0 entity-resolution macro F1.
+- 0.003232 OOD false-accept rate;
+- 0.996473 intent macro F1;
+- 0.997865 action macro F1;
+- 0.999060 entity-resolution macro F1.
 
 Dataset identity:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029
+073e61156885a8a2074c7254d76f00634058429a
 ```
 
 Router identity after publication:
 
 ```text
 spkc83/retail-bank-conversation-router
-36920330d2502dfcf4d60572eadf1e3e71cd23fa
+c0d71b433fd1eef510fce36f6308eb36e423e329
 ```

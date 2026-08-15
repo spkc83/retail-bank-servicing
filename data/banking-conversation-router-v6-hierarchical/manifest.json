@@ -7,7 +7,7 @@
     "converse"
   ],
   "contract": "banking-conversation-router-data",
-  "created_at": "2026-08-15T07:22:17.501073+00:00",
+  "created_at": "2026-08-15T17:01:06.180388+00:00",
   "domain_labels": [
     "out_of_domain",
     "banking",
@@ -66,21 +66,21 @@
       "test": {
         "clarify": 26,
         "converse": 595,
-        "execute_tool": 1088,
+        "execute_tool": 1092,
         "refuse_ood": 2785,
         "retrieve_policy": 415
       },
       "train": {
         "clarify": 778,
-        "converse": 1907,
-        "execute_tool": 6158,
+        "converse": 1916,
+        "execute_tool": 6166,
         "refuse_ood": 6736,
         "retrieve_policy": 1124
       },
       "validation": {
         "clarify": 50,
-        "converse": 597,
-        "execute_tool": 1384,
+        "converse": 600,
+        "execute_tool": 1388,
         "refuse_ood": 1656,
         "retrieve_policy": 383
       }
@@ -97,15 +97,15 @@
     "domain_counts": {
       "test": {
         "0": 2785,
-        "1": 2124
+        "1": 2128
       },
       "train": {
         "0": 6736,
-        "1": 9967
+        "1": 9984
       },
       "validation": {
         "0": 1656,
-        "1": 2414
+        "1": 2421
       }
     },
     "domain_labels": [
@@ -133,19 +133,19 @@
     ],
     "hierarchical_domain_counts": {
       "test": {
-        "banking": 1585,
+        "banking": 1589,
         "out_of_domain": 2785,
         "social": 539
       },
       "train": {
-        "banking": 8312,
+        "banking": 8320,
         "out_of_domain": 6736,
-        "social": 1655
+        "social": 1664
       },
       "validation": {
-        "banking": 1873,
+        "banking": 1877,
         "out_of_domain": 1656,
-        "social": 541
+        "social": 544
       }
     },
     "intent_counts": {
@@ -161,13 +161,13 @@
         "view_accounts": 90,
         "view_cards": 102,
         "view_service_cases": 253,
-        "view_transactions": 91,
-        "view_transfers": 85
+        "view_transactions": 93,
+        "view_transfers": 87
       },
       "train": {
         "None": 6736,
         "cancel_transfer": 544,
-        "conversation": 1655,
+        "conversation": 1664,
         "dispute_transaction": 608,
         "freeze_card": 558,
         "other_banking": 182,
@@ -176,13 +176,13 @@
         "view_accounts": 280,
         "view_cards": 310,
         "view_service_cases": 1858,
-        "view_transactions": 322,
-        "view_transfers": 298
+        "view_transactions": 326,
+        "view_transfers": 302
       },
       "validation": {
         "None": 1656,
         "cancel_transfer": 157,
-        "conversation": 541,
+        "conversation": 544,
         "dispute_transaction": 169,
         "freeze_card": 147,
         "other_banking": 42,
@@ -191,8 +191,8 @@
         "view_accounts": 102,
         "view_cards": 100,
         "view_service_cases": 286,
-        "view_transactions": 84,
-        "view_transfers": 114
+        "view_transactions": 86,
+        "view_transfers": 116
       }
     },
     "intent_labels": [
@@ -236,7 +236,7 @@
         "targeted_wrong_topic_repair": 40,
         "tool_error": 9,
         "tool_success": 57,
-        "transfer_transaction_semantic_contrast": 12,
+        "transfer_transaction_semantic_contrast": 16,
         "visible_multiturn": 51
       },
       "train": {
@@ -255,7 +255,7 @@
         "state_ineligible_entity": 32,
         "state_intent_switch": 1728,
         "state_ood_detour": 576,
-        "state_orphan_resume": 9,
+        "state_orphan_resume": 18,
         "state_policy_followup": 630,
         "state_social_detour": 1512,
         "targeted_agent_repair": 512,
@@ -265,7 +265,7 @@
         "targeted_wrong_topic_repair": 512,
         "tool_error": 116,
         "tool_success": 325,
-        "transfer_transaction_semantic_contrast": 24,
+        "transfer_transaction_semantic_contrast": 32,
         "visible_multiturn": 356
       },
       "validation": {
@@ -286,7 +286,7 @@
         "state_ineligible_entity": 4,
         "state_intent_switch": 576,
         "state_ood_detour": 432,
-        "state_orphan_resume": 3,
+        "state_orphan_resume": 6,
         "targeted_agent_repair": 40,
         "targeted_clarification_answer": 24,
         "targeted_contextual_followup": 24,
@@ -294,7 +294,7 @@
         "targeted_wrong_topic_repair": 40,
         "tool_error": 37,
         "tool_success": 76,
-        "transfer_transaction_semantic_contrast": 12,
+        "transfer_transaction_semantic_contrast": 16,
         "visible_multiturn": 13
       }
     },
@@ -327,9 +327,9 @@
     ],
     "seed": 7404,
     "split_counts": {
-      "test": 4909,
-      "train": 16703,
-      "validation": 4070
+      "test": 4913,
+      "train": 16720,
+      "validation": 4077
     }
   },
   "review_status": "automated-policy-pass",
@@ -432,31 +432,31 @@
       "allowed_use": [
         "conversation-router-training"
       ],
-      "bytes": 24451490,
+      "bytes": 24472240,
       "name": "train",
       "path": "train.jsonl",
-      "rows": 16703,
-      "sha256": "a75ccf620ce109fb85a430abe427194e477b780cc747e029532cbadef72baf6b"
+      "rows": 16720,
+      "sha256": "a03a35a384a80d39c10455d32d28a20a902f5ac11da5d18a279c1604fe96e38f"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 6572789,
+      "bytes": 6581998,
       "name": "validation",
       "path": "validation.jsonl",
-      "rows": 4070,
-      "sha256": "a592629f68547ba0b2f2a3b27055ef49c78772220ee3dba3d9e18f605def8641"
+      "rows": 4077,
+      "sha256": "83ecf3f221ec03d858a99fbdb1f0cebd5172157444a296418529674b62f0a7b3"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 6822459,
+      "bytes": 6830055,
       "name": "test",
       "path": "test.jsonl",
-      "rows": 4909,
-      "sha256": "af2df8e647dd3b521de4999d8266ea7f412b2b527a75c5b46060c2104e3ab8b9"
+      "rows": 4913,
+      "sha256": "64a0e7e6c6c0016979116da7e08a75f01fafb603e70b39caa0c8467345df61d9"
     }
   ]
 }

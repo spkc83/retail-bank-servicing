@@ -16,8 +16,8 @@ fictional. The POC does not connect to a real bank.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
-| Router data | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
+| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
+| Router data | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
 | Local artifact | `artifacts/banking-conversation-router-v6-hierarchical` |
 | Local data | `data/banking-conversation-router-v6-hierarchical` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
@@ -105,7 +105,7 @@ PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
   --output-dir artifacts/banking-conversation-router-v6-hierarchical
 ```
 
-Expected split counts are 16,693 training, 4,061 validation, and 4,895 test
+Expected split counts are 16,720 training, 4,077 validation, and 4,913 test
 rows. Training must produce `release_eligible: true` and an empty
 `release_gate_failures` list in `metrics.json`.
 

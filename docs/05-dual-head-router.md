@@ -8,8 +8,8 @@ and a constrained joint decoder.
 
 | Item | Value |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@36920330d2502dfcf4d60572eadf1e3e71cd23fa` |
-| Dataset | `spkc83/retail-bank-conversation-router-data@2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
+| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
+| Dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
 | Local artifact | `artifacts/banking-conversation-router-v6-hierarchical` |
 | Base | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Format | 4 |
@@ -139,20 +139,20 @@ conversation and may ask for missing selectors rather than call the tool.
 
 ## Held-Out Results
 
-The release passed all gates on 4,895 test rows:
+The release passed all gates on 4,913 test rows:
 
 | Metric | Result |
 | --- | ---: |
-| Domain macro F1 | 0.996199 |
-| Lane macro F1 | 0.996935 |
-| Family macro F1 | 0.996058 |
-| Intent macro F1 | 0.999315 |
-| Relation macro F1 | 0.972280 |
-| Action macro F1 | 0.997324 |
-| Entity-resolution macro F1 | 1.000000 |
-| Exposed action macro F1 | 0.996889 |
-| Exposed entity-resolution macro F1 | 0.999818 |
-| OOD false-accept rate | 0.004668 |
+| Domain macro F1 | 0.997533 |
+| Lane macro F1 | 0.995155 |
+| Family macro F1 | 0.994552 |
+| Intent macro F1 | 0.996473 |
+| Relation macro F1 | 0.961950 |
+| Action macro F1 | 0.997865 |
+| Entity-resolution macro F1 | 0.999060 |
+| Exposed action macro F1 | 0.997996 |
+| Exposed entity-resolution macro F1 | 0.999250 |
+| OOD false-accept rate | 0.003232 |
 | In-domain false-refusal rate | 0.000000 |
 | Counterfactual action accuracy | 1.000000 |
 | Counterfactual entity accuracy | 1.000000 |

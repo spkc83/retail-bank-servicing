@@ -10,21 +10,21 @@ examples.
 | Item | Value |
 | --- | --- |
 | Dataset | `spkc83/retail-bank-conversation-router-data` |
-| Immutable revision | `2b8a8d92b2ab65b9f6bc7c7d1efbd3dc7c482029` |
+| Immutable revision | `073e61156885a8a2074c7254d76f00634058429a` |
 | Local directory | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
-| Train rows | 16,693 |
-| Validation rows | 4,061 |
-| Test rows | 4,895 |
-| Manifest SHA-256 | `0886dd8037e59d73b41c4ee60cde57dc865c85494309accd821d8a423681da11` |
+| Train rows | 16,720 |
+| Validation rows | 4,077 |
+| Test rows | 4,913 |
+| Manifest SHA-256 | `caae2209063beb9370d0f3a6fc166e4c35658fafdd2420b21e5920c6c9e90de5` |
 
 The split SHA-256 values are:
 
 | Split | SHA-256 |
 | --- | --- |
-| train | `10b6d4316719f4cd9f162d9faef36a3c5f264bf7a3a0ae759a2c5562993032f3` |
-| validation | `cb9660b696d1b9d4ee81922c0fc042861c8cae9a55a9d0760b02ad98b94646f9` |
-| test | `58bc7c10dd11797988e987afd17bdd9f5e0f79b2dbc2a17ed2ea33a8cb176b68` |
+| train | `a03a35a384a80d39c10455d32d28a20a902f5ac11da5d18a279c1604fe96e38f` |
+| validation | `83ecf3f221ec03d858a99fbdb1f0cebd5172157444a296418529674b62f0a7b3` |
+| test | `64a0e7e6c6c0016979116da7e08a75f01fafb603e70b39caa0c8467345df61d9` |
 
 ## Inputs and Generator
 
