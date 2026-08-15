@@ -184,7 +184,7 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`2ec64ceacc390f5619d246fbca60dcca67f4a83f`. The runtime is **RUNNING** and an
+`cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`. The runtime is **RUNNING** and an
 authenticated chat smoke generated a model-authored response on a ZeroGPU RTX
 PRO 6000 worker using the pinned BF16 base-plus-adapter composition.
 

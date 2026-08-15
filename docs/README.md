@@ -16,7 +16,7 @@ contract, and run either interface.
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
 | Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2ec64ceacc390f5619d246fbca60dcca67f4a83f`; authenticated chat smoke passed |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`; authenticated chat smoke passed |
 
 ## Read in This Order
 

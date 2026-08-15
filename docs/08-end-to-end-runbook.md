@@ -195,7 +195,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source/pin deployment is
-`2ec64ceacc390f5619d246fbca60dcca67f4a83f`. The runtime is RUNNING and its
+`cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`. The runtime is RUNNING and its
 authenticated chat smoke passed on ZeroGPU with the pinned base, adapter, and
 router identities present in the returned diagnostics.
 
