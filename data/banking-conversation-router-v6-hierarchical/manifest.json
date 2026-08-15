@@ -1,0 +1,460 @@
+{
+  "action_labels": [
+    "refuse_ood",
+    "execute_tool",
+    "clarify",
+    "retrieve_policy",
+    "converse"
+  ],
+  "contract": "banking-conversation-router-data",
+  "created_at": "2026-08-15T07:22:17.501073+00:00",
+  "domain_labels": [
+    "out_of_domain",
+    "banking",
+    "social"
+  ],
+  "entity_resolution_labels": [
+    "not_required",
+    "resolved",
+    "missing",
+    "ambiguous",
+    "ineligible"
+  ],
+  "family_labels": [
+    "external",
+    "accounts",
+    "cards",
+    "transactions",
+    "transfers",
+    "service_cases",
+    "policy",
+    "social",
+    "other_banking"
+  ],
+  "format_version": 3,
+  "intent_labels": [
+    "view_accounts",
+    "view_cards",
+    "freeze_card",
+    "replace_card",
+    "view_transactions",
+    "dispute_transaction",
+    "view_transfers",
+    "cancel_transfer",
+    "view_service_cases",
+    "policy_knowledge",
+    "conversation",
+    "other_banking"
+  ],
+  "lane_labels": [
+    "out_of_domain",
+    "servicing",
+    "policy",
+    "conversation",
+    "other_banking"
+  ],
+  "max_exchanges": 3,
+  "relation_labels": [
+    "context_dependent",
+    "agent_repair",
+    "topic_shift",
+    "clarification_answer",
+    "resume_previous_service"
+  ],
+  "report": {
+    "action_counts": {
+      "test": {
+        "clarify": 26,
+        "converse": 595,
+        "execute_tool": 1074,
+        "refuse_ood": 2785,
+        "retrieve_policy": 415
+      },
+      "train": {
+        "clarify": 776,
+        "converse": 1883,
+        "execute_tool": 6134,
+        "refuse_ood": 6776,
+        "retrieve_policy": 1124
+      },
+      "validation": {
+        "clarify": 48,
+        "converse": 589,
+        "execute_tool": 1372,
+        "refuse_ood": 1669,
+        "retrieve_policy": 383
+      }
+    },
+    "action_labels": [
+      "refuse_ood",
+      "execute_tool",
+      "clarify",
+      "retrieve_policy",
+      "converse"
+    ],
+    "contract": "banking-conversation-router-data-report",
+    "cross_split_duplicates_removed": 5,
+    "domain_counts": {
+      "test": {
+        "0": 2785,
+        "1": 2110
+      },
+      "train": {
+        "0": 6776,
+        "1": 9917
+      },
+      "validation": {
+        "0": 1669,
+        "1": 2392
+      }
+    },
+    "domain_labels": [
+      "out_of_domain",
+      "banking",
+      "social"
+    ],
+    "entity_resolution_labels": [
+      "not_required",
+      "resolved",
+      "missing",
+      "ambiguous",
+      "ineligible"
+    ],
+    "family_labels": [
+      "external",
+      "accounts",
+      "cards",
+      "transactions",
+      "transfers",
+      "service_cases",
+      "policy",
+      "social",
+      "other_banking"
+    ],
+    "hierarchical_domain_counts": {
+      "test": {
+        "banking": 1571,
+        "out_of_domain": 2785,
+        "social": 539
+      },
+      "train": {
+        "banking": 8262,
+        "out_of_domain": 6776,
+        "social": 1655
+      },
+      "validation": {
+        "banking": 1851,
+        "out_of_domain": 1669,
+        "social": 541
+      }
+    },
+    "intent_counts": {
+      "test": {
+        "None": 2785,
+        "cancel_transfer": 103,
+        "conversation": 539,
+        "dispute_transaction": 117,
+        "freeze_card": 133,
+        "other_banking": 38,
+        "policy_knowledge": 415,
+        "replace_card": 158,
+        "view_accounts": 90,
+        "view_cards": 102,
+        "view_service_cases": 253,
+        "view_transactions": 84,
+        "view_transfers": 78
+      },
+      "train": {
+        "None": 6776,
+        "cancel_transfer": 544,
+        "conversation": 1655,
+        "dispute_transaction": 608,
+        "freeze_card": 558,
+        "other_banking": 158,
+        "policy_knowledge": 1124,
+        "replace_card": 2226,
+        "view_accounts": 280,
+        "view_cards": 310,
+        "view_service_cases": 1858,
+        "view_transactions": 310,
+        "view_transfers": 286
+      },
+      "validation": {
+        "None": 1669,
+        "cancel_transfer": 157,
+        "conversation": 541,
+        "dispute_transaction": 169,
+        "freeze_card": 147,
+        "other_banking": 34,
+        "policy_knowledge": 383,
+        "replace_card": 287,
+        "view_accounts": 102,
+        "view_cards": 100,
+        "view_service_cases": 286,
+        "view_transactions": 78,
+        "view_transfers": 108
+      }
+    },
+    "intent_labels": [
+      "view_accounts",
+      "view_cards",
+      "freeze_card",
+      "replace_card",
+      "view_transactions",
+      "dispute_transaction",
+      "view_transfers",
+      "cancel_transfer",
+      "view_service_cases",
+      "policy_knowledge",
+      "conversation",
+      "other_banking"
+    ],
+    "kind_counts": {
+      "test": {
+        "banking_topic_shift": 202,
+        "clarification": 5,
+        "clinc_external_ood": 2140,
+        "contextual_followup": 31,
+        "conversation": 24,
+        "external_topic_shift": 202,
+        "hard_negative": 3,
+        "heldout_policy_followup_generalization": 315,
+        "heldout_screenshot_regression": 7,
+        "heldout_social_generalization": 504,
+        "multi_turn": 12,
+        "ood": 6,
+        "resume_previous_service": 126,
+        "retrieval_grounded_policy": 46,
+        "state_ineligible_entity": 4,
+        "state_intent_switch": 576,
+        "state_ood_detour": 432,
+        "state_orphan_resume": 3,
+        "targeted_agent_repair": 40,
+        "targeted_clarification_answer": 24,
+        "targeted_contextual_followup": 24,
+        "targeted_service_case": 12,
+        "targeted_wrong_topic_repair": 40,
+        "tool_error": 9,
+        "tool_success": 57,
+        "visible_multiturn": 51
+      },
+      "train": {
+        "agent_repair": 64,
+        "banking_topic_shift": 2095,
+        "clarification": 36,
+        "clarification_answer": 185,
+        "clinc_external_ood": 4048,
+        "contextual_followup": 685,
+        "conversation": 77,
+        "external_topic_shift": 2094,
+        "hard_negative": 32,
+        "multi_turn": 54,
+        "ood": 26,
+        "resume_previous_service": 360,
+        "retrieval_grounded_policy": 215,
+        "state_ineligible_entity": 32,
+        "state_intent_switch": 1728,
+        "state_ood_detour": 576,
+        "state_orphan_resume": 9,
+        "state_policy_followup": 630,
+        "state_social_detour": 1512,
+        "targeted_agent_repair": 512,
+        "targeted_clarification_answer": 192,
+        "targeted_contextual_followup": 192,
+        "targeted_service_case": 48,
+        "targeted_wrong_topic_repair": 512,
+        "tool_error": 116,
+        "tool_success": 325,
+        "visible_multiturn": 338
+      },
+      "validation": {
+        "agent_repair": 16,
+        "banking_topic_shift": 362,
+        "clarification_answer": 2,
+        "clinc_external_ood": 858,
+        "contextual_followup": 160,
+        "conversation": 22,
+        "external_topic_shift": 362,
+        "hard_negative": 6,
+        "heldout_policy_followup_generalization": 315,
+        "heldout_social_generalization": 504,
+        "multi_turn": 18,
+        "ood": 9,
+        "resume_previous_service": 126,
+        "retrieval_grounded_policy": 26,
+        "state_ineligible_entity": 4,
+        "state_intent_switch": 576,
+        "state_ood_detour": 432,
+        "state_orphan_resume": 3,
+        "targeted_agent_repair": 40,
+        "targeted_clarification_answer": 24,
+        "targeted_contextual_followup": 24,
+        "targeted_service_case": 12,
+        "targeted_wrong_topic_repair": 40,
+        "tool_error": 37,
+        "tool_success": 76,
+        "visible_multiturn": 7
+      }
+    },
+    "lane_labels": [
+      "out_of_domain",
+      "servicing",
+      "policy",
+      "conversation",
+      "other_banking"
+    ],
+    "leakage": {
+      "counterfactual_pair_split_leak_count": 0,
+      "counterfactual_pair_split_leaks": {},
+      "group_split_leak_count": 0,
+      "group_split_leaks": {},
+      "state_current_text_split_leak_count": 0,
+      "state_current_text_split_leaks": {},
+      "state_paraphrase_family_split_leak_count": 0,
+      "state_paraphrase_family_split_leaks": {},
+      "trajectory_split_leak_count": 0,
+      "trajectory_split_leaks": {}
+    },
+    "pii_matches": 0,
+    "relation_labels": [
+      "context_dependent",
+      "agent_repair",
+      "topic_shift",
+      "clarification_answer",
+      "resume_previous_service"
+    ],
+    "seed": 7404,
+    "split_counts": {
+      "test": 4895,
+      "train": 16693,
+      "validation": 4061
+    }
+  },
+  "review_status": "automated-policy-pass",
+  "schema": {
+    "action_index": "index into action_labels",
+    "action_name": "name in action_labels",
+    "actionable_entity_count": "eligible entity count when annotated or null",
+    "counterfactual_pair_id": "matched state-pair ID or null",
+    "counterfactual_phrase_family": "split-isolated phrase family or null",
+    "counterfactual_target": "source counterfactual target or null",
+    "domain_index": "index into domain_labels",
+    "domain_label": "legacy binary: 1=banking/social, 0=out_of_domain",
+    "domain_name": "name in domain_labels",
+    "entity_resolution_index": "index into entity_resolution_labels",
+    "entity_resolution_name": "name in entity_resolution_labels",
+    "family_index": "index into family_labels",
+    "family_name": "name in family_labels",
+    "intent": "fine-intent name or null for out_of_domain",
+    "intent_label": "index into intent_labels or -100",
+    "lane": "legacy alias for lane_name; null for out_of_domain",
+    "lane_index": "index into lane_labels",
+    "lane_name": "name in lane_labels",
+    "relation_labels": "multi-hot vector in relation_labels order",
+    "text": "cross-encoder input rendered by render_router_input"
+  },
+  "seed": 7404,
+  "signed": false,
+  "sources": {
+    "UCI/clinc150": {
+      "allowed_use": [
+        "conversation-router-external-ood-training"
+      ],
+      "archive_sha256": "0d8ecc3e1edd7b25cabde0177544ce536ddf773844bc80ef1a75f36e7f030ea2",
+      "member": "clinc150_uci/data_oos_plus.json",
+      "member_sha256": "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f",
+      "url": "https://archive.ics.uci.edu/static/public/570/clinc150.zip",
+      "used_labels": [
+        "alarm",
+        "calendar",
+        "calendar_update",
+        "cook_time",
+        "date",
+        "definition",
+        "directions",
+        "distance",
+        "email",
+        "email_query",
+        "events",
+        "find_phone",
+        "flight_status",
+        "ingredient_substitution",
+        "ingredients_list",
+        "lost_luggage",
+        "measurement_conversion",
+        "meeting_schedule",
+        "next_song",
+        "nutrition_info",
+        "oos",
+        "play_music",
+        "plug_type",
+        "pto_request",
+        "recipe",
+        "reminder",
+        "reminder_update",
+        "shopping_list",
+        "shopping_list_update",
+        "spelling",
+        "tell_joke",
+        "text",
+        "timer",
+        "timezone",
+        "todo_list",
+        "todo_list_update",
+        "traffic",
+        "translate",
+        "travel_alert",
+        "travel_notification",
+        "weather",
+        "what_song"
+      ]
+    },
+    "sft": {
+      "allowed_use": [
+        "conversation-router-domain-intent-training"
+      ],
+      "behavioral_gate_sha256": {
+        "coreference-shadow": "848d9f9564ddea1c789ba64da1679d3c63902f8bbd542b92b4f20690fdadf967"
+      },
+      "manifest_sha256": "eb7ad51bf4107bf2bfb8a54b8412af360c379cc3e0873ddf353357a825b968cf",
+      "path": "/stora/work/home/pavan/learn/hello-SLM/data/banking-servicing-alignment-v5",
+      "split_sha256": {
+        "test": "30d95549644d12c20a5596eda443b2f9519d5ddd6b3f732f84b1464e8138378c",
+        "train": "dcf214b26c24657d2fc6944be4448ebc5fb5afa37d227c4a5939841e94edf8ec",
+        "validation": "d0ccc095756dfc00ebc692b8e70e2026e1195a02457312292e8e849cd0689eda"
+      }
+    }
+  },
+  "splits": [
+    {
+      "allowed_use": [
+        "conversation-router-training"
+      ],
+      "bytes": 24465518,
+      "name": "train",
+      "path": "train.jsonl",
+      "rows": 16693,
+      "sha256": "10b6d4316719f4cd9f162d9faef36a3c5f264bf7a3a0ae759a2c5562993032f3"
+    },
+    {
+      "allowed_use": [
+        "conversation-router-evaluation"
+      ],
+      "bytes": 6569850,
+      "name": "validation",
+      "path": "validation.jsonl",
+      "rows": 4061,
+      "sha256": "cb9660b696d1b9d4ee81922c0fc042861c8cae9a55a9d0760b02ad98b94646f9"
+    },
+    {
+      "allowed_use": [
+        "conversation-router-evaluation"
+      ],
+      "bytes": 6804345,
+      "name": "test",
+      "path": "test.jsonl",
+      "rows": 4895,
+      "sha256": "58bc7c10dd11797988e987afd17bdd9f5e0f79b2dbc2a17ed2ea33a8cb176b68"
+    }
+  ]
+}

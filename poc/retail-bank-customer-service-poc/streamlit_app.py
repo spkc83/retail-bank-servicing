@@ -32,7 +32,9 @@ LOCAL_AUTH_DEFAULT_JSON = json.dumps(
     }
 )
 DEFAULT_LOCAL_ROUTER_ARTIFACT = (
-    Path(__file__).resolve().parents[2] / "artifacts" / "banking-conversation-router-v5"
+    Path(__file__).resolve().parents[2]
+    / "artifacts"
+    / "banking-conversation-router-v6-hierarchical"
 )
 
 PRESETS = (

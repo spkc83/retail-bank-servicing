@@ -73,6 +73,20 @@ def router_guidance() -> dict[str, Any]:
     }
 
 
+def v4_router_guidance(
+    *,
+    action: str,
+    fine_intent: str = "replace_card",
+    entity_resolution: str = "resolved",
+) -> dict[str, Any]:
+    return {
+        **router_guidance(),
+        "action": action,
+        "fine_intent": fine_intent,
+        "entity_resolution": entity_resolution,
+    }
+
+
 def test_public_tool_schemas_use_customer_facing_arguments() -> None:
     schemas = {item["function"]["name"]: item["function"]["parameters"] for item in MODEL_TOOLS}
 
@@ -164,6 +178,137 @@ def test_plain_first_pass_text_is_a_model_authored_conversational_answer() -> No
             "routers, tools, GPUs, CPUs, or implementation details."
         ),
     }
+
+
+def test_v4_execute_exposes_only_predicted_intent_tool_across_followup() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_transactions", "arguments": {"limit": 2}}</tool_call>',
+            "Here are your two most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my two latest transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+    assert len(model.calls) == 2
+    for call in model.calls:
+        assert [tool["function"]["name"] for tool in call["tools"]] == ["list_transactions"]
+    system_prompt = model.calls[0]["messages"][0]["content"]
+    assert "Use only list_transactions for this turn" in system_prompt
+    assert "guidance supplies no tool arguments" in system_prompt
+
+
+@pytest.mark.parametrize("entity_resolution", ["missing", "ambiguous", "ineligible"])
+def test_v4_unresolved_entity_asks_model_authored_clarification_without_tools(
+    entity_resolution: str,
+) -> None:
+    clarification = "Which card would you like me to replace?"
+    model = RecordingModel([clarification])
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Replace that card.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            entity_resolution=entity_resolution,
+        ),
+    )
+
+    assert result.response == clarification
+    assert result.tool_calls == ()
+    assert model.calls[0]["tools"] is None
+    assert (
+        "Ask exactly one concise, natural clarification question"
+        in (model.calls[0]["messages"][0]["content"])
+    )
+
+
+def test_v4_clarify_never_executes_a_model_emitted_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = RecordingModel(
+        ['<tool_call>{"name": "replace_card", "arguments": {"last4": "4821"}}</tool_call>']
+    )
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(AgentProtocolError, match="unexposed tool"):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Replace that card.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="clarify",
+                entity_resolution="ambiguous",
+            ),
+        )
+
+    assert model.calls[0]["tools"] is None
+    assert executed == []
+
+
+def test_v4_converse_exposes_no_banking_tools() -> None:
+    response = "Hello! How can I help you today?"
+    model = RecordingModel([response])
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="converse",
+            fine_intent="conversation",
+            entity_resolution="not_applicable",
+        ),
+    )
+
+    assert result.response == response
+    assert model.calls[0]["tools"] is None
+    assert "Respond naturally and concisely" in model.calls[0]["messages"][0]["content"]
+
+
+def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:
+    model = RecordingModel(["Which card would you like help with?"])
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Replace it",
+        conversation=[],
+        router_result={
+            "route": "uncertain",
+            "intent": "replace_card",
+            "action": "execute_tool",
+            "entity_resolution": "resolved",
+        },
+    )
+
+    assert result.tool_calls == ()
+    assert model.calls[0]["tools"] is None
+    assert "classifier abstained" in model.calls[0]["messages"][0]["content"]
 
 
 def test_internal_language_leak_gets_one_customer_experience_repair() -> None:

@@ -10,6 +10,14 @@ from hello_slm.banking_conversation_router_data import (
     normalize_router_text,
     render_router_input,
 )
+from hello_slm.banking_domain_taxonomy import (
+    ACTION_LABELS,
+    DOMAIN_LABELS,
+    ENTITY_RESOLUTION_LABELS,
+    FAMILY_LABELS,
+    LANE_LABELS,
+    validate_hierarchical_labels,
+)
 
 
 def sft_records_by_split() -> dict[str, list[dict[str, Any]]]:
@@ -74,7 +82,7 @@ def test_cross_encoder_renderer_places_current_then_recent_complete_exchanges() 
     assert "hidden" not in rendered
 
 
-def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
+def test_v5_splits_use_hierarchy_actions_relations_and_no_current_turn_leakage() -> None:
     splits, report = build_conversation_router_splits(
         sft_records_by_split(),
         clinc_payload(),
@@ -110,9 +118,19 @@ def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
                 "current_text",
                 "history",
                 "domain_label",
+                "domain_name",
+                "domain_index",
                 "intent_label",
                 "intent",
                 "lane",
+                "lane_name",
+                "lane_index",
+                "family_name",
+                "family_index",
+                "action_name",
+                "action_index",
+                "entity_resolution_name",
+                "entity_resolution_index",
                 "relation_labels",
                 "example_kind",
                 "source",
@@ -120,16 +138,37 @@ def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
                 "group_id",
                 "trajectory_id",
                 "prior_dialogue_state",
+                "counterfactual_pair_id",
+                "counterfactual_target",
+                "counterfactual_phrase_family",
+                "actionable_entity_count",
             }
             assert len(row["relation_labels"]) == len(RELATION_LABELS)
+            assert row["domain_index"] == DOMAIN_LABELS.index(row["domain_name"])
+            assert row["lane_index"] == LANE_LABELS.index(row["lane_name"])
+            assert row["family_index"] == FAMILY_LABELS.index(row["family_name"])
+            assert row["action_index"] == ACTION_LABELS.index(row["action_name"])
+            assert row["entity_resolution_index"] == ENTITY_RESOLUTION_LABELS.index(
+                row["entity_resolution_name"]
+            )
+            validate_hierarchical_labels(row)
             assert "tool_call" not in str(row["text"])
             assert "Main Checking has USD 10.00" not in str(row["text"])
 
     kinds = Counter(row["example_kind"] for row in splits["train"])
-    assert kinds["contextual_followup"] >= 1
-    assert kinds["agent_repair"] >= 1
-    assert kinds["clarification_answer"] >= 1
-    assert kinds["typo_contextual_followup"] >= 1
+    ungrounded_generic_context = [
+        row
+        for row in splits["train"]
+        if row["source"] == "self-authored-router-v5-synthetic"
+        and row["example_kind"]
+        in {
+            "contextual_followup",
+            "agent_repair",
+            "clarification_answer",
+            "typo_contextual_followup",
+        }
+    ]
+    assert ungrounded_generic_context == []
     assert kinds["external_topic_shift"] >= 1
     assert kinds["banking_topic_shift"] >= 1
     assert kinds["targeted_contextual_followup"] >= 1
@@ -138,14 +177,74 @@ def test_v5_splits_use_intents_relations_and_no_current_turn_leakage() -> None:
     assert kinds["targeted_service_case"] >= 1
     assert sum(kinds.values()) > 10
     test_kinds = Counter(row["example_kind"] for row in splits["test"])
-    assert test_kinds["contextual_followup"] >= 1
-    assert test_kinds["agent_repair"] >= 1
-    assert test_kinds["clarification_answer"] >= 1
     assert test_kinds["external_topic_shift"] >= 1
     assert test_kinds["heldout_screenshot_regression"] == 7
     assert report["leakage"]["group_split_leak_count"] == 0
     assert report["leakage"]["state_current_text_split_leak_count"] == 0
+    assert report["leakage"]["counterfactual_pair_split_leak_count"] == 0
     assert report["pii_matches"] == 0
+
+
+def test_synthetic_topic_shift_preserves_governed_action_and_entity_labels() -> None:
+    clarification = _record(
+        split="train",
+        record_id="train-replace-clarification",
+        scenario_family="clarification_card",
+        user="Please replace a card.",
+        assistant="Which card should I replace?",
+        path="clarification",
+    )
+    clarification["metadata"]["explicit_entity_resolution"] = "missing"
+    records = sft_records_by_split()
+    records["train"] = [clarification]
+
+    splits, _report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+    resumed = [
+        row
+        for row in splits["train"]
+        if row["example_kind"] == "banking_topic_shift"
+        and row["current_text"] == "Please replace a card."
+    ]
+
+    assert resumed
+    assert {(row["action_name"], row["entity_resolution_name"]) for row in resumed} == {
+        ("clarify", "missing")
+    }
+    detours = [
+        row
+        for row in splits["train"]
+        if row["example_kind"] == "external_topic_shift"
+        and row["history"][0]["content"] == "Please replace a card."
+    ]
+    assert detours
+    assert all(row["history"][1]["content"] == "Which card should I replace?" for row in detours)
+
+
+def test_governed_policy_path_takes_precedence_over_mutation_keywords() -> None:
+    records = sft_records_by_split()
+    policy = _record(
+        split="train",
+        record_id="replacement-policy",
+        scenario_family="faq_card_replacement",
+        user="How long does it take to replace a damaged card?",
+        assistant="Replacement timing is disclosed when the request is made.",
+        path="retrieval_grounded_policy",
+    )
+    policy["expected"]["tool_calls"] = []
+    records["train"].append(policy)
+
+    splits, _report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+    row = next(
+        item
+        for item in splits["train"]
+        if item["current_text"] == "How long does it take to replace a damaged card?"
+        and item["example_kind"] == "retrieval_grounded_policy"
+    )
+
+    assert row["intent"] == "policy_knowledge"
+    assert row["lane_name"] == "policy"
+    assert row["action_name"] == "retrieve_policy"
+    assert row["entity_resolution_name"] == "not_required"
 
 
 def test_sft_ood_has_no_intent_and_banking_refusal_uses_other_banking() -> None:
@@ -179,9 +278,94 @@ def test_sft_ood_has_no_intent_and_banking_refusal_uses_other_banking() -> None:
     by_current = {row["current_text"]: row for row in splits["train"]}
 
     assert by_current["Explain photosynthesis."]["domain_label"] == 0
+    assert by_current["Explain photosynthesis."]["domain_name"] == "out_of_domain"
     assert by_current["Explain photosynthesis."]["intent_label"] == -100
+    assert by_current["Explain photosynthesis."]["action_name"] == "refuse_ood"
     assert by_current["Tell me my full account number."]["domain_label"] == 1
+    assert by_current["Tell me my full account number."]["domain_name"] == "banking"
     assert by_current["Tell me my full account number."]["intent"] == "other_banking"
+
+
+def test_sft_coreference_pairs_retain_action_entity_supervision_without_output_leakage() -> None:
+    records = sft_records_by_split()
+    action = _record(
+        split="train",
+        record_id="coref-action",
+        scenario_family="deictic_replace_action",
+        user="replace the card from that list",
+        assistant="The replacement is pending.",
+        path="multi_turn",
+    )
+    action["metadata"].update(
+        {
+            "coreference_pair_id": "pair-1",
+            "coreference_phrase_family": "that-list",
+            "coreference_target": "replace_card",
+            "actionable_card_count": 1,
+        }
+    )
+    action["expected"]["tool_calls"] = [{"name": "replace_card", "arguments": {"last4": "4821"}}]
+    action["messages"][1:1] = [
+        {"role": "user", "content": "List my cards.", "loss": False},
+        {
+            "role": "assistant",
+            "content": "The active card ends in 4821.",
+            "loss": False,
+        },
+    ]
+    ambiguous = _record(
+        split="train",
+        record_id="coref-clarify",
+        scenario_family="deictic_replace_ambiguity",
+        user="replace the card from that list",
+        assistant="Which card should I replace?",
+        path="clarification",
+    )
+    ambiguous["metadata"].update(
+        {
+            "coreference_pair_id": "pair-1",
+            "coreference_phrase_family": "that-list",
+            "coreference_target": "clarification",
+            "actionable_card_count": 2,
+        }
+    )
+    ambiguous["expected"]["tool_calls"] = []
+    ambiguous["messages"][1:1] = [
+        {"role": "user", "content": "List my cards.", "loss": False},
+        {
+            "role": "assistant",
+            "content": "Active cards end in 4821 and 7319.",
+            "loss": False,
+        },
+    ]
+    records["train"].extend([action, ambiguous])
+
+    splits, report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+    pair_rows = [row for row in splits["train"] if row["counterfactual_pair_id"] == "pair-1"]
+
+    assert {(row["action_name"], row["entity_resolution_name"]) for row in pair_rows} == {
+        ("execute_tool", "resolved"),
+        ("clarify", "ambiguous"),
+    }
+    assert {row["counterfactual_target"] for row in pair_rows} == {
+        "replace_card",
+        "clarification",
+    }
+    assert {row["actionable_entity_count"] for row in pair_rows} == {1, 2}
+    assert all("replacement is pending" not in row["text"].casefold() for row in pair_rows)
+    assert all("which card should i replace" not in row["text"].casefold() for row in pair_rows)
+    assert report["leakage"]["counterfactual_pair_split_leak_count"] == 0
+
+
+def test_counterfactual_pair_cannot_cross_splits() -> None:
+    records = sft_records_by_split()
+    records["train"][0]["metadata"]["coreference_pair_id"] = "shared-pair"
+    records["test"][0]["metadata"]["coreference_pair_id"] = "shared-pair"
+
+    import pytest
+
+    with pytest.raises(ValueError, match="counterfactual pair .* appears in both"):
+        build_conversation_router_splits(records, clinc_payload(), seed=7404)
 
 
 def test_resume_examples_use_pre_turn_state_and_remain_in_one_split() -> None:
@@ -258,6 +442,15 @@ def test_state_social_generalization_spans_all_intents_and_policy_histories() ->
         assert all(row["intent"] == "conversation" for row in social)
         assert all(row["relation_labels"] == [0, 0, 0, 0, 0] for row in social)
 
+    train_wellbeing = {
+        normalize_router_text(str(row["current_text"]))
+        for row in splits["train"]
+        if row["example_kind"] == "state_social_detour"
+        and "wellbeing_train" in str(row["group_id"])
+    }
+    assert normalize_router_text("How have you been?") in train_wellbeing
+    assert normalize_router_text("Are you doing okay?") in train_wellbeing
+    assert normalize_router_text("How are you?") not in train_wellbeing
     assert current_by_split["train"].isdisjoint(current_by_split["validation"])
     assert current_by_split["train"].isdisjoint(current_by_split["test"])
     assert current_by_split["validation"].isdisjoint(current_by_split["test"])
@@ -276,6 +469,24 @@ def test_state_social_generalization_spans_all_intents_and_policy_histories() ->
     }
     assert report["leakage"]["state_current_text_split_leak_count"] == 0
 
+
+def test_ineligible_entity_supervision_is_present_in_every_split() -> None:
+    splits, _report = build_conversation_router_splits(
+        sft_records_by_split(),
+        clinc_payload(),
+        seed=7404,
+    )
+
+    for _split, rows in splits.items():
+        ineligible = [row for row in rows if row["example_kind"] == "state_ineligible_entity"]
+        assert {row["intent"] for row in ineligible} == {
+            "freeze_card",
+            "replace_card",
+            "dispute_transaction",
+            "cancel_transfer",
+        }
+        assert all(row["action_name"] == "converse" for row in ineligible)
+        assert all(row["entity_resolution_name"] == "ineligible" for row in ineligible)
 
 def test_implicit_policy_followups_span_all_canonical_topics_and_act_families() -> None:
     splits, _report = build_conversation_router_splits(
@@ -370,6 +581,10 @@ def _record(
     assistant: str,
     path: str = "tool_success",
 ) -> dict[str, Any]:
+    tool_name = {
+        "card_status": "list_cards",
+        "service_cases": "list_service_cases",
+    }.get(scenario_family, "list_accounts")
     return {
         "record_id": record_id,
         "messages": [
@@ -379,7 +594,7 @@ def _record(
             {"role": "tool", "name": "list_accounts", "content": {"ok": True}, "loss": False},
             {"role": "assistant", "content": assistant, "loss": True},
         ],
-        "expected": {"tool_calls": [{"name": "list_accounts", "arguments": {}}]},
+        "expected": {"tool_calls": [{"name": tool_name, "arguments": {}}]},
         "metadata": {
             "scenario_family": scenario_family,
             "path": path,

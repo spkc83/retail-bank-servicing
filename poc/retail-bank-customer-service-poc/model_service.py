@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from dialogue_state import SERVICING_TOOLS
 from mock_bank import SessionBankRegistry
 from response_policy import (
     build_customer_experience_repair_messages,
@@ -323,11 +324,12 @@ class ConversationalBankingAgent:
             raise ValueError("message must be a non-empty string")
         canonical = canonical_conversation(conversation)
         current = [*canonical, {"role": "user", "content": message.strip()}]
-        system = _system_message(router_result)
+        system, public_tools = _generation_plan(router_result)
+        serving_tools = self.tool_adapter.render_tools(public_tools) if public_tools else None
         first_context = select_token_budgeted_context(
             system,
             current,
-            tools=self.tool_adapter.render_tools(MODEL_TOOLS),
+            tools=serving_tools,
             token_counter=self.model.count_tokens,
             input_budget=self.input_budget,
             pinned_exchange=pinned_exchange,
@@ -336,7 +338,7 @@ class ConversationalBankingAgent:
         first_output, first_trace = self._generate_pass(
             "base",
             first_context,
-            self.tool_adapter.render_tools(MODEL_TOOLS),
+            serving_tools,
         )
         model_passes.append(first_trace)
         if not first_output:
@@ -356,16 +358,15 @@ class ConversationalBankingAgent:
             )
         response_path = "base_tool"
 
-        _validate_tool_calls(calls)
+        _validate_tool_calls(calls, allowed_tools=public_tools)
         with_tools = [*current]
         all_calls: list[ToolCall] = []
         results: list[dict[str, Any]] = []
         pending_calls = calls
         post_tool_passes = 0
-        serving_tools = self.tool_adapter.render_tools(MODEL_TOOLS)
         try:
             while True:
-                _validate_tool_calls(pending_calls)
+                _validate_tool_calls(pending_calls, allowed_tools=public_tools)
                 if len(all_calls) + len(pending_calls) > MAX_TOOL_CALLS:
                     raise AgentProtocolError(
                         f"model attempted more than {MAX_TOOL_CALLS} total tool calls"
@@ -707,8 +708,13 @@ def _stable_tool_call_id(
     return f"call_{digest}_{index}_{slug}"
 
 
-def _validate_tool_calls(calls: tuple[ToolCall, ...]) -> None:
+def _validate_tool_calls(
+    calls: tuple[ToolCall, ...],
+    *,
+    allowed_tools: list[dict[str, Any]] = MODEL_TOOLS,
+) -> None:
     schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in MODEL_TOOLS}
+    allowed_names = {tool["function"]["name"] for tool in allowed_tools}
     seen_ids: set[str] = set()
     for expected_index, call in enumerate(calls):
         if call.index != expected_index:
@@ -719,6 +725,8 @@ def _validate_tool_calls(calls: tuple[ToolCall, ...]) -> None:
         schema = schemas.get(call.name)
         if schema is None:
             raise AgentProtocolError(f"model selected unsupported tool: {call.name}")
+        if call.name not in allowed_names:
+            raise AgentProtocolError(f"model selected unexposed tool: {call.name}")
         _validate_arguments(call.name, call.arguments, schema)
 
 
@@ -920,6 +928,68 @@ def _system_message(
         "role": "system",
         "content": AGENT_SYSTEM_PROMPT,
     }
+
+
+def _generation_plan(
+    router_result: dict[str, Any],
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    system = _system_message(router_result)
+    if "action" not in router_result:
+        return system, MODEL_TOOLS
+
+    if router_result.get("route") != "in_domain":
+        return {
+            "role": "system",
+            "content": (
+                f"{system['content']}\n\nTURN GUIDANCE: Ask one concise, natural "
+                "clarification question. Do not call a banking tool or claim that an "
+                "action was completed because the classifier abstained on this turn."
+            ),
+        }, []
+
+    action = router_result.get("action")
+    entity_resolution = router_result.get("entity_resolution")
+    intent = router_result.get("fine_intent", router_result.get("intent"))
+    blocked_entity = entity_resolution in {"missing", "ambiguous", "ineligible"}
+    instruction: str
+    tools: list[dict[str, Any]] = []
+
+    if blocked_entity or action == "clarify":
+        instruction = (
+            "Ask exactly one concise, natural clarification question that helps the "
+            "customer supply or distinguish the missing banking detail. Do not claim "
+            "that an action was completed."
+        )
+    elif action == "execute_tool" and isinstance(intent, str):
+        tool_name = SERVICING_TOOLS.get(intent)
+        if tool_name is None:
+            instruction = (
+                "Ask one concise, natural clarification question because no supported "
+                "banking action is available for the predicted request."
+            )
+        else:
+            tools = [tool for tool in MODEL_TOOLS if tool["function"]["name"] == tool_name]
+            instruction = (
+                f"Use only {tool_name} for this turn. Call it when the conversation "
+                "supplies the selectors its schema requires; otherwise ask one concise, "
+                "natural clarification question. Choose every argument from the "
+                "conversation; this guidance supplies no tool arguments."
+            )
+    elif action == "converse":
+        instruction = (
+            "Respond naturally and concisely without looking up customer records or "
+            "performing a banking action."
+        )
+    else:
+        instruction = (
+            "Respond naturally without calling a banking tool. Ask one concise "
+            "clarification question if the customer's request is not yet clear."
+        )
+
+    return {
+        "role": "system",
+        "content": f"{system['content']}\n\nTURN GUIDANCE: {instruction}",
+    }, tools
 
 
 def _policy_system_message(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare governed V5 conversation-router data from SFT records and CLINC OOD."""
+"""Prepare governed V6 hierarchical conversation-router data."""
 
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ from hello_slm.banking_conversation_router_data import (
     rows_jsonl_bytes,
     rows_sha256,
 )
+from hello_slm.banking_domain_taxonomy import (
+    ACTION_LABELS,
+    DOMAIN_LABELS,
+    ENTITY_RESOLUTION_LABELS,
+    FAMILY_LABELS,
+    LANE_LABELS,
+)
 from hello_slm.config import file_sha256
 
 CLINC_URL = "https://archive.ics.uci.edu/static/public/570/clinc150.zip"
@@ -28,8 +35,10 @@ CLINC_ZIP_SHA256 = "0d8ecc3e1edd7b25cabde0177544ce536ddf773844bc80ef1a75f36e7f03
 CLINC_MEMBER = "clinc150_uci/data_oos_plus.json"
 CLINC_MEMBER_SHA256 = "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f"
 DEFAULT_SFT_DIR = Path("data/banking-servicing-alignment-v5")
-DEFAULT_OUTPUT_DIR = Path("data/banking-conversation-router-v5")
-DEFAULT_RELEASE_LOCK = Path("data/sources/banking-conversation-router-v5.lock.json")
+DEFAULT_OUTPUT_DIR = Path("data/banking-conversation-router-v6-hierarchical")
+DEFAULT_RELEASE_LOCK = Path(
+    "data/sources/banking-conversation-router-v6-hierarchical.lock.json"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,12 +56,12 @@ def parse_args() -> argparse.Namespace:
         "--expected-release-lock",
         type=Path,
         default=DEFAULT_RELEASE_LOCK,
-        help="Optional V5 lock whose prepared split digests should match when present.",
+        help="Optional V6 lock whose prepared split digests should match when present.",
     )
     parser.add_argument(
         "--skip-release-digest-check",
         action="store_true",
-        help="Allow new V5 splits before a release lock exists.",
+        help="Allow new V6 splits before a release lock exists.",
     )
     return parser.parse_args()
 
@@ -82,6 +91,8 @@ def main() -> int:
         raise ValueError("conversation router state current text leaks across splits")
     if report["leakage"]["state_paraphrase_family_split_leak_count"] != 0:
         raise ValueError("conversation router paraphrase families leak across splits")
+    if report["leakage"]["counterfactual_pair_split_leak_count"] != 0:
+        raise ValueError("conversation router counterfactual pairs leak across splits")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     split_entries = []
@@ -105,46 +116,14 @@ def main() -> int:
         )
 
     created_at = release_created_at(expected_release_lock)
-    manifest = {
-        "contract": "banking-conversation-router-data",
-        "format_version": 2,
-        "created_at": created_at,
-        "seed": args.seed,
-        "max_exchanges": 3,
-        "schema": {
-            "text": "cross-encoder input rendered by render_router_input",
-            "domain_label": "1=in-domain banking/conversation, 0=external OOD",
-            "intent_label": "index into intent_labels or -100",
-            "lane": "deterministically derived from intent_label",
-            "relation_labels": "multi-hot vector in relation_labels order",
-        },
-        "intent_labels": INTENT_LABELS,
-        "relation_labels": RELATION_LABELS,
-        "sources": {
-            "sft": {
-                "path": str(args.sft_dir),
-                "manifest_sha256": file_sha256(args.sft_dir / "manifest.json"),
-                "split_sha256": {
-                    entry["name"]: entry["sha256"]
-                    for entry in sft_manifest.get("tool_sft", [])
-                    if isinstance(entry, dict)
-                },
-                "allowed_use": ["conversation-router-domain-intent-training"],
-            },
-            "UCI/clinc150": {
-                "url": CLINC_URL,
-                "archive_sha256": CLINC_ZIP_SHA256,
-                "member": CLINC_MEMBER,
-                "member_sha256": CLINC_MEMBER_SHA256,
-                "used_labels": sorted(CLINC_EXTERNAL_OOD_LABELS),
-                "allowed_use": ["conversation-router-external-ood-training"],
-            },
-        },
-        "splits": split_entries,
-        "report": report,
-        "review_status": "automated-policy-pass",
-        "signed": False,
-    }
+    manifest = build_manifest(
+        sft_dir=args.sft_dir,
+        sft_manifest=sft_manifest,
+        split_entries=split_entries,
+        report=report,
+        seed=args.seed,
+        created_at=created_at,
+    )
     manifest_path = args.output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -163,6 +142,86 @@ def main() -> int:
         write_source_lock(args.source_lock, manifest, clinc_bytes)
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
+
+
+def build_manifest(
+    *,
+    sft_dir: Path,
+    sft_manifest: dict[str, Any],
+    split_entries: list[dict[str, Any]],
+    report: dict[str, Any],
+    seed: int,
+    created_at: str,
+) -> dict[str, Any]:
+    return {
+        "contract": "banking-conversation-router-data",
+        "format_version": 3,
+        "created_at": created_at,
+        "seed": seed,
+        "max_exchanges": 3,
+        "schema": {
+            "text": "cross-encoder input rendered by render_router_input",
+            "domain_label": "legacy binary: 1=banking/social, 0=out_of_domain",
+            "domain_name": "name in domain_labels",
+            "domain_index": "index into domain_labels",
+            "intent_label": "index into intent_labels or -100",
+            "intent": "fine-intent name or null for out_of_domain",
+            "lane": "legacy alias for lane_name; null for out_of_domain",
+            "lane_name": "name in lane_labels",
+            "lane_index": "index into lane_labels",
+            "family_name": "name in family_labels",
+            "family_index": "index into family_labels",
+            "action_name": "name in action_labels",
+            "action_index": "index into action_labels",
+            "entity_resolution_name": "name in entity_resolution_labels",
+            "entity_resolution_index": "index into entity_resolution_labels",
+            "relation_labels": "multi-hot vector in relation_labels order",
+            "counterfactual_pair_id": "matched state-pair ID or null",
+            "counterfactual_target": "source counterfactual target or null",
+            "counterfactual_phrase_family": "split-isolated phrase family or null",
+            "actionable_entity_count": "eligible entity count when annotated or null",
+        },
+        "domain_labels": list(DOMAIN_LABELS),
+        "lane_labels": list(LANE_LABELS),
+        "family_labels": list(FAMILY_LABELS),
+        "intent_labels": list(INTENT_LABELS),
+        "action_labels": list(ACTION_LABELS),
+        "entity_resolution_labels": list(ENTITY_RESOLUTION_LABELS),
+        "relation_labels": list(RELATION_LABELS),
+        "sources": {
+            "sft": {
+                "path": str(sft_dir),
+                "manifest_sha256": (
+                    file_sha256(sft_dir / "manifest.json")
+                    if (sft_dir / "manifest.json").is_file()
+                    else None
+                ),
+                "split_sha256": {
+                    entry["name"]: entry["sha256"]
+                    for entry in sft_manifest.get("tool_sft", [])
+                    if isinstance(entry, dict)
+                },
+                "behavioral_gate_sha256": {
+                    str(entry["name"]): str(entry["sha256"])
+                    for entry in sft_manifest.get("behavioral_gates", [])
+                    if isinstance(entry, dict)
+                },
+                "allowed_use": ["conversation-router-domain-intent-training"],
+            },
+            "UCI/clinc150": {
+                "url": CLINC_URL,
+                "archive_sha256": CLINC_ZIP_SHA256,
+                "member": CLINC_MEMBER,
+                "member_sha256": CLINC_MEMBER_SHA256,
+                "used_labels": sorted(CLINC_EXTERNAL_OOD_LABELS),
+                "allowed_use": ["conversation-router-external-ood-training"],
+            },
+        },
+        "splits": split_entries,
+        "report": report,
+        "review_status": "automated-policy-pass",
+        "signed": False,
+    }
 
 
 def load_sft_records(sft_dir: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
@@ -186,6 +245,29 @@ def load_sft_records(sft_dir: Path) -> tuple[dict[str, Any], dict[str, list[dict
     missing = [split for split in ROUTER_SPLITS if split not in rows_by_split]
     if missing:
         raise ValueError(f"SFT manifest is missing splits: {missing}")
+    shadow_entries = [
+        entry
+        for entry in manifest.get("behavioral_gates", [])
+        if isinstance(entry, dict) and entry.get("name") == "coreference-shadow"
+    ]
+    if len(shadow_entries) != 1:
+        raise ValueError("SFT manifest must contain one coreference-shadow gate")
+    shadow_entry = shadow_entries[0]
+    if shadow_entry.get("trainable") is not False or shadow_entry.get("allowed_use") != [
+        "post-selection-evaluation-once"
+    ]:
+        raise ValueError("coreference-shadow gate has invalid use policy")
+    shadow_path = sft_dir / str(shadow_entry["path"])
+    if file_sha256(shadow_path) != str(shadow_entry["sha256"]):
+        raise ValueError("SFT coreference-shadow digest mismatch")
+    shadow_rows = [
+        json.loads(line) for line in shadow_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    if len(shadow_rows) != int(shadow_entry["record_count"]):
+        raise ValueError("SFT coreference-shadow row count mismatch")
+    if any(row.get("metadata", {}).get("trainable") is not False for row in shadow_rows):
+        raise ValueError("SFT coreference-shadow rows must be non-trainable")
+    rows_by_split["test"].extend(shadow_rows)
     return manifest, rows_by_split
 
 
@@ -242,10 +324,10 @@ def write_data_card(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(
         "\n".join(
             [
-                "# Retail Bank Conversation Router V5 Data",
+                "# Retail Bank Conversation Router V6 Hierarchical Data",
                 "",
                 "Governed cross-encoder data for a history-aware OOD, "
-                "fine-intent, and relation classifier.",
+                "hierarchical intent, action, entity-resolution, and relation classifier.",
                 "",
                 "Rows include only prior visible user/assistant messages "
                 "and the current user message.",
@@ -256,6 +338,11 @@ def write_data_card(path: Path, manifest: dict[str, Any]) -> None:
                 f"- Validation rows: {counts['validation']}",
                 f"- Test rows: {counts['test']}",
                 f"- Intent labels: {', '.join(manifest['intent_labels'])}",
+                f"- Domain labels: {', '.join(manifest['domain_labels'])}",
+                f"- Lane labels: {', '.join(manifest['lane_labels'])}",
+                f"- Family labels: {', '.join(manifest['family_labels'])}",
+                f"- Action labels: {', '.join(manifest['action_labels'])}",
+                f"- Entity-resolution labels: {', '.join(manifest['entity_resolution_labels'])}",
                 f"- Relation labels: {', '.join(manifest['relation_labels'])}",
                 "",
             ]
@@ -268,8 +355,8 @@ def write_source_lock(path: Path, manifest: dict[str, Any], clinc_bytes: bytes) 
     path.write_text(
         json.dumps(
             {
-                "contract": "banking-conversation-router-v5-source-lock",
-                "format_version": 2,
+                "contract": "banking-conversation-router-v6-source-lock",
+                "format_version": 3,
                 "created_at": manifest["created_at"],
                 "sources": manifest["sources"],
                 "clinc_member_sha256": _bytes_sha256(clinc_bytes),

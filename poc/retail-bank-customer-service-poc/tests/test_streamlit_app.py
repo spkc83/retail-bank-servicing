@@ -14,11 +14,11 @@ def test_streamlit_is_available_for_the_local_app() -> None:
     assert importlib.util.find_spec("streamlit") is not None
 
 
-def test_local_streamlit_prefers_the_canonical_strict_gate_router() -> None:
+def test_local_streamlit_prefers_the_canonical_hierarchical_router() -> None:
     artifact = resolve_local_router_artifact()
 
     assert artifact is not None
-    assert artifact.name == "banking-conversation-router-v5"
+    assert artifact.name == "banking-conversation-router-v6-hierarchical"
     assert (artifact / "classifier_heads.safetensors").is_file()
     assert (artifact / "router_config.json").is_file()
 

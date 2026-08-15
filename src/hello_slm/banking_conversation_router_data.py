@@ -7,22 +7,19 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, cast
 
+from hello_slm.banking_domain_taxonomy import (
+    ACTION_LABELS,
+    DOMAIN_LABELS,
+    ENTITY_RESOLUTION_LABELS,
+    FAMILY_LABELS,
+    INTENT_LABELS,
+    LANE_LABELS,
+    labels_for_example,
+    lane_for_intent,
+)
+
 ROUTER_SPLITS = ("train", "validation", "test")
 
-INTENT_LABELS = (
-    "view_accounts",
-    "view_cards",
-    "freeze_card",
-    "replace_card",
-    "view_transactions",
-    "dispute_transaction",
-    "view_transfers",
-    "cancel_transfer",
-    "view_service_cases",
-    "policy_knowledge",
-    "conversation",
-    "other_banking",
-)
 RELATION_LABELS = (
     "context_dependent",
     "agent_repair",
@@ -100,35 +97,6 @@ PII_PATTERNS = (
 _INTENT_INDEX = {label: index for index, label in enumerate(INTENT_LABELS)}
 _RELATION_INDEX = {label: index for index, label in enumerate(RELATION_LABELS)}
 
-_SERVICING_INTENTS = frozenset(
-    {
-        "view_accounts",
-        "view_cards",
-        "freeze_card",
-        "replace_card",
-        "view_transactions",
-        "dispute_transaction",
-        "view_transfers",
-        "cancel_transfer",
-        "view_service_cases",
-    }
-)
-_V2_SERVICING_CAPABILITIES = frozenset(
-    {"accounts", "cards", "card_actions", "transactions", "transfers", "service_cases"}
-)
-
-
-def lane_for_intent(intent: str) -> str:
-    if intent in _SERVICING_INTENTS or intent in _V2_SERVICING_CAPABILITIES:
-        return "servicing"
-    if intent in {"policy_knowledge", "faq"}:
-        return "policy"
-    if intent == "conversation":
-        return "conversation"
-    if intent == "other_banking":
-        return "other_banking"
-    raise ValueError(f"unsupported intent: {intent}")
-
 
 def render_router_input(
     current: str,
@@ -180,6 +148,7 @@ def build_conversation_router_splits(
     splits: dict[str, list[dict[str, Any]]] = {split: [] for split in ROUTER_SPLITS}
     group_to_split: dict[str, str] = {}
     trajectory_to_split: dict[str, str] = {}
+    counterfactual_pair_to_split: dict[str, str] = {}
 
     for split in ROUTER_SPLITS:
         for record in sft_records_by_split.get(split, []):
@@ -196,6 +165,14 @@ def build_conversation_router_splits(
                 raise ValueError(
                     f"trajectory {trajectory_id!r} appears in both {previous_split} and {split}"
                 )
+            pair_id = row["counterfactual_pair_id"]
+            if pair_id:
+                previous_split = counterfactual_pair_to_split.setdefault(str(pair_id), split)
+                if previous_split != split:
+                    raise ValueError(
+                        f"counterfactual pair {pair_id!r} appears in both "
+                        f"{previous_split} and {split}"
+                    )
             splits[split].append(row)
 
     for split in ROUTER_SPLITS:
@@ -209,6 +186,7 @@ def build_conversation_router_splits(
         splits[split].extend(_targeted_use_case_rows(split))
         splits[split].extend(_resume_trajectory_rows(split))
         splits[split].extend(_state_conditioned_negative_rows(split))
+        splits[split].extend(_ineligible_entity_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
@@ -217,6 +195,11 @@ def build_conversation_router_splits(
         "seed": seed,
         "intent_labels": INTENT_LABELS,
         "relation_labels": RELATION_LABELS,
+        "domain_labels": DOMAIN_LABELS,
+        "lane_labels": LANE_LABELS,
+        "family_labels": FAMILY_LABELS,
+        "action_labels": ACTION_LABELS,
+        "entity_resolution_labels": ENTITY_RESOLUTION_LABELS,
         "split_counts": {split: len(rows) for split, rows in deduplicated.items()},
         "kind_counts": {
             split: dict(Counter(str(row["example_kind"]) for row in rows))
@@ -224,6 +207,14 @@ def build_conversation_router_splits(
         },
         "domain_counts": {
             split: dict(Counter(int(row["domain_label"]) for row in rows))
+            for split, rows in deduplicated.items()
+        },
+        "hierarchical_domain_counts": {
+            split: dict(Counter(str(row["domain_name"]) for row in rows))
+            for split, rows in deduplicated.items()
+        },
+        "action_counts": {
+            split: dict(Counter(str(row["action_name"]) for row in rows))
             for split, rows in deduplicated.items()
         },
         "intent_counts": {
@@ -266,12 +257,20 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
     if _is_screenshot_regression_text(current):
         return None
     history = _visible_history_before_current(messages)
-    path = str(record.get("metadata", {}).get("path", ""))
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    source = (
+        "self-authored-coreference-shadow"
+        if metadata.get("trainable") is False and metadata.get("coreference_pair_id")
+        else "self-authored-banking-tool-sft"
+    )
+    path = str(metadata.get("path", ""))
     domain_label = 0 if path == "ood" else 1
     intent = None if path == "ood" else _intent_for_record(record, current)
     prior_dialogue_state = record.get("prior_dialogue_state")
     if prior_dialogue_state is None:
-        prior_dialogue_state = record.get("metadata", {}).get("prior_dialogue_state")
+        prior_dialogue_state = metadata.get("prior_dialogue_state")
     if prior_dialogue_state is not None and not isinstance(prior_dialogue_state, Mapping):
         raise ValueError("prior_dialogue_state must be an object")
     relations = _relations_for_current(current, history, prior_dialogue_state)
@@ -282,11 +281,19 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
         intent=intent,
         relation_names=relations,
         example_kind=_example_kind_for_record(record, history, relations),
-        source="self-authored-banking-tool-sft",
+        source=source,
         source_split=split,
         group_id=_group_id(record),
         trajectory_id=_trajectory_id(record),
         prior_dialogue_state=prior_dialogue_state,
+        path=path,
+        tool_names=_expected_tool_names(record),
+        coreference_target=str(metadata.get("coreference_target", "")),
+        actionable_entity_count=_optional_int(metadata.get("actionable_card_count")),
+        explicit_entity_resolution=str(metadata.get("entity_resolution", "")),
+        counterfactual_pair_id=_optional_text(metadata.get("coreference_pair_id")),
+        counterfactual_target=_optional_text(metadata.get("coreference_target")),
+        counterfactual_phrase_family=_optional_text(metadata.get("coreference_phrase_family")),
     )
 
 
@@ -322,72 +329,18 @@ def _synthetic_generalization_rows(
     split: str,
     seed: int,
 ) -> list[dict[str, Any]]:
-    banking = [row for row in rows if row["domain_label"] == 1 and row["intent"] is not None]
+    banking = [
+        row
+        for row in rows
+        if row["domain_label"] == 1
+        and row["intent"] is not None
+        and row["source"] != "self-authored-coreference-shadow"
+    ]
     external = [row for row in rows if row["domain_label"] == 0]
     if not banking:
         return []
     ordered = sorted(banking, key=lambda row: _stable_rank(seed, split, str(row["text"])))
-    prompts = (
-        (
-            "Could you tell me when that item was recorded",
-            "contextual_followup",
-            ["context_dependent"],
-        ),
-        (
-            "What happened with the other one you mentioned",
-            "contextual_followup",
-            ["context_dependent"],
-        ),
-        (
-            "Actually I meant the banking item from before",
-            "agent_repair",
-            ["context_dependent", "agent_repair"],
-        ),
-        (
-            "That answer missed my question, please try it again",
-            "agent_repair",
-            ["context_dependent", "agent_repair"],
-        ),
-        (
-            "Yes, use the first option you listed",
-            "clarification_answer",
-            ["context_dependent", "clarification_answer"],
-        ),
-        (
-            "The second one, please",
-            "clarification_answer",
-            ["context_dependent", "clarification_answer"],
-        ),
-        (
-            "Can yu show that agian",
-            "typo_contextual_followup",
-            ["context_dependent"],
-        ),
-        (
-            "wht happened with it",
-            "typo_contextual_followup",
-            ["context_dependent"],
-        ),
-    )
     generated = []
-    for anchor_index, anchor in enumerate(ordered):
-        history = _history_from_anchor(anchor)
-        for prompt_index, (current, kind, relations) in enumerate(prompts):
-            generated.append(
-                _make_row(
-                    current=_split_variant(current, split),
-                    history=history,
-                    domain_label=1,
-                    intent=str(anchor["intent"]),
-                    relation_names=relations,
-                    example_kind=kind,
-                    source="self-authored-router-v5-synthetic",
-                    source_split=split,
-                    group_id=(
-                        f"{anchor['group_id']}|router-v5|{kind}|{anchor_index}-{prompt_index}"
-                    ),
-                )
-            )
     pair_count = min(len(external), len(ordered))
     for index, external_row in enumerate(external[:pair_count]):
         anchor = ordered[index % len(ordered)]
@@ -408,6 +361,7 @@ def _synthetic_generalization_rows(
             _make_row(
                 current=str(anchor["current_text"]),
                 history=[
+                    *_history_from_anchor(anchor),
                     {
                         "role": "user",
                         "content": str(external_row["current_text"]),
@@ -424,6 +378,8 @@ def _synthetic_generalization_rows(
                 source="self-authored-router-v5-synthetic+UCI/clinc150",
                 source_split=split,
                 group_id=(f"{anchor['group_id']}|router-v5|banking-topic-shift|{index}"),
+                action=str(anchor["action_name"]),
+                entity_resolution=str(anchor["entity_resolution_name"]),
             )
         )
     return generated
@@ -948,9 +904,29 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
             ),
             ("acknowledgement_train", ("All right.", "Understood.")),
             ("comprehension_train", ("That makes sense.", "I understand now.")),
-            ("helpfulness_train", ("That was helpful.", "This clears things up.")),
+            (
+                "helpfulness_train",
+                (
+                    "That was helpful.",
+                    "This clears things up.",
+                    "That is useful.",
+                    "This really helps.",
+                    "That was useful.",
+                    "This is helpful.",
+                ),
+            ),
             ("greeting_train", ("Good morning.", "Hi there.")),
-            ("wellbeing_train", ("Hope you are well.", "How is your day going?")),
+            (
+                "wellbeing_train",
+                (
+                    "Hope you are well.",
+                    "How is your day going?",
+                    "How have you been?",
+                    "Are you doing okay?",
+                    "How are things with you?",
+                    "Is everything going well for you?",
+                ),
+            ),
             ("disengagement_train", ("Leave it there for now.", "We can stop here.")),
         ),
         "validation": (
@@ -1245,6 +1221,121 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _ineligible_entity_rows(split: str) -> list[dict[str, Any]]:
+    """Teach the router to preserve intent while blocking an ineligible entity."""
+
+    examples = {
+        "train": {
+            "freeze_card": (
+                "Freeze that closed card anyway.",
+                "Try to lock the inactive card.",
+                "Block the card that is already closed.",
+                "Put a freeze on the permanently disabled card.",
+                "Lock the card that has already been replaced.",
+                "Try freezing the expired card shown above.",
+                "Block that unusable card once more.",
+                "Apply a freeze to the card marked closed.",
+            ),
+            "replace_card": (
+                "Replace that card even though a replacement is pending.",
+                "Order another copy of the card already being replaced.",
+                "Replace the card whose replacement request is still open.",
+                "Request another replacement for the card already replaced.",
+                "Send a new card for the closed card shown above.",
+                "Replace that card despite the active replacement order.",
+                "Order a copy of the card that is no longer replaceable.",
+                "Proceed with replacing the card marked ineligible.",
+            ),
+            "dispute_transaction": (
+                "Dispute that reversed transaction anyway.",
+                "Open a dispute on the charge that was already reversed.",
+                "Challenge the transaction marked as fully reversed.",
+                "Dispute the charge whose refund has already posted.",
+                "Challenge that purchase even though a dispute is already open.",
+                "Open another dispute for the refunded transaction.",
+                "Proceed against the charge marked ineligible for dispute.",
+                "Try disputing the transaction that was already resolved.",
+            ),
+            "cancel_transfer": (
+                "Cancel that completed transfer anyway.",
+                "Stop the transfer that has already completed.",
+                "Try to cancel the money transfer marked complete.",
+                "Cancel the transfer that was already cancelled.",
+                "Revoke that settled transfer once more.",
+                "Stop the transfer whose cancellation window has closed.",
+                "Proceed with cancelling the transfer marked ineligible.",
+                "Try to reverse that completed transfer from here.",
+            ),
+        },
+        "validation": {
+            "freeze_card": ("Lock the card shown as closed.",),
+            "replace_card": ("Replace the card with an open replacement order.",),
+            "dispute_transaction": ("Dispute the purchase shown as reversed.",),
+            "cancel_transfer": ("Cancel the transfer shown as completed.",),
+        },
+        "test": {
+            "freeze_card": ("Put a freeze on the inactive card.",),
+            "replace_card": ("Request a replacement for the card already in replacement.",),
+            "dispute_transaction": ("Challenge the transaction that has been reversed.",),
+            "cancel_transfer": ("Revoke the transfer that is already complete.",),
+        },
+    }[split]
+    histories = {
+        "freeze_card": (
+            ("Show my cards.", "The card ending in 1846 is closed and cannot be used."),
+            ("Check the old debit card.", "That card was permanently disabled."),
+            ("What happened to my expiring card?", "It expired and is not eligible to freeze."),
+            ("Show the replaced card.", "That prior card is closed after replacement."),
+        ),
+        "replace_card": (
+            ("Check my card replacement.", "A replacement for card 2964 is already pending."),
+            ("Show the old card.", "That card was already replaced and is closed."),
+            ("Can this card be replaced?", "It is not eligible for another replacement."),
+            ("Check the replacement order.", "An active order already covers that card."),
+        ),
+        "dispute_transaction": (
+            ("Show the status of that purchase.", "It was fully reversed and is ineligible."),
+            ("Check the charge again.", "A refund for that charge has already posted."),
+            ("Do I have a dispute for it?", "A dispute on that transaction is already open."),
+            (
+                "Show that resolved purchase.",
+                "The transaction was resolved and cannot be disputed.",
+            ),
+        ),
+        "cancel_transfer": (
+            ("Check that transfer.", "It completed and is no longer eligible for cancellation."),
+            ("Show the cancelled transfer.", "That transfer was already cancelled."),
+            ("Can the settled transfer stop?", "It settled after the cancellation window closed."),
+            ("Review that transfer status.", "The completed transfer cannot be cancelled here."),
+        ),
+    }
+    rows: list[dict[str, Any]] = []
+    for intent, prompts in examples.items():
+        for prompt_index, current in enumerate(prompts):
+            prior_user, prior_assistant = histories[intent][prompt_index % len(histories[intent])]
+            history = [
+                {"role": "user", "content": prior_user},
+                {"role": "assistant", "content": prior_assistant},
+            ]
+            key = f"state-ineligible|{split}|{intent}|{prompt_index}"
+            rows.append(
+                _make_row(
+                    current=current,
+                    history=history,
+                    domain_label=1,
+                    intent=intent,
+                    relation_names=["context_dependent"],
+                    example_kind="state_ineligible_entity",
+                    source="self-authored-router-v6-hierarchical-entity-state",
+                    source_split=split,
+                    group_id=key,
+                    trajectory_id=key,
+                    explicit_entity_resolution="ineligible",
+                )
+            )
+    return rows
+
+
 def _targeted_prompts(split: str) -> dict[str, tuple[str, ...]]:
     prompt_sets = {
         "train": {
@@ -1414,7 +1505,7 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
         {"role": "user", "content": "Show me the cards on my profile."},
         {
             "role": "assistant",
-            "content": "You have a debit card ending in 4821 and another ending in 7319.",
+            "content": "Your active debit card ends in 4821. Is that the one to replace?",
         },
     ]
     wrong_answer_history = [
@@ -1471,6 +1562,9 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
             source="self-authored-heldout-regression",
             source_split="test",
             group_id="heldout|card-selection",
+            tool_names=("replace_card",),
+            coreference_target="replace_card",
+            actionable_entity_count=1,
         ),
         _make_row(
             current="why are you repeating yourself",
@@ -1521,6 +1615,16 @@ def _make_row(
     group_id: str,
     trajectory_id: str | None = None,
     prior_dialogue_state: Mapping[str, Any] | None = None,
+    path: str = "",
+    tool_names: Sequence[str] | None = None,
+    coreference_target: str = "",
+    actionable_entity_count: int | None = None,
+    explicit_entity_resolution: str = "",
+    action: str | None = None,
+    entity_resolution: str | None = None,
+    counterfactual_pair_id: str | None = None,
+    counterfactual_target: str | None = None,
+    counterfactual_phrase_family: str | None = None,
 ) -> dict[str, Any]:
     if intent is not None and intent not in _INTENT_INDEX:
         raise ValueError(f"unsupported intent: {intent}")
@@ -1532,6 +1636,22 @@ def _make_row(
         for item in history
         if item.get("role") in {"user", "assistant"} and str(item.get("content", "")).strip()
     ]
+    hierarchical_labels = labels_for_example(
+        intent=intent,
+        action=action,
+        entity_resolution=entity_resolution,
+        tool_names=tool_names,
+        path=path,
+        coreference_target=coreference_target,
+        actionable_entity_count=actionable_entity_count,
+        explicit_entity_resolution=explicit_entity_resolution,
+    )
+    expected_legacy_domain_label = 0 if hierarchical_labels["domain_name"] == "out_of_domain" else 1
+    if int(domain_label) != expected_legacy_domain_label:
+        raise ValueError(
+            f"legacy domain_label {domain_label} conflicts with "
+            f"domain {hierarchical_labels['domain_name']}"
+        )
     return {
         "text": render_router_input(
             current,
@@ -1541,6 +1661,7 @@ def _make_row(
         "current_text": current.strip(),
         "history": visible_history,
         "domain_label": int(domain_label),
+        **hierarchical_labels,
         "intent_label": _INTENT_INDEX[intent] if intent else -100,
         "intent": intent,
         "lane": lane_for_intent(intent) if intent else None,
@@ -1551,6 +1672,10 @@ def _make_row(
         "group_id": group_id,
         "trajectory_id": trajectory_id or group_id,
         "prior_dialogue_state": dict(prior_dialogue_state or {}),
+        "counterfactual_pair_id": counterfactual_pair_id,
+        "counterfactual_target": counterfactual_target,
+        "counterfactual_phrase_family": counterfactual_phrase_family,
+        "actionable_entity_count": actionable_entity_count,
     }
 
 
@@ -1610,6 +1735,11 @@ def _intent_for_record(record: dict[str, Any], current: str) -> str:
             for call in expected.get("tool_calls", [])
             if isinstance(call, dict)
         ]
+    # Governed route metadata is authoritative.  A policy question may contain
+    # mutation words such as "replace" or "dispute" without requesting a bank
+    # operation; keyword routing must not override the annotated no-tool path.
+    if path == "retrieval_grounded_policy" or scenario.startswith("faq_"):
+        return "policy_knowledge"
     joined = " ".join((scenario, current.casefold(), " ".join(tool_names)))
     if "freeze_card" in joined or "freeze" in joined or "stolen" in joined:
         return "freeze_card"
@@ -1634,6 +1764,38 @@ def _intent_for_record(record: dict[str, Any], current: str) -> str:
     if "conversation" in joined or "greeting" in joined or "hello" in joined:
         return "conversation"
     return "other_banking"
+
+
+def _expected_tool_names(record: Mapping[str, Any]) -> tuple[str, ...]:
+    expected = record.get("expected")
+    if not isinstance(expected, Mapping):
+        return ()
+    tool_calls = expected.get("tool_calls")
+    if not isinstance(tool_calls, Sequence) or isinstance(tool_calls, str | bytes):
+        return ()
+    return tuple(
+        str(call["name"])
+        for call in tool_calls
+        if isinstance(call, Mapping) and isinstance(call.get("name"), str)
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("actionable entity count must be an integer")
+    try:
+        converted = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("actionable entity count must be an integer") from error
+    if converted < 0:
+        raise ValueError("actionable entity count must be non-negative")
+    return converted
+
+
+def _optional_text(value: Any) -> str | None:
+    return str(value).strip() if value is not None and str(value).strip() else None
 
 
 def _relations_for_current(
@@ -1685,11 +1847,32 @@ def _history_from_anchor(anchor: dict[str, Any]) -> list[dict[str, Any]]:
         return history
     return [
         {"role": "user", "content": str(anchor["current_text"])},
-        {"role": "assistant", "content": _assistant_stub(str(anchor["intent"]))},
+        {
+            "role": "assistant",
+            "content": _assistant_stub(
+                str(anchor["intent"]),
+                action=str(anchor["action_name"]),
+                entity_resolution=str(anchor["entity_resolution_name"]),
+            ),
+        },
     ]
 
 
-def _assistant_stub(intent: str) -> str:
+def _assistant_stub(
+    intent: str,
+    *,
+    action: str = "execute_tool",
+    entity_resolution: str = "not_required",
+) -> str:
+    if action == "clarify":
+        return {
+            "freeze_card": "Which card should I freeze?",
+            "replace_card": "Which card should I replace?",
+            "dispute_transaction": "Which transaction should I dispute?",
+            "cancel_transfer": "Which transfer should I cancel?",
+        }.get(intent, "Which banking item should I use?")
+    if action in {"converse", "retrieve_policy"} or entity_resolution == "ineligible":
+        return "I can explain that without performing a banking action."
     return {
         "view_accounts": "I found your account balances.",
         "view_cards": "I found your card details.",
@@ -1770,6 +1953,7 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     trajectories: dict[str, set[str]] = defaultdict(set)
     state_current_texts: dict[str, set[str]] = defaultdict(set)
     state_families: dict[str, set[str]] = defaultdict(set)
+    counterfactual_pairs: dict[str, set[str]] = defaultdict(set)
     generalization_kinds = {
         "state_policy_followup",
         "state_social_detour",
@@ -1781,6 +1965,9 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
             group_id = str(row["group_id"])
             groups[group_id].add(split)
             trajectories[str(row["trajectory_id"])].add(split)
+            pair_id = row.get("counterfactual_pair_id")
+            if pair_id:
+                counterfactual_pairs[str(pair_id)].add(split)
             if str(row["example_kind"]) in generalization_kinds:
                 state_current_texts[normalize_router_text(str(row["current_text"]))].add(split)
                 if group_id.startswith(("state-policy-family|", "state-social-family|")):
@@ -1797,6 +1984,11 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     state_family_leaks = {
         family: sorted(values) for family, values in state_families.items() if len(values) > 1
     }
+    counterfactual_pair_leaks = {
+        pair_id: sorted(values)
+        for pair_id, values in counterfactual_pairs.items()
+        if len(values) > 1
+    }
     return {
         "group_split_leaks": leaking,
         "group_split_leak_count": len(leaking),
@@ -1806,6 +1998,8 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         "state_current_text_split_leak_count": len(state_current_text_leaks),
         "state_paraphrase_family_split_leaks": state_family_leaks,
         "state_paraphrase_family_split_leak_count": len(state_family_leaks),
+        "counterfactual_pair_split_leaks": counterfactual_pair_leaks,
+        "counterfactual_pair_split_leak_count": len(counterfactual_pair_leaks),
     }
 
 
