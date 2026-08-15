@@ -18,10 +18,10 @@ if os.environ.get("POC_SKIP_MODEL_LOAD") == "1":
         count_tokens,
         generate_text,
         runtime_metadata,
-        spaces_runtime as spaces,
+        spaces_runtime,
     )
 else:
-    import spaces
+    import spaces as spaces_runtime
 
     from zero_gpu_runtime import (
         MODEL_ID,
@@ -113,7 +113,7 @@ class _RuntimeModel(ModelRuntime):
         return runtime_metadata()
 
 
-@spaces.GPU(size="large", duration=90)
+@spaces_runtime.GPU(size="large", duration=90)
 def run_model_turn(
     message: str,
     visible_history: list[dict[str, Any]],
@@ -375,18 +375,6 @@ def route_query(
         return router.classify(message, history, dialogue_state=dialogue_state)
     except (RuntimeError, TypeError, ValueError) as error:
         return _classifier_error_route(type(error).__name__)
-
-
-@spaces.GPU(size="large", duration=30)
-def run_zero_gpu_probe() -> dict[str, str | bool]:
-    """Prove that a ZeroGPU worker entered user code with the packed model."""
-    return {
-        "probe_entered": True,
-        "model_id": MODEL_ID,
-        "model_revision": MODEL_REVISION,
-        "router_revision": ROUTER_REVISION,
-        **runtime_metadata(),
-    }
 
 
 def load_profile(request: gr.Request) -> tuple[str, str, str, str]:
@@ -747,14 +735,6 @@ with gr.Blocks(
         outputs=route_output,
         api_name="route",
         queue=False,
-    )
-    probe_output = gr.JSON(visible=False)
-    probe_button = gr.Button(visible=False)
-    probe_button.click(
-        run_zero_gpu_probe,
-        outputs=probe_output,
-        api_name="zero_gpu_probe",
-        queue=True,
     )
     model_event = gr.on(
         triggers=[message_box.submit, send_button.click],

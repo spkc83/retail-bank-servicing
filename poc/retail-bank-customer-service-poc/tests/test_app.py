@@ -93,10 +93,10 @@ def test_app_constructs_expected_authenticated_api_surface(app_module) -> None:
     assert {
         "chat",
         "route",
-        "zero_gpu_probe",
         "customer_snapshot",
         "reset_demo",
     } <= api_names
+    assert "zero_gpu_probe" not in api_names
     assert {username for username, _ in app_module.AUTH_CREDENTIALS} == {
         "alex.demo",
         "maya.demo",
@@ -164,20 +164,6 @@ def test_chat_turn_is_a_single_direct_zero_gpu_boundary(app_module) -> None:
         for dependency in app_module.demo.config["dependencies"]
         if dependency.get("api_name") == "chat"
     )
-
-
-def test_zero_gpu_probe_reports_exact_runtime_identity(app_module) -> None:
-    assert app_module.run_zero_gpu_probe._zero_gpu_config == {
-        "size": "large",
-        "duration": 30,
-    }
-    assert app_module.run_zero_gpu_probe() == {
-        "probe_entered": True,
-        "model_id": app_module.MODEL_ID,
-        "model_revision": app_module.MODEL_REVISION,
-        "router_revision": app_module.ROUTER_REVISION,
-        **app_module.runtime_metadata(),
-    }
 
 
 def test_greeting_and_uncertain_turns_are_answered_by_9b(

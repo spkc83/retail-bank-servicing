@@ -176,8 +176,10 @@ The queued model turn runs inside:
 @spaces.GPU(size="large", duration=90)
 ```
 
-A 30-second probe verifies ZeroGPU worker entry and device metadata. The queue
-uses concurrency one for this low-traffic POC.
+An authenticated chat smoke test verifies ZeroGPU worker entry, model
+generation, and device metadata. The queue uses concurrency one for this
+low-traffic POC. A separate decorated GPU probe is intentionally avoided so
+ZeroGPU maintains a single warm-worker pool for inference.
 
 Plan deployment:
 
@@ -201,7 +203,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 The command prints a plan unless `--execute --allow-publish` is supplied. The
 execution path uploads only allowlisted files and stores immutable pins as
 Space variables. Treat the deployment as complete only after the Hub reports
-`RUNNING` and the remote ZeroGPU probe succeeds.
+`RUNNING` and an authenticated remote chat smoke test succeeds.
 
 ## Reset and Test
 

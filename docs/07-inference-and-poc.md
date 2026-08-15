@@ -151,9 +151,9 @@ Relevant overrides are `LOCAL_STREAMLIT_PORT`,
 
 ## Gradio and ZeroGPU
 
-The model event uses `@spaces.GPU(size="large", duration=90)`. A separate
-30-second probe confirms that user code entered a ZeroGPU worker. The Gradio
-queue uses concurrency one for this low-traffic POC.
+The model event uses `@spaces.GPU(size="large", duration=90)`. An authenticated
+chat smoke confirms that user code entered a ZeroGPU worker and generated a
+response. The Gradio queue uses concurrency one for this low-traffic POC.
 
 Plan a deployment with the immutable router placeholder replaced:
 
