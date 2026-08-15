@@ -784,6 +784,21 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
                 {"role": "user", "content": "Let me see the balances on my accounts."},
                 {"role": "assistant", "content": "I found your current account balances."},
             ],
+            "markdown_balances": [
+                {"role": "user", "content": "Summarize the balances in my deposit accounts."},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "## Accounts\n\n"
+                        "| Name | Type | Last 4 | Available | Current | Status |\n"
+                        "| --- | --- | --- | --- | --- | --- |\n"
+                        "| Harbor Everyday | checking | 2714 | USD 4,810.25 | "
+                        "USD 4,932.60 | active |\n"
+                        "| Cedar Reserve | savings | 6650 | USD 18,240.00 | "
+                        "USD 18,240.00 | active |"
+                    ),
+                },
+            ],
         },
         "validation": {
             "social": [
@@ -800,6 +815,21 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
                 {"role": "user", "content": "First, bring up my account balances."},
                 {"role": "assistant", "content": "I found the requested balances."},
             ],
+            "markdown_balances": [
+                {"role": "user", "content": "Give me a table of my account balances."},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "## Accounts\n\n"
+                        "| Name | Type | Last 4 | Available | Current | Status |\n"
+                        "| --- | --- | --- | --- | --- | --- |\n"
+                        "| Pioneer Checking | checking | 3906 | USD 2,175.40 | "
+                        "USD 2,214.05 | active |\n"
+                        "| Meadow Savings | savings | 8172 | USD 9,630.50 | "
+                        "USD 9,630.50 | active |"
+                    ),
+                },
+            ],
         },
         "test": {
             "social": [
@@ -815,6 +845,21 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
                 {"role": "assistant", "content": "Likewise. What would you like to do?"},
                 {"role": "user", "content": "Start by showing the balances on my accounts."},
                 {"role": "assistant", "content": "The account balances are ready."},
+            ],
+            "markdown_balances": [
+                {"role": "user", "content": "Show my account balances in a table."},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "## Accounts\n\n"
+                        "| Name | Type | Last 4 | Available | Current | Status |\n"
+                        "| --- | --- | --- | --- | --- | --- |\n"
+                        "| Lakeside Spend | checking | 5428 | USD 6,420.15 | "
+                        "USD 6,501.90 | active |\n"
+                        "| Summit Savings | savings | 9043 | USD 21,775.00 | "
+                        "USD 21,775.00 | active |"
+                    ),
+                },
             ],
         },
     }[split]
@@ -1649,7 +1694,17 @@ def _held_out_regression_rows() -> list[dict[str, Any]]:
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I can help with your banking questions."},
         {"role": "user", "content": "Show my account balances."},
-        {"role": "assistant", "content": "I found your account balances."},
+        {
+            "role": "assistant",
+            "content": (
+                "## Accounts\n\n"
+                "| Name | Type | Last 4 | Available | Current | Status |\n"
+                "| --- | --- | --- | --- | --- | --- |\n"
+                "| Everyday Checking | checking | 1042 | USD 3,245.67 | "
+                "USD 3,300.12 | active |\n"
+                "| Goal Saver | savings | 8831 | USD 12,500.00 | USD 12,500.00 | active |"
+            ),
+        },
     ]
     live_transaction_history = [
         *live_transfer_history,

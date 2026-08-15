@@ -371,11 +371,16 @@ def test_state_negative_rows_receive_targeted_training_weight() -> None:
         [
             {**common, "source": "self-authored-router-v5-state-negatives"},
             {**common, "source": "self-authored-router-v5-resume-trajectory"},
+            {
+                **common,
+                "source": "self-authored-router-v6-transfer-transaction-contrast",
+            },
             {**common, "source": "unweighted-source"},
         ]
     )
 
     assert batch["row_weights"].tolist() == [
+        training.TARGETED_ROW_WEIGHT,
         training.TARGETED_ROW_WEIGHT,
         training.TARGETED_ROW_WEIGHT,
         1.0,
@@ -538,9 +543,7 @@ def test_exposed_downstream_metrics_ignore_intentionally_suppressed_ood_values()
     assert metrics["exposed_decision_rows"] == 2
     assert metrics["exposed_action_macro_f1"] == 1.0
     assert metrics["exposed_entity_resolution_macro_f1"] == 1.0
-    refused = training.evaluate_predictions(
-        **{**common, "domain_probabilities": [0.30, 0.01]}
-    )
+    refused = training.evaluate_predictions(**{**common, "domain_probabilities": [0.30, 0.01]})
     assert refused["exposed_action_macro_f1"] == 0.5
     assert refused["exposed_entity_resolution_macro_f1"] == 2 / 3
 
@@ -560,9 +563,7 @@ def test_predict_returns_all_joint_decoder_head_scores() -> None:
                 intent_logits=logits(len(training.INTENT_LABELS)),
                 relation_logits=logits(len(training.RELATION_LABELS)),
                 action_logits=logits(len(training.ACTION_LABELS)),
-                entity_resolution_logits=logits(
-                    len(training.ENTITY_RESOLUTION_LABELS)
-                ),
+                entity_resolution_logits=logits(len(training.ENTITY_RESOLUTION_LABELS)),
             )
 
     batch = {

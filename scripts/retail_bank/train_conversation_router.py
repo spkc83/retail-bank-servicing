@@ -81,6 +81,7 @@ TARGETED_SOURCES = frozenset(
         "self-authored-router-v5-state-negatives",
         "self-authored-router-v5-resume-trajectory",
         "self-authored-router-v6-hierarchical-entity-state",
+        "self-authored-router-v6-transfer-transaction-contrast",
     }
 )
 RELATION_F1_CALIBRATION_TOLERANCE = 0.005
@@ -1059,9 +1060,7 @@ def entity_resolution_class_weights(
     for row in rows:
         counts[int(row["entity_resolution_index"])] += 1
     missing = [
-        label
-        for label, count in zip(ENTITY_RESOLUTION_LABELS, counts, strict=True)
-        if not count
+        label for label, count in zip(ENTITY_RESOLUTION_LABELS, counts, strict=True) if not count
     ]
     if missing:
         raise ValueError(f"entity resolution classes have no training rows: {missing}")

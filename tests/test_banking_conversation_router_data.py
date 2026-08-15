@@ -474,7 +474,13 @@ def test_transfer_transaction_contrasts_resist_social_and_balance_history() -> N
     splits, report = build_conversation_router_splits(
         sft_records_by_split(), clinc_payload(), seed=7404
     )
-    expected_counts = {"train": 24, "validation": 12, "test": 12}
+    expected_counts = {"train": 32, "validation": 16, "test": 16}
+    markdown_counts = {"train": 8, "validation": 4, "test": 4}
+    split_products = {
+        "train": {"Harbor Everyday", "Cedar Reserve"},
+        "validation": {"Pioneer Checking", "Meadow Savings"},
+        "test": {"Lakeside Spend", "Summit Savings"},
+    }
     current_by_split: dict[str, set[str]] = {}
 
     for split, rows in splits.items():
@@ -497,7 +503,29 @@ def test_transfer_transaction_contrasts_resist_social_and_balance_history() -> N
             )
             for row in contrast
         )
-        grouped = {}
+        markdown = [
+            row
+            for row in contrast
+            if "## Accounts\n\n| Name | Type | Last 4 | Available | Current | Status |"
+            in str(row["history"][-1]["content"])
+        ]
+        assert len(markdown) == markdown_counts[split]
+        assert all(
+            "| --- | --- | --- | --- | --- | --- |" in row["history"][-1]["content"]
+            for row in markdown
+        )
+        assert all(
+            all(product in row["history"][-1]["content"] for product in split_products[split])
+            for row in markdown
+        )
+        assert all(
+            product not in str(row["text"])
+            for other_split, products in split_products.items()
+            if other_split != split
+            for product in products
+            for row in contrast
+        )
+        grouped: dict[str, set[str]] = {}
         for row in contrast:
             grouped.setdefault(row["group_id"], set()).add(row["intent"])
         assert grouped
@@ -620,6 +648,18 @@ def test_held_out_screenshot_regressions_are_test_only() -> None:
         "why are you repeating yourself",
         "show my five most recent transactions",
     }
+    transfer_regression = next(
+        row
+        for row in heldout_by_split["test"]
+        if row["group_id"] == "heldout|recent-sent-money-status"
+    )
+    rendered_balance = transfer_regression["history"][-1]["content"]
+    assert rendered_balance.startswith(
+        "## Accounts\n\n| Name | Type | Last 4 | Available | Current | Status |"
+    )
+    assert "| --- | --- | --- | --- | --- | --- |" in rendered_balance
+    assert "| Everyday Checking | checking | 1042 | USD 3,245.67 |" in rendered_balance
+    assert "| Goal Saver | savings | 8831 | USD 12,500.00 |" in rendered_balance
     for split in ("train", "validation"):
         all_current = {normalize_router_text(str(row["current_text"])) for row in splits[split]}
         assert heldout_current.isdisjoint(all_current)
