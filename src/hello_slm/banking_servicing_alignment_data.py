@@ -999,6 +999,36 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "prompt": "swapping that one out is what i want",
                 "product": "Dune",
             },
+            {
+                "phrase_family": "desire-list-bridge",
+                "prompt": "i would like the card shown on the list replaced",
+                "product": "Basalt",
+            },
+            {
+                "phrase_family": "from-your-list-bridge",
+                "prompt": "the card from your list should be replaced",
+                "product": "Cobalt",
+            },
+            {
+                "phrase_family": "want-list-bridge",
+                "prompt": "i want the card in that list replaced",
+                "product": "Onyx",
+            },
+            {
+                "phrase_family": "copy-cleft-bridge",
+                "prompt": "a replacement copy of that card is needed",
+                "product": "Slate",
+            },
+            {
+                "phrase_family": "cleft-copy-bridge",
+                "prompt": "what i need is a fresh copy of that card",
+                "product": "Flint",
+            },
+            {
+                "phrase_family": "copy-required-bridge",
+                "prompt": "another copy of that one is required",
+                "product": "Shale",
+            },
         )
     if split == "validation":
         return (

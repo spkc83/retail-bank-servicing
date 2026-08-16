@@ -61,12 +61,12 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 1546,
+        "train": 1738,
         "validation": 218,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
-        "train": 416,
+        "train": 512,
         "validation": 16,
         "test": 0,
     }
@@ -87,8 +87,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
         "tool_outcome_consistency": 128,
-        "deictic_replace_action": 416,
-        "deictic_replace_ambiguity": 416,
+        "deictic_replace_action": 512,
+        "deictic_replace_ambiguity": 512,
         "natural_social_style": 12,
         "missing_entity_clarification": 1,
         "v7_natural_greeting": 1,
@@ -383,7 +383,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         for split in ("train", "validation")
     }
 
-    assert len(curricula["train"]) == 832
+    assert len(curricula["train"]) == 1024
     assert len(curricula["validation"]) == 32
     for split, rows in curricula.items():
         action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
@@ -423,7 +423,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         pairs: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             pairs.setdefault(row["metadata"]["coreference_pair_id"], []).append(row)
-        assert len(pairs) == (416 if split == "train" else 16)
+        assert len(pairs) == (512 if split == "train" else 16)
         for pair_rows in pairs.values():
             assert len(pair_rows) == 2
             assert {_last_user(row) for row in pair_rows} == {_last_user(pair_rows[0])}
@@ -635,7 +635,7 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 1546,
+        "train": 1738,
         "validation": 218,
         "test": 35,
     }

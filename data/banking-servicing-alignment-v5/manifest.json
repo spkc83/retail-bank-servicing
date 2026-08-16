@@ -52,9 +52,9 @@
     "alignment_generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 452,
+        "clarify": 548,
         "converse": 13,
-        "execute_tool": 1016,
+        "execute_tool": 1112,
         "refuse_ood": 32,
         "retrieve_policy": 33
       },
@@ -68,7 +68,7 @@
     },
     "alignment_split_counts": {
       "test": 35,
-      "train": 1546,
+      "train": 1738,
       "validation": 218
     },
     "base_manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
@@ -80,7 +80,7 @@
     "contract": "banking-servicing-alignment-sft-report",
     "coreference_pair_counts": {
       "test": 0,
-      "train": 416,
+      "train": 512,
       "validation": 16
     },
     "created_at": "2026-07-31T00:00:00Z",
@@ -88,9 +88,9 @@
     "generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 488,
+        "clarify": 584,
         "converse": 178,
-        "execute_tool": 1415,
+        "execute_tool": 1511,
         "refuse_ood": 58,
         "retrieve_policy": 248
       },
@@ -112,9 +112,9 @@
         "retrieval_grounded_policy": 4
       },
       "train": {
-        "clarification": 452,
+        "clarification": 548,
         "conversation": 13,
-        "multi_turn": 864,
+        "multi_turn": 960,
         "ood": 32,
         "retrieval_grounded_policy": 33,
         "tool_error": 65,
@@ -146,8 +146,8 @@
         "banking_topic_shift": 32,
         "card_anaphora_action": 64,
         "clarification_answer": 64,
-        "deictic_replace_action": 416,
-        "deictic_replace_ambiguity": 416,
+        "deictic_replace_action": 512,
+        "deictic_replace_ambiguity": 512,
         "external_topic_shift": 32,
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
@@ -192,7 +192,7 @@
     },
     "split_counts": {
       "test": 215,
-      "train": 2387,
+      "train": 2579,
       "validation": 397
     }
   },
@@ -218,11 +218,11 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 7169652,
+      "bytes": 7754388,
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 2387,
-      "sha256": "58ba6ecf4365eb64f9ae0401add82b3d51f3e5516efe6867f1cc86051227c8e4"
+      "record_count": 2579,
+      "sha256": "6915736b70d43524fab8e2de74dec2d586a5b7e43b2adf45cd6d6ccff381def5"
     },
     {
       "allowed_use": [
