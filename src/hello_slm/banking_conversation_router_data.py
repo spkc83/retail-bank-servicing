@@ -197,6 +197,7 @@ def build_conversation_router_splits(
     for split in ROUTER_SPLITS:
         splits[split].extend(_synthetic_generalization_rows(splits[split], split, seed))
         splits[split].extend(_targeted_use_case_rows(split))
+        splits[split].extend(_servicing_to_policy_topic_shift_rows(split))
         splits[split].extend(_transfer_transaction_contrast_rows(split))
         splits[split].extend(_resume_trajectory_rows(split))
         splits[split].extend(_state_conditioned_negative_rows(split))
@@ -272,6 +273,10 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
         return None
     history = _visible_history_before_current(messages)
     if any(_is_screenshot_regression_text(str(item["content"])) for item in history):
+        return None
+    if split != "test" and _contains_screenshot_regression_ngram(
+        " ".join([current, *(str(item["content"]) for item in history)])
+    ):
         return None
     metadata = record.get("metadata")
     if not isinstance(metadata, Mapping):
@@ -742,7 +747,7 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
     prompt_pairs = {
         "train": (
             (
-                "Can you check the money I sent a little while ago?",
+                "Can you check my recently sent bank transfer?",
                 "List my latest card purchases.",
             ),
             (
@@ -757,6 +762,38 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
                 "Where can I review outgoing transfers I made lately?",
                 "I want to review purchases posted to my account.",
             ),
+            (
+                "Help me understand the outcome of a payment I sent.",
+                "Help me review the outcome of my latest card charges.",
+            ),
+            (
+                "Check where a recently sent payment stands.",
+                "Check which purchases were recently posted.",
+            ),
+            (
+                "Tell me the status of money transferred to another person.",
+                "Tell me the status of recent merchant activity.",
+            ),
+            (
+                "Did my latest outgoing payment complete?",
+                "Which new debit-card purchases completed?",
+            ),
+            (
+                "Review the outcome for funds sent from my account.",
+                "Review the newest purchases charged to my account.",
+            ),
+            (
+                "What became of an outgoing payment made earlier?",
+                "What are the latest purchases on my statement?",
+            ),
+            (
+                "Look up whether a recent person-to-person payment arrived.",
+                "Look up my recent point-of-sale charges.",
+            ),
+            (
+                "I need the current state of a transfer sent from my account.",
+                "I need the current list of purchases on my account.",
+            ),
         ),
         "validation": (
             (
@@ -766,6 +803,14 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
             (
                 "Show the outcome of my latest outgoing bank transfers.",
                 "Let me see recent card purchase activity.",
+            ),
+            (
+                "What became of the funds I paid to someone lately?",
+                "What new purchases appeared in my account ledger?",
+            ),
+            (
+                "Please check how a recent outgoing payment ended.",
+                "Please check my latest merchant transactions.",
             ),
         ),
         "test": (
@@ -898,6 +943,126 @@ def _transfer_transaction_contrast_rows(split: str) -> list[dict[str, Any]]:
                     )
                 )
     return rows
+
+
+def _servicing_to_policy_topic_shift_rows(split: str) -> list[dict[str, Any]]:
+    """Teach explicit policy questions to replace prior servicing context."""
+
+    prompts = {
+        "train": (
+            ("replacement_protection_train", "What protections apply to replacement cards?"),
+            ("case_retention_train", "Explain how long closed support cases are retained."),
+            ("transfer_finality_train", "How is finality determined for scheduled transfers?"),
+            ("purchase_posting_train", "What policy controls pending purchase posting times?"),
+        ),
+        "validation": (
+            ("replacement_fee_validation", "Are fees permitted for issuing a new debit card?"),
+            ("case_archive_validation", "Describe the archive policy for resolved service items."),
+        ),
+        "test": (
+            ("transfer_window_test", "Which rules set the cancellation window for a transfer?"),
+            ("dispute_timing_test", "What policy determines a purchase dispute review period?"),
+        ),
+    }[split]
+    histories = {
+        "train": (
+            (
+                "accounts_train",
+                "Show the balances for my accounts.",
+                "I found balances for Harbor Everyday and Cedar Reserve.",
+            ),
+            (
+                "cards_train",
+                "List the debit cards on my profile.",
+                "Your active debit card ends in 4821.",
+            ),
+            (
+                "transfers_train",
+                "Bring up my outgoing bank transfers.",
+                "I found two completed transfers and one scheduled transfer.",
+            ),
+            (
+                "service_table_train",
+                "Put my customer-service cases in a table.",
+                "## Service cases\n\n"
+                "| Case | Type | Status | Created |\n"
+                "| --- | --- | --- | --- |\n"
+                "| CS-104 | address change | closed | 2026-05-14 |\n"
+                "| CS-219 | card delivery | open | 2026-07-02 |",
+            ),
+        ),
+        "validation": (
+            (
+                "accounts_validation",
+                "Display my deposit accounts.",
+                "Pioneer Checking and Meadow Savings are active.",
+            ),
+            (
+                "cards_validation",
+                "Show the cards tied to my profile.",
+                "I found one active debit card and one closed card.",
+            ),
+            (
+                "transactions_validation",
+                "List my newest merchant purchases.",
+                "I found three posted purchases and one pending purchase.",
+            ),
+            (
+                "service_table_validation",
+                "Summarize my support requests as a table.",
+                "## Service cases\n\n"
+                "| Case | Type | Status | Created |\n"
+                "| --- | --- | --- | --- |\n"
+                "| SR-308 | contact details | resolved | 2026-04-09 |\n"
+                "| SR-441 | transfer review | open | 2026-06-18 |",
+            ),
+        ),
+        "test": (
+            (
+                "balances_test",
+                "Retrieve my account balance summary.",
+                "Lakeside Spend and Summit Savings are both active.",
+            ),
+            (
+                "cards_test",
+                "Bring up my current debit cards.",
+                "The primary card is active and the older card is closed.",
+            ),
+            (
+                "transfers_test",
+                "Review the latest transfers from my accounts.",
+                "Two transfers settled and another remains scheduled.",
+            ),
+            (
+                "service_table_test",
+                "Create a table of my recent help requests.",
+                "## Service cases\n\n"
+                "| Case | Type | Status | Created |\n"
+                "| --- | --- | --- | --- |\n"
+                "| HC-512 | profile update | closed | 2026-03-21 |\n"
+                "| HC-633 | card replacement | open | 2026-07-11 |",
+            ),
+        ),
+    }[split]
+
+    return [
+        _make_row(
+            current=current,
+            history=[
+                {"role": "user", "content": prior_user},
+                {"role": "assistant", "content": prior_assistant},
+            ],
+            domain_label=1,
+            intent="policy_knowledge",
+            relation_names=["topic_shift"],
+            example_kind="servicing_policy_topic_shift",
+            source="self-authored-router-v7-servicing-policy-shift",
+            source_split=split,
+            group_id=f"servicing-policy-family|{prompt_family}|{history_family}",
+        )
+        for prompt_family, current in prompts
+        for history_family, prior_user, prior_assistant in histories
+    ]
 
 
 def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
@@ -1569,9 +1734,9 @@ def _targeted_prompts(split: str) -> dict[str, tuple[str, ...]]:
                 "Why are you saying the same unrelated thing again?",
                 "You keep giving me that answer over and over.",
                 "This is repetitive and still not about my service case.",
-                "Why are you repeating the answer?",
+                "Why do you keep repeating that answer?",
                 "Why do you repeat yourself instead of checking the case?",
-                "Why are you repeating this unrelated response?",
+                "Why is this unrelated response being repeated?",
                 "You are repeating yourself rather than answering my question.",
                 "Why does the same answer keep coming back?",
                 "Please stop repeating yourself and handle my request.",
@@ -1588,9 +1753,9 @@ def _targeted_prompts(split: str) -> dict[str, tuple[str, ...]]:
                 "That is not the mortgage question I asked.",
                 "I did not ask you about home financing.",
                 "I didn't request mortgage advice.",
-                "I didn't ask about home loans.",
+                "Home loans were not my request.",
                 "I haven't asked about a mortgage.",
-                "I didn't ask for lending information.",
+                "Lending information was not my request.",
                 "I wasn't asking about mortgage products.",
                 "I did not request any home-loan guidance.",
             ),
@@ -1616,14 +1781,14 @@ def _targeted_prompts(split: str) -> dict[str, tuple[str, ...]]:
                 "Try again without the loan material and inspect the service item.",
                 "Correct the prior reply and continue with the address request.",
                 "Why does the reply keep repeating unrelated information?",
-                "Why are you repeating the response rather than checking my case?",
+                "Stop repeating that response and check my case instead.",
             ),
             "wrong_topic_repair": (
                 "My question concerned the service case, not mortgage guidance.",
                 "That was a lending answer; I need the address-request details.",
                 "Please switch back from loans to my customer-service case.",
                 "I was never asking for mortgage details.",
-                "I didn't ask for advice about a home loan.",
+                "Advice about a home loan was not my request.",
             ),
         },
         "test": {
@@ -2197,6 +2362,7 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         "state_social_detour",
         "heldout_policy_followup_generalization",
         "heldout_social_generalization",
+        "servicing_policy_topic_shift",
         "transfer_transaction_semantic_contrast",
         "heldout_screenshot_regression",
     }
@@ -2214,6 +2380,7 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
                     (
                         "state-policy-family|",
                         "state-social-family|",
+                        "servicing-policy-family|",
                         "transfer-transaction-family|",
                     )
                 ):
@@ -2235,6 +2402,7 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         for pair_id, values in counterfactual_pairs.items()
         if len(values) > 1
     }
+    heldout_exact_leaks, heldout_long_ngram_leaks = _heldout_regression_leaks(splits)
     return {
         "group_split_leaks": leaking,
         "group_split_leak_count": len(leaking),
@@ -2246,6 +2414,8 @@ def _leakage_report(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         "state_paraphrase_family_split_leak_count": len(state_family_leaks),
         "counterfactual_pair_split_leaks": counterfactual_pair_leaks,
         "counterfactual_pair_split_leak_count": len(counterfactual_pair_leaks),
+        "heldout_exact_leaks_in_train_validation": heldout_exact_leaks,
+        "heldout_long_ngram_leaks_in_train_validation": heldout_long_ngram_leaks,
     }
 
 
@@ -2255,6 +2425,53 @@ def _count_pii_matches(texts: Iterable[str]) -> int:
 
 def _is_screenshot_regression_text(text: str) -> bool:
     return normalize_router_text(text) in SCREENSHOT_REGRESSION_CURRENTS
+
+
+def _word_ngrams(text: str, *, size: int = 4) -> set[tuple[str, ...]]:
+    tokens = normalize_router_text(text).split()
+    return {tuple(tokens[index : index + size]) for index in range(len(tokens) - size + 1)}
+
+
+def _contains_screenshot_regression_ngram(text: str, *, size: int = 4) -> bool:
+    heldout = set().union(
+        *(_word_ngrams(prompt, size=size) for prompt in SCREENSHOT_REGRESSION_CURRENTS)
+    )
+    return bool(heldout & _word_ngrams(text, size=size))
+
+
+def _heldout_regression_leaks(
+    splits: Mapping[str, Sequence[dict[str, Any]]],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    exact: list[dict[str, str]] = []
+    long_ngram: list[dict[str, Any]] = []
+    heldout_ngrams = set().union(
+        *(_word_ngrams(prompt) for prompt in SCREENSHOT_REGRESSION_CURRENTS)
+    )
+    for split in ("train", "validation"):
+        for row in splits[split]:
+            text = str(row["text"])
+            normalized = normalize_router_text(text)
+            matching_prompts = sorted(
+                prompt for prompt in SCREENSHOT_REGRESSION_CURRENTS if prompt in normalized
+            )
+            if matching_prompts:
+                exact.append(
+                    {
+                        "split": split,
+                        "group_id": str(row["group_id"]),
+                        "prompt": matching_prompts[0],
+                    }
+                )
+            shared = sorted(heldout_ngrams & _word_ngrams(text))
+            if shared:
+                long_ngram.append(
+                    {
+                        "split": split,
+                        "group_id": str(row["group_id"]),
+                        "ngrams": [" ".join(ngram) for ngram in shared],
+                    }
+                )
+    return exact, long_ngram
 
 
 def _stable_rank(seed: int, *parts: str) -> str:

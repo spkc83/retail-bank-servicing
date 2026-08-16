@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections import Counter
 from typing import Any
 
@@ -491,8 +492,8 @@ def test_transfer_transaction_contrasts_resist_social_and_balance_history() -> N
     splits, report = build_conversation_router_splits(
         sft_records_by_split(), clinc_payload(), seed=7404
     )
-    expected_counts = {"train": 32, "validation": 16, "test": 16}
-    markdown_counts = {"train": 8, "validation": 4, "test": 4}
+    expected_counts = {"train": 96, "validation": 32, "test": 16}
+    markdown_counts = {"train": 24, "validation": 8, "test": 4}
     split_products = {
         "train": {"Harbor Everyday", "Cedar Reserve"},
         "validation": {"Pioneer Checking", "Meadow Savings"},
@@ -558,6 +559,38 @@ def test_transfer_transaction_contrasts_resist_social_and_balance_history() -> N
     assert current_by_split["validation"].isdisjoint(current_by_split["test"])
     assert report["leakage"]["group_split_leak_count"] == 0
     assert report["leakage"]["trajectory_split_leak_count"] == 0
+    assert report["leakage"]["state_current_text_split_leak_count"] == 0
+    assert report["leakage"]["state_paraphrase_family_split_leak_count"] == 0
+
+
+def test_v7_servicing_to_policy_topic_shifts_are_split_isolated() -> None:
+    splits, report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    expected_counts = {"train": 16, "validation": 8, "test": 8}
+    current_by_split: dict[str, set[str]] = {}
+
+    for split, rows in splits.items():
+        shifts = [row for row in rows if row["example_kind"] == "servicing_policy_topic_shift"]
+        assert len(shifts) == expected_counts[split]
+        assert all(row["intent"] == "policy_knowledge" for row in shifts)
+        assert all(row["action_name"] == "retrieve_policy" for row in shifts)
+        assert all(
+            row["relation_labels"][RELATION_LABELS.index("topic_shift")] == 1 for row in shifts
+        )
+        assert all(row["history"] for row in shifts)
+        assert any(
+            "## Service cases\n\n| Case | Type | Status | Created |"
+            in str(row["history"][-1]["content"])
+            for row in shifts
+        )
+        current_by_split[split] = {
+            normalize_router_text(str(row["current_text"])) for row in shifts
+        }
+
+    assert current_by_split["train"].isdisjoint(current_by_split["validation"])
+    assert current_by_split["train"].isdisjoint(current_by_split["test"])
+    assert current_by_split["validation"].isdisjoint(current_by_split["test"])
     assert report["leakage"]["state_current_text_split_leak_count"] == 0
     assert report["leakage"]["state_paraphrase_family_split_leak_count"] == 0
 
@@ -686,6 +719,45 @@ def test_held_out_screenshot_regressions_are_test_only() -> None:
             for heldout_prompt in heldout_current
             for rendered in normalized_inputs
         )
+    assert _report["leakage"]["heldout_exact_leaks_in_train_validation"] == []
+    assert _report["leakage"]["heldout_long_ngram_leaks_in_train_validation"] == []
+
+
+def test_coreference_shadow_suite_remains_untouched_and_test_only() -> None:
+    records = sft_records_by_split()
+    shadow = _record(
+        split="test",
+        record_id="shadow-v7-history",
+        scenario_family="clarification_card",
+        user="Use the card identified in that earlier list.",
+        assistant="I need you to select one eligible card.",
+        path="clarification",
+    )
+    shadow["metadata"].update(
+        {
+            "trainable": False,
+            "coreference_pair_id": "shadow-v7-pair",
+            "coreference_target": "clarification",
+            "coreference_phrase_family": "shadow-v7-history-family",
+        }
+    )
+    records["test"].append(shadow)
+    before = copy.deepcopy(records)
+
+    splits, _report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+
+    assert records == before
+    assert all(
+        row["source"] != "self-authored-coreference-shadow"
+        for split in ("train", "validation")
+        for row in splits[split]
+    )
+    shadow_rows = [
+        row for row in splits["test"] if row["source"] == "self-authored-coreference-shadow"
+    ]
+    assert len(shadow_rows) == 1
+    assert shadow_rows[0]["counterfactual_pair_id"] == "shadow-v7-pair"
+    assert shadow_rows[0]["counterfactual_phrase_family"] == "shadow-v7-history-family"
 
 
 def test_sft_row_with_live_regression_prompt_in_history_is_excluded() -> None:

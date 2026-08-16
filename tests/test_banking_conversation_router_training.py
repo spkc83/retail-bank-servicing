@@ -124,6 +124,27 @@ def test_metrics_cover_intent_and_each_relation_slice() -> None:
     assert training.release_gate_failures(metrics) == []
 
 
+def test_runtime_relation_closure_is_reflected_in_heldout_metrics() -> None:
+    training = load_training_module()
+    metrics = training.evaluate_predictions(
+        domain_probabilities=[0.99],
+        domain_labels=[1],
+        intent_predictions=[0],
+        intent_labels=[0],
+        relation_probabilities=[[0.10, 0.10, 0.99, 0.01, 0.01]],
+        relation_labels=[[1, 1, 1, 0, 0]],
+        example_kinds=["heldout_screenshot_regression"],
+        current_texts=["I didn't ask about mortgage"],
+        context_applied_flags=[True],
+        ood_banking_threshold=0.20,
+        in_domain_threshold=0.50,
+        relation_rescue_threshold=0.50,
+        num_intents=2,
+    )
+
+    assert metrics["heldout_regression_relation_error_rate"] == 0.0
+
+
 def test_release_gate_reports_use_case_regressions() -> None:
     training = load_training_module()
     failures = training.release_gate_failures(
@@ -262,6 +283,53 @@ def test_uncertain_route_fails_resume_and_switch_runtime_metrics() -> None:
     assert metrics["trajectory_state_route_error_rate"] == 1.0
     assert metrics["trajectory_state_intent_error_rate"] == 1.0
     assert metrics["trajectory_runtime_transition_error_rate"] == 1.0
+
+
+def test_v7_state_transition_metric_uses_finalized_joint_decision() -> None:
+    training = load_training_module()
+
+    def scores(index: int, width: int) -> list[float]:
+        return [float(position == index) for position in range(width)]
+
+    banking = training.DOMAIN_LABELS.index("banking")
+    servicing = training.LANE_LABELS.index("servicing")
+    transfers = training.FAMILY_LABELS.index("transfers")
+    raw_intent = training.INTENT_LABELS.index("view_service_cases")
+    effective_intent = training.INTENT_LABELS.index("view_transfers")
+    execute = training.ACTION_LABELS.index("execute_tool")
+    not_required = training.ENTITY_RESOLUTION_LABELS.index("not_required")
+    metrics = training.evaluate_predictions(
+        domain_probabilities=[0.99],
+        domain_labels=[1],
+        domain_predictions=[banking],
+        domain_indices=[banking],
+        lane_predictions=[servicing],
+        lane_indices=[servicing],
+        family_predictions=[transfers],
+        family_indices=[transfers],
+        intent_predictions=[raw_intent],
+        intent_labels=[effective_intent],
+        relation_probabilities=[[0.0] * len(training.RELATION_LABELS)],
+        relation_labels=[[0, 0, 1, 0, 0]],
+        action_predictions=[execute],
+        action_indices=[execute],
+        entity_resolution_predictions=[not_required],
+        entity_resolution_indices=[not_required],
+        domain_scores=[scores(banking, len(training.DOMAIN_LABELS))],
+        lane_scores=[scores(servicing, len(training.LANE_LABELS))],
+        family_scores=[scores(transfers, len(training.FAMILY_LABELS))],
+        intent_scores=[scores(effective_intent, len(training.INTENT_LABELS))],
+        action_scores=[scores(execute, len(training.ACTION_LABELS))],
+        entity_resolution_scores=[scores(not_required, len(training.ENTITY_RESOLUTION_LABELS))],
+        example_kinds=["state_intent_switch"],
+        ood_banking_threshold=0.2,
+        in_domain_threshold=0.5,
+        relation_rescue_threshold=0.5,
+        num_intents=len(training.INTENT_LABELS),
+    )
+
+    assert metrics["intent_macro_f1"] == 0.0
+    assert metrics["trajectory_effective_decision_transition_error_rate"] == 0.0
 
 
 def test_heldout_social_and_policy_gates_require_exact_runtime_intent() -> None:
@@ -796,8 +864,17 @@ def test_v4_artifact_saves_every_head_and_canonical_provenance(tmp_path: Path) -
     assert config["domain_labels"] == list(training.DOMAIN_LABELS)
     assert config["action_labels"] == list(training.ACTION_LABELS)
     assert config["entity_resolution_labels"] == list(training.ENTITY_RESOLUTION_LABELS)
-    assert config["generation_guidance_contract"] == "intent-selects-tool-schema-no-arguments-v1"
+    assert config["runtime_contract_version"] == 7
+    assert config["effective_decision_contract"] == "retail-bank-effective-turn-decision/v1"
+    assert config["generation_guidance_contract"] == (
+        "intent-selects-tool-schema-with-grounded-public-selector-v2"
+    )
     assert manifest["format_version"] == 4
+    assert manifest["runtime_contract_version"] == 7
+    assert manifest["effective_decision_contract"] == ("retail-bank-effective-turn-decision/v1")
+    assert manifest["generation_guidance_contract"] == (
+        "intent-selects-tool-schema-with-grounded-public-selector-v2"
+    )
     assert manifest["release_eligible"] is False
     assert {key.removesuffix(".weight") for key in heads if key.endswith(".weight")} == {
         "domain_head",

@@ -181,6 +181,43 @@ def test_low_confidence_intent_does_not_mutate_state() -> None:
     assert result.lane == "unchanged"
 
 
+def test_accepted_v7_joint_decision_replaces_stale_state_without_raw_head_threshold() -> None:
+    state = pending_state("view_service_cases")
+    observation = {
+        **route("view_transfers", confidence=0.329),
+        "lane": "servicing",
+        "action": "execute_tool",
+        "entity_resolution": "not_required",
+        "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+        "decision_accepted": True,
+    }
+
+    result = begin_turn(
+        state,
+        observation,
+        "What became of the transfer I sent a short while ago?",
+    )
+
+    assert result.lane == "servicing"
+    assert result.state.pending_servicing is not None
+    assert result.state.pending_servicing.intent == "view_transfers"
+
+
+def test_unaccepted_v7_joint_decision_does_not_mutate_state() -> None:
+    state = pending_state("view_service_cases")
+    observation = {
+        **route("view_transfers", confidence=0.99),
+        "lane": "servicing",
+        "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+        "decision_accepted": False,
+    }
+
+    result = begin_turn(state, observation, "Check the transfer.")
+
+    assert result.state == state
+    assert result.lane == "unchanged"
+
+
 def test_only_successful_matching_tool_completion_clears_pending_task() -> None:
     state = pending_state()
 

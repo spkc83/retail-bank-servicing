@@ -18,6 +18,7 @@ from router import (
     ROUTER_REVISION,
     ConversationRouterOutput,
     LearnedBankingRouter,
+    _stabilize_active_relations,
     render_router_input,
 )
 from router import (
@@ -28,6 +29,19 @@ from router import (
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
     assert ROUTER_REVISION == "c0d71b433fd1eef510fce36f6308eb36e423e329"
+
+
+def test_explicit_topic_repair_relation_closure_matches_runtime_contract() -> None:
+    assert _stabilize_active_relations(
+        ["topic_shift"],
+        current_text="I didn't ask about mortgage",
+        context_applied=True,
+    ) == ["context_dependent", "agent_repair", "topic_shift"]
+    assert _stabilize_active_relations(
+        ["topic_shift"],
+        current_text="What are current mortgage rates?",
+        context_applied=True,
+    ) == ["topic_shift"]
 
 
 def test_router_omits_semantically_empty_dialogue_state() -> None:
@@ -335,6 +349,116 @@ def test_v4_poc_joint_decoder_matches_core_conflict_resolution() -> None:
         "constraint:joint-decoder-resolved-independent-head-conflict"
         in result["constraint_diagnostics"]
     )
+    assert result["joint_decision_contract"] == "hierarchical-router-joint-decision/v1"
+    assert result["joint_decision_accepted"] is True
+    selected = next(
+        item for item in result["intent_candidates"] if item["intent"] == result["intent"]
+    )
+    assert result["selected_intent_probability"] == selected["probability"]
+
+
+class TopicShiftSequenceModel:
+    def __init__(self, *, include_repair: bool = False) -> None:
+        self.calls = 0
+        self.include_repair = include_repair
+
+    def to(self, _device):
+        return self
+
+    def eval(self):
+        return self
+
+    def __call__(self, **_kwargs):
+        def selected(labels, label):
+            values = [-6.0] * len(labels)
+            values[labels.index(label)] = 6.0
+            return torch.tensor([values])
+
+        contextual = self.calls == 0
+        self.calls += 1
+        relations = [-6.0] * len(RELATION_LABELS)
+        if contextual:
+            relations[RELATION_LABELS.index("topic_shift")] = 6.0
+            if self.include_repair:
+                relations[RELATION_LABELS.index("agent_repair")] = 6.0
+        return ConversationRouterOutput(
+            domain_logits=selected(DOMAIN_LABELS, "banking"),
+            lane_logits=selected(
+                LANE_LABELS,
+                "servicing" if contextual else "policy",
+            ),
+            family_logits=selected(
+                FAMILY_LABELS,
+                "service_cases" if contextual else "policy",
+            ),
+            intent_logits=selected(
+                INTENT_LABELS,
+                "view_service_cases" if contextual else "policy_knowledge",
+            ),
+            relation_logits=torch.tensor([relations]),
+            action_logits=selected(
+                ACTION_LABELS,
+                "execute_tool" if contextual else "retrieve_policy",
+            ),
+            entity_resolution_logits=selected(
+                ENTITY_RESOLUTION_LABELS,
+                "not_required",
+            ),
+        )
+
+
+def _topic_shift_router(model) -> LearnedBankingRouter:
+    return LearnedBankingRouter(
+        tokenizer=FakeTokenizer(),
+        model=model,
+        intent_labels=INTENT_LABELS,
+        relation_labels=RELATION_LABELS,
+        domain_labels=DOMAIN_LABELS,
+        lane_labels=LANE_LABELS,
+        family_labels=FAMILY_LABELS,
+        action_labels=ACTION_LABELS,
+        entity_resolution_labels=ENTITY_RESOLUTION_LABELS,
+        format_version=4,
+        ood_banking_threshold=0.2,
+        in_domain_threshold=0.5,
+        relation_rescue_threshold=0.5,
+        max_length=256,
+        max_exchanges=3,
+    )
+
+
+def test_v4_topic_shift_current_only_recheck_recovers_policy_switch() -> None:
+    model = TopicShiftSequenceModel()
+    router = _topic_shift_router(model)
+
+    result = router.classify(
+        "How would I begin a home-loan application?",
+        [
+            {"role": "user", "content": "Show my support cases."},
+            {"role": "assistant", "content": "Your address case is closed."},
+        ],
+    )
+
+    assert model.calls == 2
+    assert result["lane"] == "policy"
+    assert result["intent"] == "policy_knowledge"
+    assert result["action"] == "retrieve_policy"
+    assert result["topic_shift_recheck_applied"] is True
+    assert result["contextual_decision"]["intent"] == "view_service_cases"
+
+
+def test_v4_topic_shift_recheck_does_not_override_agent_repair() -> None:
+    model = TopicShiftSequenceModel(include_repair=True)
+    router = _topic_shift_router(model)
+
+    result = router.classify(
+        "I meant the address case, not home-loan guidance.",
+        [{"role": "assistant", "content": "Here is mortgage information."}],
+    )
+
+    assert model.calls == 1
+    assert result["intent"] == "view_service_cases"
+    assert result.get("topic_shift_recheck_applied") is None
 
 
 def test_v4_joint_decoder_core_and_poc_parity() -> None:

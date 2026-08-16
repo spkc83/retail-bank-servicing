@@ -86,15 +86,18 @@ class RecordingBackend:
 
     def __init__(self) -> None:
         self.calls: list[list[dict[str, Any]]] = []
+        self.tools: list[list[dict[str, Any]] | None] = []
 
     def generate_text(
         self,
         messages: list[dict[str, Any]],
         *,
         max_new_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         assert max_new_tokens > 0
         self.calls.append([dict(message) for message in messages])
+        self.tools.append(tools)
         if any(message.get("role") == "tool" for message in messages):
             return "Done. You have Main Checking ending in 1792."
         if messages[-1]["content"] == "What accounts do I have?":
@@ -110,8 +113,9 @@ class OneThenFinalBackend:
         messages: list[dict[str, Any]],
         *,
         max_new_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        del max_new_tokens
+        del max_new_tokens, tools
         if not any(message.get("role") == "tool" for message in messages):
             return '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>'
         return "Done. You have account ending in 1792."
@@ -128,8 +132,9 @@ class TwoStepBackend:
         messages: list[dict[str, Any]],
         *,
         max_new_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        del max_new_tokens
+        del max_new_tokens, tools
         self.calls.append([dict(message) for message in messages])
         result_count = sum(1 for message in messages if message.get("role") == "tool")
         if result_count == 0:
@@ -177,6 +182,13 @@ def _tool_record() -> dict[str, Any]:
             "path": "tool_success",
             "tool_calls": [{"name": "list_accounts", "arguments": {}}],
             "grounding_facts": ["account.last4=1792"],
+            "generation_contract": {
+                "version": "banking-v7-route-to-generation/v1",
+                "mode": "execute_tool",
+                "entity_state": "not_required",
+                "tool_names": ["list_accounts"],
+                "argument_constraints": {},
+            },
         },
     }
 
@@ -229,6 +241,13 @@ def _no_tool_record() -> dict[str, Any]:
             "path": "clarification",
             "tool_calls": [],
             "grounding_facts": ["missing_field=last4"],
+            "generation_contract": {
+                "version": "banking-v7-route-to-generation/v1",
+                "mode": "clarify",
+                "entity_state": "missing",
+                "tool_names": [],
+                "argument_constraints": {},
+            },
         },
     }
 
@@ -315,6 +334,8 @@ def test_runner_generates_two_isolated_phases_and_metadata(tmp_path: Path) -> No
     assert rows[1]["grounded_final_raw_output"] is None
     assert rows[1]["raw_output"] == rows[1]["first_assistant_raw_output"]
     assert [message["role"] for message in backend.calls[0]] == ["system", "user"]
+    assert [tool["name"] for tool in backend.tools[0] or []] == ["list_accounts"]
+    assert backend.tools[2] == []
     assert [message["role"] for message in backend.calls[1]] == [
         "system",
         "user",
@@ -331,10 +352,41 @@ def test_runner_generates_two_isolated_phases_and_metadata(tmp_path: Path) -> No
         "canonical_results_only_for_exact_emitted_calls": True,
         "teacher_forced_unseen_assistant_tool_calls": False,
     }
+    assert metadata["oracle_contract_gate"] == {
+        "contract": "banking-v7-granite-oracle-contract-gate/v1",
+        "record_count": 2,
+        "contracted_record_count": 2,
+        "exact_one_or_no_tool_count": 2,
+        "eligible": True,
+        "predicted_e2e_gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+    }
     report = json.loads(Path(metadata["outputs"]["report_json"]).read_text(encoding="utf-8"))
     assert report["checkpoint_revision"] == "a" * 40
     assert report["metrics"]["tool_name_accuracy"]["score"] == 1.0
     assert report["metrics"]["grounded_final_factuality"]["score"] == 1.0
+
+
+def test_eval_derives_v7_contract_for_frozen_record_without_mutating_it() -> None:
+    record = _tool_record()
+    record["expected"].pop("generation_contract")
+    record["metadata"] = {"scenario_family": "accounts"}
+    adapter = runner.ToolWireAdapter(
+        TemplateTokenizer(),
+        family="granite",
+        public_tool_manifest=runner.PUBLIC_BANKING_TOOL_MANIFEST,
+    )
+
+    contract, tools = runner.evaluation_contract_and_tools(record, adapter)
+
+    assert contract == {
+        "version": "banking-v7-route-to-generation/v1",
+        "mode": "execute_tool",
+        "entity_state": "not_required",
+        "tool_names": ["list_accounts"],
+        "argument_constraints": {},
+    }
+    assert tools is not None and [tool["name"] for tool in tools] == ["list_accounts"]
+    assert "generation_contract" not in record["expected"]
 
 
 def test_runner_requires_model_to_emit_subsequent_tool_calls(tmp_path: Path) -> None:

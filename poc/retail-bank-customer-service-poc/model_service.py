@@ -751,8 +751,9 @@ def _validate_tool_calls(
     *,
     allowed_tools: list[dict[str, Any]] = MODEL_TOOLS,
 ) -> None:
-    schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in MODEL_TOOLS}
+    schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in allowed_tools}
     allowed_names = {tool["function"]["name"] for tool in allowed_tools}
+    supported_names = {tool["function"]["name"] for tool in MODEL_TOOLS}
     seen_ids: set[str] = set()
     for expected_index, call in enumerate(calls):
         if call.index != expected_index:
@@ -760,11 +761,11 @@ def _validate_tool_calls(
         if call.id in seen_ids:
             raise AgentProtocolError("model tool-call IDs must be unique")
         seen_ids.add(call.id)
-        schema = schemas.get(call.name)
-        if schema is None:
+        if call.name not in supported_names:
             raise AgentProtocolError(f"model selected unsupported tool: {call.name}")
         if call.name not in allowed_names:
             raise AgentProtocolError(f"model selected unexposed tool: {call.name}")
+        schema = schemas[call.name]
         _validate_arguments(call.name, call.arguments, schema)
 
 
@@ -780,6 +781,11 @@ def _validate_arguments(
         raise AgentProtocolError(
             f"model supplied unsupported arguments for {tool_name}: {sorted(extras)}"
         )
+    required = schema.get("required")
+    if isinstance(required, list):
+        missing = [name for name in required if name not in arguments]
+        if missing:
+            raise AgentProtocolError(f"model omitted required argument for {tool_name}: {missing}")
     for name, value in arguments.items():
         subschema = allowed.get(name)
         if not isinstance(subschema, dict):
@@ -788,6 +794,16 @@ def _validate_arguments(
         expected_types = expected if isinstance(expected, list) else [expected]
         if not _value_matches_json_types(value, expected_types):
             raise AgentProtocolError(f"model supplied invalid type for {tool_name}.{name}")
+        if "const" in subschema and value != subschema["const"]:
+            raise AgentProtocolError(f"model supplied value outside const for {tool_name}.{name}")
+        enum = subschema.get("enum")
+        if isinstance(enum, list) and value not in enum:
+            raise AgentProtocolError(f"model supplied value outside enum for {tool_name}.{name}")
+        pattern = subschema.get("pattern")
+        if isinstance(pattern, str) and (
+            not isinstance(value, str) or re.fullmatch(pattern, value) is None
+        ):
+            raise AgentProtocolError(f"model supplied value outside pattern for {tool_name}.{name}")
         if (
             isinstance(value, int)
             and not isinstance(value, bool)
@@ -1007,11 +1023,22 @@ def _generation_plan(
             )
         else:
             tools = [tool for tool in MODEL_TOOLS if tool["function"]["name"] == tool_name]
+            constraints = router_result.get("argument_constraints")
+            if isinstance(constraints, dict) and constraints:
+                tools = [_narrow_tool_schema(tools[0], constraints)]
+                argument_instruction = (
+                    "Emit every required argument exactly as constrained by the exposed "
+                    "schema; do not omit, infer, or alter it."
+                )
+            else:
+                argument_instruction = (
+                    "Choose every argument from the conversation; this guidance supplies "
+                    "no tool arguments."
+                )
             instruction = (
                 f"Use only {tool_name} for this turn. Call it when the conversation "
                 "supplies the selectors its schema requires; otherwise ask one concise, "
-                "natural clarification question. Choose every argument from the "
-                "conversation; this guidance supplies no tool arguments."
+                f"natural clarification question. {argument_instruction}"
             )
     elif action == "converse":
         instruction = (
@@ -1029,6 +1056,38 @@ def _generation_plan(
         "role": "system",
         "content": f"{system['content']}\n\nTURN GUIDANCE: {instruction}",
     }, tools
+
+
+def _narrow_tool_schema(
+    tool: dict[str, Any],
+    constraints: dict[str, Any],
+) -> dict[str, Any]:
+    function = tool["function"]
+    parameters = function["parameters"]
+    properties = parameters.get("properties", {})
+    if set(constraints) - set(properties):
+        raise AgentProtocolError("effective decision constrained an unsupported tool argument")
+    narrowed_properties = dict(properties)
+    for name, value in constraints.items():
+        if not isinstance(value, str) or not value:
+            raise AgentProtocolError("effective decision requires non-empty string constraints")
+        narrowed_properties[name] = {
+            "type": "string",
+            "pattern": f"^{re.escape(value)}$",
+            "const": value,
+            "enum": [value],
+        }
+    return {
+        **tool,
+        "function": {
+            **function,
+            "parameters": {
+                **parameters,
+                "properties": narrowed_properties,
+                "required": list(constraints),
+            },
+        },
+    }
 
 
 def _requires_tool_call(
@@ -1094,6 +1153,33 @@ def router_diagnostic_fields(router_result: dict[str, Any]) -> dict[str, Any]:
         "action": router_result.get("action", compatibility_value),
         "entity_resolution": router_result.get(
             "entity_resolution",
+            compatibility_value,
+        ),
+        "effective_decision_contract": router_result.get(
+            "effective_decision_contract",
+            compatibility_value,
+        ),
+        "decision_accepted": router_result.get("decision_accepted", compatibility_value),
+        "learned_action": router_result.get(
+            "learned_action",
+            router_result.get("action", compatibility_value),
+        ),
+        "effective_action": router_result.get("action", compatibility_value),
+        "learned_entity_resolution": router_result.get(
+            "learned_entity_resolution",
+            router_result.get("entity_resolution", compatibility_value),
+        ),
+        "effective_entity_resolution": router_result.get(
+            "entity_resolution",
+            compatibility_value,
+        ),
+        "argument_constraints": router_result.get("argument_constraints", {}),
+        "entity_grounding_source": router_result.get(
+            "entity_grounding_source",
+            compatibility_value,
+        ),
+        "entity_candidate_count": router_result.get(
+            "entity_candidate_count",
             compatibility_value,
         ),
         "exposed_tools": tool_names,

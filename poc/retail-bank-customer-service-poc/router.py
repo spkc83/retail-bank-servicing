@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +21,13 @@ ROUTER_REPO_ID = os.environ.get(
 ROUTER_REVISION = os.environ.get(
     "RETAIL_BANK_ROUTER_REVISION",
     "c0d71b433fd1eef510fce36f6308eb36e423e329",
+)
+RELATION_LABELS = (
+    "context_dependent",
+    "agent_repair",
+    "topic_shift",
+    "clarification_answer",
+    "resume_previous_service",
 )
 
 
@@ -313,13 +320,44 @@ class LearnedBankingRouter:
             max_exchanges=self.max_exchanges,
             dialogue_state=dialogue_state,
         )
-        return self._predict(rendered, context_applied=context_applied)
+        current = message.strip()
+        result = self._predict(
+            rendered,
+            context_applied=context_applied,
+            current_text=current,
+        )
+        if self.format_version == 4 and _needs_topic_shift_recheck(result):
+            current_only, _ = render_router_input(
+                current,
+                [],
+                max_exchanges=self.max_exchanges,
+                dialogue_state=None,
+            )
+            current_result = self._predict(
+                current_only,
+                context_applied=False,
+                current_text=current,
+            )
+            if _prefer_current_only_topic_shift(result, current_result):
+                result = {
+                    **current_result,
+                    "context_applied": context_applied,
+                    "topic_shift_recheck_applied": True,
+                    "contextual_decision": {
+                        key: result.get(key)
+                        for key in ("domain", "lane", "family", "intent", "action")
+                    },
+                    "constraint_diagnostics": tuple(result.get("constraint_diagnostics", ()))
+                    + ("constraint:topic-shift-current-only-recheck",),
+                }
+        return result
 
     def _predict(
         self,
         rendered: str,
         *,
         context_applied: bool,
+        current_text: str = "",
     ) -> dict[str, Any]:
         encoded = self.tokenizer(
             rendered,
@@ -335,7 +373,11 @@ class LearnedBankingRouter:
         if self.format_version == 4:
             if not isinstance(output, ConversationRouterOutput):
                 raise TypeError("V4 router model must return ConversationRouterOutput")
-            return self._v4_result(output, context_applied=context_applied)
+            return self._v4_result(
+                output,
+                context_applied=context_applied,
+                current_text=current_text,
+            )
         if not isinstance(output, tuple) or len(output) != 3:
             raise TypeError("V2/V3 router model must return three logits tensors")
         domain_logits, intent_logits, relation_logits = output
@@ -391,6 +433,7 @@ class LearnedBankingRouter:
         output: ConversationRouterOutput,
         *,
         context_applied: bool,
+        current_text: str = "",
     ) -> dict[str, Any]:
         domain_candidates, domain_confidence = _top_candidates(
             output.domain_logits, self.domain_labels, key="domain"
@@ -402,6 +445,11 @@ class LearnedBankingRouter:
         ood_probability = domain_probabilities["out_of_domain"]
         banking_probability = 1.0 - ood_probability
         relations, active_relations, rescue_probability = self._relations(output.relation_logits)
+        active_relations = _stabilize_active_relations(
+            active_relations,
+            current_text=current_text,
+            context_applied=context_applied,
+        )
         route = self._route(banking_probability, rescue_probability)
         intent_candidates, intent_confidence = _top_candidates(
             output.intent_logits, self.intent_labels, key="intent"
@@ -486,6 +534,11 @@ class LearnedBankingRouter:
             ),
             "intent": intent,
             "intent_confidence": intent_confidence,
+            "selected_intent_probability": _candidate_probability(
+                intent_candidates,
+                "intent",
+                intent,
+            ),
             "intent_candidates": intent_candidates,
             "capability": intent,
             "capability_confidence": intent_confidence,
@@ -509,6 +562,8 @@ class LearnedBankingRouter:
             "relation_thresholds": self.relation_thresholds,
             "active_relations": active_relations,
             "constraint_diagnostics": diagnostics,
+            "joint_decision_contract": "hierarchical-router-joint-decision/v1",
+            "joint_decision_accepted": route == "in_domain",
             "context_applied": context_applied,
             "ood_banking_threshold": self.ood_banking_threshold,
             "in_domain_threshold": self.in_domain_threshold,
@@ -604,11 +659,18 @@ def verify_artifact(root: Path) -> dict[str, Any]:
         _verify_v4_config(config)
         _verify_v4_heads(root, config)
     if int(config["format_version"]) == 4:
-        if (
-            config.get("generation_guidance_contract")
-            != "intent-selects-tool-schema-no-arguments-v1"
-        ):
+        guidance_contract = config.get("generation_guidance_contract")
+        if guidance_contract not in {
+            "intent-selects-tool-schema-no-arguments-v1",
+            "intent-selects-tool-schema-with-grounded-public-selector-v2",
+        }:
             raise ValueError("V4 router generation-guidance contract is missing")
+        if (
+            guidance_contract == "intent-selects-tool-schema-with-grounded-public-selector-v2"
+            and config.get("effective_decision_contract")
+            != "retail-bank-effective-turn-decision/v1"
+        ):
+            raise ValueError("V4 router effective-decision contract is missing")
     else:
         prompt_flag = config.get(
             "intent_enters_generation_prompt",
@@ -754,6 +816,72 @@ def _all_candidates(
         {key: label, "probability": float(probability)}
         for label, probability in zip(labels, probabilities, strict=True)
     )
+
+
+def _candidate_probability(
+    candidates: tuple[dict[str, float | str], ...],
+    key: str,
+    selected: str | None,
+) -> float:
+    if selected is None:
+        return 0.0
+    return next(
+        (
+            float(candidate["probability"])
+            for candidate in candidates
+            if candidate.get(key) == selected
+        ),
+        0.0,
+    )
+
+
+def _needs_topic_shift_recheck(result: Mapping[str, Any]) -> bool:
+    return (
+        result.get("route") == "in_domain"
+        and result.get("context_applied") is True
+        and set(result.get("active_relations", ())) == {"topic_shift"}
+    )
+
+
+def _prefer_current_only_topic_shift(
+    contextual: Mapping[str, Any],
+    current_only: Mapping[str, Any],
+) -> bool:
+    return (
+        current_only.get("route") == "in_domain"
+        and current_only.get("joint_decision_accepted") is True
+        and isinstance(current_only.get("selected_intent_probability"), int | float)
+        and float(current_only["selected_intent_probability"]) >= 0.75
+        and current_only.get("intent") != contextual.get("intent")
+    )
+
+
+def _stabilize_active_relations(
+    active_relations: Sequence[str],
+    *,
+    current_text: str,
+    context_applied: bool,
+) -> list[str]:
+    active = set(active_relations)
+    normalized = " ".join(current_text.casefold().replace("’", "'").split())
+    repair_markers = (
+        "didn't ask",
+        "did not ask",
+        "wasn't asking",
+        "was not asking",
+        "never asked",
+        "not what i asked",
+        "not my request",
+        "wrong subject",
+        "wrong topic",
+    )
+    if (
+        context_applied
+        and "topic_shift" in active
+        and any(marker in normalized for marker in repair_markers)
+    ):
+        active.update(("agent_repair", "context_dependent"))
+    return [label for label in RELATION_LABELS if label in active]
 
 
 def _top_candidates(

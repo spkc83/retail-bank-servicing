@@ -482,6 +482,42 @@ def load_shadow_gate_records(manifest_path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def load_granite_v7_shadow_records(manifest_path: Path) -> list[dict[str, Any]]:
+    manifest = read_json(manifest_path)
+    gates = manifest.get("behavioral_gates")
+    if not isinstance(gates, list):
+        raise RuntimeError("dataset manifest is missing behavioral_gates")
+    matches = [gate for gate in gates if gate.get("name") == "granite-v7-shadow"]
+    if len(matches) != 1 or not isinstance(matches[0], Mapping):
+        raise RuntimeError("dataset manifest must contain one Granite V7 shadow gate")
+    gate = matches[0]
+    if gate.get("allowed_use") != ["checkpoint-selection", "generalization-evaluation"]:
+        raise RuntimeError("Granite V7 shadow gate has an invalid allowed_use contract")
+    if gate.get("trainable") is not False:
+        raise RuntimeError("Granite V7 shadow gate must be non-trainable")
+    if gate.get("gate_contract") != "banking-v7-granite-predicted-e2e-gate/v1":
+        raise RuntimeError("Granite V7 shadow gate has an invalid gate contract")
+    path = manifest_path.parent / str(gate.get("path", ""))
+    expected_sha = require_sha256(gate.get("sha256"), field="Granite V7 shadow SHA256")
+    if not path.is_file() or sha256(path) != expected_sha:
+        raise RuntimeError("Granite V7 shadow gate digest mismatch")
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    if len(records) != gate.get("record_count") or not records:
+        raise RuntimeError("Granite V7 shadow gate record count mismatch")
+    for record in records:
+        expected = record.get("expected")
+        contract = expected.get("generation_contract") if isinstance(expected, Mapping) else None
+        if record.get("metadata", {}).get("trainable") is not False:
+            raise RuntimeError("Granite V7 shadow records must be non-trainable")
+        if not isinstance(contract, Mapping):
+            raise RuntimeError("Granite V7 shadow record is missing its oracle contract")
+        names = contract.get("tool_names")
+        constraints = contract.get("argument_constraints")
+        if not isinstance(names, list) or len(names) > 1 or not isinstance(constraints, Mapping):
+            raise RuntimeError("Granite V7 shadow record has a non-exact oracle contract")
+    return records
+
+
 def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
     return {
         "worker": "cloud_continue_tool_sft",

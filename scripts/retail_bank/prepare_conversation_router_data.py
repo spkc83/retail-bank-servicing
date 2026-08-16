@@ -36,9 +36,7 @@ CLINC_MEMBER = "clinc150_uci/data_oos_plus.json"
 CLINC_MEMBER_SHA256 = "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f"
 DEFAULT_SFT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_OUTPUT_DIR = Path("data/banking-conversation-router-v6-hierarchical")
-DEFAULT_RELEASE_LOCK = Path(
-    "data/sources/banking-conversation-router-v6-hierarchical.lock.json"
-)
+DEFAULT_RELEASE_LOCK = Path("data/sources/banking-conversation-router-v6-hierarchical.lock.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +91,10 @@ def main() -> int:
         raise ValueError("conversation router paraphrase families leak across splits")
     if report["leakage"]["counterfactual_pair_split_leak_count"] != 0:
         raise ValueError("conversation router counterfactual pairs leak across splits")
+    if report["leakage"]["heldout_exact_leaks_in_train_validation"]:
+        raise ValueError("held-out screenshot regression text leaked into train or validation")
+    if report["leakage"]["heldout_long_ngram_leaks_in_train_validation"]:
+        raise ValueError("held-out screenshot regression n-gram leaked into train or validation")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     split_entries = []

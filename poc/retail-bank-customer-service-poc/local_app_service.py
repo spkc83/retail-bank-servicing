@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from diagnostics import diagnostic_summary, error_model_passes
 from dialogue_state import DialogueStateRegistry
+from entity_grounding import ground_servicing_decision
 from local_gpu_runtime import MODEL_ID, MODEL_REVISION
 from mock_bank import SessionBankRegistry
 from model_service import (
@@ -76,7 +78,13 @@ class LocalBankingController:
             raise ValueError("message must be a non-empty string")
         canonical = canonical_conversation(conversation)
         prior_state = self.dialogue_states.as_dict(username, session_hash)
-        route = self._route(message.strip(), canonical, prior_state)
+        learned_route = self._route(message.strip(), canonical, prior_state)
+        route = ground_servicing_decision(
+            learned_route,
+            message=message.strip(),
+            trusted_tool_results=canonical,
+            live_snapshot=self.bank.snapshot(username, session_hash),
+        )
         transition = self.dialogue_states.begin_turn(
             username,
             session_hash,
@@ -109,7 +117,7 @@ class LocalBankingController:
         agent = ConversationalBankingAgent(bank=self.bank, model=self.runtime)
         try:
             pinned_exchange = list(transition.anchor_exchange) or None
-            if transition.lane == "policy":
+            if (route.get("lane") or transition.lane) == "policy":
                 lookup = self.policy_knowledge.lookup(message.strip())
                 if not lookup.matched:
                     return self._direct_result(
@@ -170,6 +178,7 @@ class LocalBankingController:
                     "diagnostics retain its raw output and any tool calls."
                 ),
                 dialogue_state=dialogue_state,
+                diagnostic_error=error,
             )
         except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
             route = {**route, "failure_type": type(error).__name__}
@@ -185,12 +194,13 @@ class LocalBankingController:
                 route=route,
                 tool_calls=(),
                 tool_results=(),
-                model_passes=(),
+                model_passes=error_model_passes(error),
                 response_path="local model failure",
                 activity=(
                     "Granite generation failed; no CPU-authored servicing answer was substituted."
                 ),
                 dialogue_state=transition.state.as_dict(),
+                diagnostic_error=error,
             )
 
         dialogue_state = self.dialogue_states.finish_turn(
@@ -311,6 +321,7 @@ class LocalBankingController:
         activity: str,
         policy_sources: tuple[str, ...] = (),
         dialogue_state: dict[str, Any] | None = None,
+        diagnostic_error: object | None = None,
     ) -> LocalTurnResult:
         state_payload = dialogue_state or {}
         return LocalTurnResult(
@@ -335,6 +346,7 @@ class LocalBankingController:
                 runtime_metadata=self.runtime_metadata(),
                 policy_sources=policy_sources,
                 dialogue_state=state_payload,
+                diagnostic_error=diagnostic_error,
             ),
         )
 
@@ -364,6 +376,7 @@ def render_local_diagnostics(
     runtime_metadata: dict[str, str],
     policy_sources: tuple[str, ...] = (),
     dialogue_state: dict[str, Any] | None = None,
+    diagnostic_error: object | None = None,
 ) -> str:
     decision = router_diagnostic_fields(route)
     candidates = route.get("capability_candidates", [])
@@ -402,8 +415,17 @@ def render_local_diagnostics(
         or "- None; Granite was not invoked."
     )
     visible_hash = hashlib.sha256(visible_response.encode("utf-8")).hexdigest()
+    summary = diagnostic_summary(
+        route=route,
+        calls=calls,
+        results=results,
+        response_path=response_path,
+        model_passes=model_passes,
+        policy_sources=policy_sources,
+        error=diagnostic_error,
+    )
     return (
-        "### Local experiment diagnostics\n\n"
+        f"{summary}\n\n### Full technical details\n\n"
         f"- Route: `{route.get('route')}`\n"
         f"- In-domain probability: `{route.get('banking_probability')}`\n"
         f"- OOD probability: `{route.get('ood_probability')}`\n"

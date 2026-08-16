@@ -29,7 +29,7 @@ def test_seed_is_explicitly_synthetic_and_contains_two_login_scoped_customers() 
 def test_sessions_and_authenticated_customers_are_isolated() -> None:
     bank = registry()
 
-    bank.execute("alex.demo", "alex-session", "freeze_card", {})
+    bank.execute("alex.demo", "alex-session", "freeze_card", {"last4": "4821"})
 
     assert bank.snapshot("alex.demo", "alex-session")["cards"][0]["status"] == "frozen"
     assert bank.snapshot("alex.demo", "second-alex-session")["cards"][0]["status"] == "active"
@@ -46,7 +46,7 @@ def test_file_backed_state_is_shared_across_worker_registries(tmp_path: Path) ->
         database_dir=tmp_path,
     )
 
-    first.execute("alex.demo", "shared-session", "freeze_card", {})
+    first.execute("alex.demo", "shared-session", "freeze_card", {"last4": "4821"})
 
     assert second.snapshot("alex.demo", "shared-session")["cards"][0]["status"] == "frozen"
     assert second.snapshot("alex.demo", "other-session")["cards"][0]["status"] == "active"
@@ -61,9 +61,19 @@ def test_supported_mock_actions_mutate_only_session_database() -> None:
     user = "alex.demo"
     session = "action-session"
 
-    disputed = bank.execute(user, session, "dispute_transaction", {})
-    cancelled = bank.execute(user, session, "cancel_transfer", {})
-    replaced = bank.execute(user, session, "replace_card", {})
+    disputed = bank.execute(
+        user,
+        session,
+        "dispute_transaction",
+        {"description": "North Harbor Market"},
+    )
+    cancelled = bank.execute(
+        user,
+        session,
+        "cancel_transfer",
+        {"recipient": "River Consulting"},
+    )
+    replaced = bank.execute(user, session, "replace_card", {"last4": "4821"})
 
     snapshot = bank.snapshot(user, session)
     assert disputed["transaction"]["disputed"] is True
@@ -150,4 +160,57 @@ def test_customer_facing_write_selector_reports_no_match() -> None:
             "friendly-selectors",
             "cancel_transfer",
             {"recipient": "Nobody"},
+        )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["freeze_card", "replace_card", "dispute_transaction", "cancel_transfer"],
+)
+def test_write_tools_reject_selector_free_execution(tool_name: str) -> None:
+    bank = registry()
+
+    with pytest.raises(ValueError, match="requires public selector"):
+        bank.execute("alex.demo", "no-default", tool_name, {})
+
+
+def test_write_eligibility_is_revalidated_inside_each_transaction() -> None:
+    bank = registry()
+    user = "alex.demo"
+    session = "eligibility"
+
+    bank.execute(user, session, "freeze_card", {"last4": "4821"})
+    with pytest.raises(ValueError, match="eligible"):
+        bank.execute(user, session, "freeze_card", {"last4": "4821"})
+
+    bank.execute(user, session, "replace_card", {"last4": "4821"})
+    with pytest.raises(ValueError, match="eligible"):
+        bank.execute(user, session, "replace_card", {"last4": "4821"})
+
+    bank.execute(
+        user,
+        session,
+        "dispute_transaction",
+        {"description": "North Harbor Market"},
+    )
+    with pytest.raises(ValueError, match="eligible"):
+        bank.execute(
+            user,
+            session,
+            "dispute_transaction",
+            {"description": "North Harbor Market"},
+        )
+
+    bank.execute(
+        user,
+        session,
+        "cancel_transfer",
+        {"recipient": "River Consulting"},
+    )
+    with pytest.raises(ValueError, match="eligible"):
+        bank.execute(
+            user,
+            session,
+            "cancel_transfer",
+            {"recipient": "River Consulting"},
         )

@@ -148,6 +148,13 @@ def test_local_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(
     assert "V6 action: `execute_tool`" in result.diagnostics
     assert "V6 entity resolution: `not_required`" in result.diagnostics
     assert 'Exposed tools: `["list_accounts"]`' in result.diagnostics
+    summary = result.diagnostics.split("### Full technical details", 1)[0]
+    assert "Outcome: `base tool rendered`" in summary
+    assert "Granite passes: `2`" in summary
+    assert "list_accounts: success" in summary
+    assert "Effective grounding/source: `tool result: list_accounts`" in summary
+    assert "Relation probabilities" not in summary
+    assert "SHA-256" not in summary
 
 
 def test_local_first_pass_parse_failure_preserves_raw_output_in_diagnostics(
@@ -172,6 +179,47 @@ def test_local_first_pass_parse_failure_preserves_raw_output_in_diagnostics(
     assert raw_output in result.diagnostics
     assert "Router failure type: `AgentProtocolError`" in result.diagnostics
     assert result.conversation[0] == {"role": "user", "content": "Show my accounts."}
+
+
+def test_local_generic_error_preserves_safe_message_and_attached_trace(tmp_path: Path) -> None:
+    trace = type(
+        "Trace",
+        (),
+        {
+            "label": "base",
+            "input_tokens": 10,
+            "prompt_sha256": "prompt-hash",
+            "output_sha256": "output-hash",
+            "raw_output": "partial local trace",
+            "runtime_device": "cuda:0",
+            "cuda_device_name": "test GPU",
+        },
+    )()
+
+    class TracedRuntimeError(RuntimeError):
+        model_passes = (trace,)
+
+    class FailingRuntime(FakeRuntime):
+        def generate(self, _messages, _tools, _max_new_tokens):
+            raise TracedRuntimeError("generation failed password=do-not-show")
+
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FailingRuntime([]),
+        router=StaticRouter(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my accounts.",
+        conversation=[],
+    )
+
+    assert "Error: `generation failed password=&lt;redacted&gt;`" in result.diagnostics
+    assert "Granite passes: `1`" in result.diagnostics
+    assert "partial local trace" in result.diagnostics
+    assert "do-not-show" not in result.diagnostics
 
 
 def test_controller_uses_stock_response_for_high_confidence_ood(tmp_path: Path) -> None:
@@ -336,6 +384,119 @@ def test_policy_detour_is_granite_grounded_and_resumes_pending_dispute(
     } in resume_prompt
     assert resumed.tool_calls[0].name == "dispute_transaction"
     assert resumed.dialogue_state["pending_servicing"] is None
+
+
+def test_effective_policy_lane_dispatches_independently_of_legacy_intent_threshold(
+    tmp_path: Path,
+) -> None:
+    policy_route = {
+        **routed("policy_knowledge"),
+        "lane": "policy",
+        "action": "retrieve_policy",
+        "entity_resolution": "not_required",
+        "intent_confidence": 0.31,
+        "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+        "decision_accepted": True,
+    }
+    runtime = FakeRuntime(
+        [
+            "A submitted dispute is reviewed and status updates are provided. "
+            "[Policy: disputes.timeline.us.v1]"
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter([policy_route]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="What is the review policy?",
+        conversation=[],
+    )
+
+    assert result.response_path == "policy_grounded"
+    assert result.policy_sources == ("disputes.timeline.us.v1",)
+    assert runtime.calls[0]["tools"] is None
+
+
+def v7_route(intent: str, *, action: str, entity_resolution: str) -> dict[str, object]:
+    return {
+        **routed(intent),
+        "domain": "banking",
+        "lane": "servicing",
+        "family": "cards",
+        "action": action,
+        "entity_resolution": entity_resolution,
+        "joint_decision_contract": "hierarchical-router-joint-decision/v1",
+        "joint_decision_accepted": True,
+    }
+
+
+def test_local_controller_grounds_unique_stolen_card_before_granite_call(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            '<tool_call>{"name":"freeze_card","arguments":{"last4":"4821"}}</tool_call>',
+            "I froze your Everyday Visa Debit card ending in 4821.",
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [v7_route("freeze_card", action="execute_tool", entity_resolution="resolved")]
+        ),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="My debit card was taken. Lock it now.",
+        conversation=[],
+    )
+
+    schema = runtime.calls[0]["tools"][0]["function"]["parameters"]
+    assert schema["required"] == ["last4"]
+    assert schema["properties"]["last4"]["const"] == "4821"
+    assert result.tool_calls[0].arguments == {"last4": "4821"}
+    card = next(item for item in result.snapshot["cards"] if item["last4"] == "4821")
+    assert card["status"] == "frozen"
+    assert result.route["entity_grounding_source"] == "live_candidate"
+
+
+def test_local_controller_rejects_account_suffix_before_card_mutation(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        ['<tool_call>{"name":"freeze_card","arguments":{"last4":"1042"}}</tool_call>']
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [v7_route("freeze_card", action="execute_tool", entity_resolution="resolved")]
+        ),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="My debit card was taken. Lock it now.",
+        conversation=[],
+    )
+
+    card = next(item for item in result.snapshot["cards"] if item["last4"] == "4821")
+    assert result.response == MODEL_FAILURE_RESPONSE
+    assert result.tool_calls == ()
+    assert result.model_passes[0].raw_output.endswith(
+        '{"name":"freeze_card","arguments":{"last4":"1042"}}</tool_call>'
+    )
+    assert card["status"] == "active"
 
 
 def test_reset_clears_dialogue_state(tmp_path: Path) -> None:

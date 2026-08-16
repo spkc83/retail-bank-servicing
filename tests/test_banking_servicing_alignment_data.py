@@ -17,6 +17,7 @@ import hello_slm.banking_tool_sft_data as tool_sft_data
 from hello_slm.banking_servicing_alignment_data import (
     SCREENSHOT_HELDOUT_CURRENTS,
     build_coreference_shadow_gate,
+    build_screenshot_regression_fixture,
     build_servicing_alignment_splits,
     load_base_sft_splits,
     validate_servicing_alignment_splits,
@@ -60,8 +61,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 1325,
-        "validation": 205,
+        "train": 1354,
+        "validation": 218,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
@@ -90,6 +91,13 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "deictic_replace_ambiguity": 320,
         "natural_social_style": 12,
         "missing_entity_clarification": 1,
+        "v7_natural_greeting": 1,
+        "v7_mortgage_policy_detour": 1,
+        "v7_list_transfers": 1,
+        "v7_grounded_selector": 1,
+        "v7_selector_clarification": 3,
+        "v7_tool_outcome": 2,
+        "v7_list_transactions_limit": 20,
     }
     service_case_records = [
         record
@@ -193,19 +201,23 @@ def test_remediation_examples_cover_coreference_ambiguity_and_tool_outcomes() ->
     assert train_last4.isdisjoint(validation_last4)
 
 
-def test_v6_generation_contract_matches_runtime_tool_exposure_and_social_style() -> None:
+def test_v7_generation_contract_matches_runtime_tool_exposure_and_social_style() -> None:
     splits, report = build_servicing_alignment_splits()
 
     for split in ("train", "validation"):
         for row in splits[split]:
             contract = row["expected"]["generation_contract"]
-            assert contract["version"] == "banking-v6-route-to-generation/v1"
+            assert contract["version"] == "banking-v7-route-to-generation/v1"
             calls = row["expected"]["tool_calls"]
             if contract["mode"] == "execute_tool":
                 assert contract["tool_names"] == [calls[0]["name"]]
                 assert len({call["name"] for call in calls}) == 1
+                assert contract["argument_constraints"] == {
+                    name: {"const": value} for name, value in calls[0]["arguments"].items()
+                }
             else:
                 assert contract["tool_names"] == []
+                assert contract["argument_constraints"] == {}
                 assert calls == []
 
     entity_states = {
@@ -236,6 +248,112 @@ def test_v6_generation_contract_matches_runtime_tool_exposure_and_social_style()
         for row in social
     )
     assert report["scenario_family_counts"]["train"]["natural_social_style"] == 12
+
+
+def test_v7_split_isolated_granite_examples_cover_routing_and_arguments() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    granite = {
+        split: [row for row in rows if str(row["metadata"]["scenario_family"]).startswith("v7_")]
+        for split, rows in splits.items()
+    }
+
+    assert granite["train"] and granite["validation"]
+    assert not granite["test"]
+    assert {row["metadata"]["scenario_family"] for row in granite["train"]} >= {
+        "v7_natural_greeting",
+        "v7_mortgage_policy_detour",
+        "v7_list_transfers",
+        "v7_list_transactions_limit",
+        "v7_grounded_selector",
+        "v7_selector_clarification",
+        "v7_tool_outcome",
+    }
+    limits = {
+        row["expected"]["tool_calls"][0]["arguments"]["limit"]
+        for row in granite["train"]
+        if row["metadata"]["scenario_family"] == "v7_list_transactions_limit"
+    }
+    assert limits == set(range(1, 21))
+    prompts = "\n".join(_last_user(row).lower() for row in granite["train"])
+    assert "one" in prompts and "20" in prompts
+    assert any("mortgage" in _last_user(row).lower() for row in granite["train"])
+    assert any(
+        row["expected"]["tool_calls"] == [{"name": "list_transfers", "arguments": {}}]
+        for row in granite["train"]
+    )
+    clarification_states = {
+        row["expected"]["generation_contract"]["entity_state"]
+        for row in granite["train"]
+        if row["metadata"]["scenario_family"] == "v7_selector_clarification"
+    }
+    assert clarification_states == {"missing", "ambiguous", "ineligible"}
+    train_text = {_normalize(_last_user(row)) for row in granite["train"]}
+    validation_text = {_normalize(_last_user(row)) for row in granite["validation"]}
+    assert train_text.isdisjoint(validation_text)
+
+
+def test_v7_shadow_is_untouched_and_frozen_test_count_stays_215(tmp_path: Path) -> None:
+    prepare(output_dir=tmp_path / "base", pilot_count=1200, split_seed=711)
+    manifest = write_servicing_alignment_dataset(
+        tmp_path / "alignment",
+        base_sft_dir=tmp_path / "base",
+    )
+
+    test_entry = next(entry for entry in manifest["tool_sft"] if entry["name"] == "test")
+    assert test_entry["record_count"] == 215
+    gate = next(
+        item for item in manifest["behavioral_gates"] if item["name"] == "granite-v7-shadow"
+    )
+    assert gate["trainable"] is False
+    assert gate["allowed_use"] == ["checkpoint-selection", "generalization-evaluation"]
+    shadow_rows = [
+        json.loads(line)
+        for line in (tmp_path / "alignment" / gate["path"]).read_text().splitlines()
+    ]
+    assert shadow_rows
+    assert all(row["metadata"]["trainable"] is False for row in shadow_rows)
+    governed = {
+        _normalize(_last_user(row))
+        for split, rows in build_servicing_alignment_splits()[0].items()
+        if split in {"train", "validation"}
+        for row in rows
+    }
+    assert governed.isdisjoint({_normalize(_last_user(row)) for row in shadow_rows})
+
+
+def test_v7_screenshot_regression_fixture_has_nine_complete_isolated_cases(
+    tmp_path: Path,
+) -> None:
+    fixture = build_screenshot_regression_fixture()
+    assert len(fixture) == 9
+    assert {row["metadata"]["trainable"] for row in fixture} == {False}
+    assert {row["metadata"]["regression_only"] for row in fixture} == {True}
+    assert {_normalize(row["current"]) for row in fixture} == {
+        _normalize(current) for current in SCREENSHOT_HELDOUT_CURRENTS
+    }
+    assert all(row["history"] is not None for row in fixture)
+    assert all(
+        set(row["expected"])
+        == {
+            "route",
+            "effective_action",
+            "entity_state",
+            "tool_name",
+            "argument_constraints",
+            "response_properties",
+        }
+        for row in fixture
+    )
+
+    prepare(output_dir=tmp_path / "base", pilot_count=1200, split_seed=711)
+    manifest = write_servicing_alignment_dataset(
+        tmp_path / "alignment", base_sft_dir=tmp_path / "base"
+    )
+    entry = manifest["evaluation_fixtures"][0]
+    assert entry["name"] == "screenshot-regression"
+    assert entry["record_count"] == 9
+    assert entry["trainable"] is False
+    assert entry["allowed_use"] == ["regression-evaluation"]
 
 
 def test_exact_screenshot_currents_are_held_out_from_training() -> None:
@@ -511,14 +629,14 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
 
     assert manifest["name"] == "retail-bank-servicing-alignment-v5"
     assert manifest["schema_version"] == "banking-tool-sft/v1"
-    assert manifest["generation_contract_version"] == "banking-v6-route-to-generation/v1"
+    assert manifest["generation_contract_version"] == "banking-v7-route-to-generation/v1"
     assert manifest["generation_contract_model_inputs"] == (
         "compatible tool schemas only; routing metadata is not rendered"
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 1325,
-        "validation": 205,
+        "train": 1354,
+        "validation": 218,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
@@ -532,18 +650,26 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
         "validation",
         "test",
     }
-    assert manifest["behavioral_gates"] == [
-        {
-            "name": "coreference-shadow",
-            "path": "coreference-shadow.jsonl",
-            "record_count": 32,
-            "pair_count": 16,
-            "sha256": manifest["behavioral_gates"][0]["sha256"],
-            "bytes": manifest["behavioral_gates"][0]["bytes"],
-            "allowed_use": ["post-selection-evaluation-once"],
-            "trainable": False,
-        }
-    ]
+    assert manifest["behavioral_gates"][0] == {
+        "name": "coreference-shadow",
+        "path": "coreference-shadow.jsonl",
+        "record_count": 32,
+        "pair_count": 16,
+        "sha256": manifest["behavioral_gates"][0]["sha256"],
+        "bytes": manifest["behavioral_gates"][0]["bytes"],
+        "allowed_use": ["post-selection-evaluation-once"],
+        "trainable": False,
+    }
+    assert manifest["behavioral_gates"][1] == {
+        "name": "granite-v7-shadow",
+        "path": "granite-v7-shadow.jsonl",
+        "record_count": 13,
+        "sha256": manifest["behavioral_gates"][1]["sha256"],
+        "bytes": manifest["behavioral_gates"][1]["bytes"],
+        "allowed_use": ["checkpoint-selection", "generalization-evaluation"],
+        "trainable": False,
+        "gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+    }
     for entry in manifest["tool_sft"]:
         path = tmp_path / "alignment" / entry["path"]
         assert path.is_file()

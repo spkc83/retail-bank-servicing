@@ -134,7 +134,7 @@ def test_manifest_loader_and_adapter_tokenization(tmp_path: Path) -> None:
     assert (examples[0]["labels"] != -100).any()
 
 
-def test_v6_generation_contract_selects_one_or_no_tools_with_legacy_fallback() -> None:
+def test_v7_generation_contract_selects_exact_one_or_no_tool_schema_with_legacy_fallback() -> None:
     adapter = worker.ToolWireAdapter(
         worker.SimpleToolTokenizer(),
         family="granite",
@@ -145,10 +145,11 @@ def test_v6_generation_contract_selects_one_or_no_tools_with_legacy_fallback() -
         **base,
         "expected": {
             "generation_contract": {
-                "version": "banking-v6-route-to-generation/v1",
+                "version": "banking-v7-route-to-generation/v1",
                 "mode": "execute_tool",
                 "entity_state": "resolved",
                 "tool_names": ["freeze_card"],
+                "argument_constraints": {"last4": {"const": "4821"}},
             }
         },
     }
@@ -156,17 +157,24 @@ def test_v6_generation_contract_selects_one_or_no_tools_with_legacy_fallback() -
         **base,
         "expected": {
             "generation_contract": {
-                "version": "banking-v6-route-to-generation/v1",
+                "version": "banking-v7-route-to-generation/v1",
                 "mode": "converse",
                 "entity_state": "not_required",
                 "tool_names": [],
+                "argument_constraints": {},
             }
         },
     }
 
-    assert [tool["name"] for tool in worker.training_tools_for_record(execute, adapter)] == [
-        "freeze_card"
-    ]
+    tools = worker.training_tools_for_record(execute, adapter)
+    assert tools is not None
+    assert [tool["name"] for tool in tools] == ["freeze_card"]
+    assert tools[0]["parameters"] == {
+        "type": "object",
+        "properties": {"last4": {"type": ["string", "null"], "const": "4821"}},
+        "required": ["last4"],
+        "additionalProperties": False,
+    }
     assert worker.training_tools_for_record(converse, adapter) == []
     assert worker.training_tools_for_record(base, adapter) is None
 

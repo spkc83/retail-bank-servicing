@@ -15,6 +15,7 @@ from hello_slm.banking_conversation_router import (
     ConversationRouterModel,
     ConversationRouterOutput,
     LearnedConversationRouter,
+    stabilize_active_relations,
     verify_router_artifact,
 )
 from hello_slm.banking_conversation_router_data import RELATION_LABELS
@@ -38,6 +39,24 @@ class RecordingTokenizer:
             "input_ids": torch.tensor([[1]]),
             "attention_mask": torch.tensor([[1]]),
         }
+
+
+def test_explicit_topic_repair_closes_relation_set_only_with_history() -> None:
+    assert stabilize_active_relations(
+        ("topic_shift",),
+        current_text="I didn't ask about mortgage",
+        context_applied=True,
+    ) == ("context_dependent", "agent_repair", "topic_shift")
+    assert stabilize_active_relations(
+        ("topic_shift",),
+        current_text="Tell me about mortgage rates",
+        context_applied=True,
+    ) == ("topic_shift",)
+    assert stabilize_active_relations(
+        ("topic_shift",),
+        current_text="I didn't ask about mortgage",
+        context_applied=False,
+    ) == ("topic_shift",)
 
 
 class FakeEncoder(nn.Module):
@@ -370,6 +389,10 @@ def test_v4_returns_joint_hierarchy_and_compatibility_alias() -> None:
     assert result.support_probability == result.banking_probability
     assert result.domain_candidates[0]["domain"] == "banking"
     assert result.constraint_diagnostics == ()
+    assert result.joint_decision_contract == "hierarchical-router-joint-decision/v1"
+    assert result.joint_decision_accepted is True
+    selected = next(item for item in result.intent_candidates if item["intent"] == result.intent)
+    assert result.selected_intent_probability == selected["probability"]
 
 
 def test_v4_ambiguous_entity_downgrades_execution_to_clarification() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,6 +12,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from hello_slm.banking_conversation_router_data import (
+    RELATION_LABELS,
     lane_for_intent,
     render_router_input_with_context,
 )
@@ -57,6 +58,11 @@ class ConversationRouteResult:
     entity_resolution_confidence: float = 0.0
     entity_resolution_candidates: tuple[dict[str, float | str], ...] = ()
     constraint_diagnostics: tuple[str, ...] = ()
+    selected_intent_probability: float = 0.0
+    joint_decision_contract: str | None = None
+    joint_decision_accepted: bool = False
+    topic_shift_recheck_applied: bool = False
+    contextual_decision: dict[str, str | None] | None = None
 
     @property
     def capability(self) -> str | None:
@@ -375,13 +381,48 @@ class LearnedConversationRouter:
             max_exchanges=self.max_exchanges,
             prior_dialogue_state=prior_dialogue_state,
         )
-        return self._predict(rendered, context_applied=context_applied)
+        result = self._predict(
+            rendered,
+            context_applied=context_applied,
+            current_text=current,
+        )
+        if self.format_version == 4 and _needs_topic_shift_recheck(result):
+            current_only_rendered, _ = render_router_input_with_context(
+                current,
+                [],
+                max_exchanges=self.max_exchanges,
+                prior_dialogue_state=None,
+            )
+            current_result = self._predict(
+                current_only_rendered,
+                context_applied=False,
+                current_text=current,
+            )
+            if _prefer_current_only_topic_shift(result, current_result):
+                result = replace(
+                    current_result,
+                    context_applied=context_applied,
+                    topic_shift_recheck_applied=True,
+                    contextual_decision={
+                        "domain": result.domain,
+                        "lane": result.lane,
+                        "family": result.family,
+                        "intent": result.intent,
+                        "action": result.action,
+                    },
+                    constraint_diagnostics=(
+                        *current_result.constraint_diagnostics,
+                        "constraint:topic-shift-current-only-recheck",
+                    ),
+                )
+        return result
 
     def _predict(
         self,
         rendered: str,
         *,
         context_applied: bool,
+        current_text: str = "",
     ) -> ConversationRouteResult:
         encoded = self.tokenizer(
             rendered,
@@ -399,7 +440,11 @@ class LearnedConversationRouter:
         if self.format_version == 4:
             if not isinstance(output, ConversationRouterOutput):
                 raise TypeError("V4 router model must return ConversationRouterOutput")
-            return self._predict_v4(output, context_applied=context_applied)
+            return self._predict_v4(
+                output,
+                context_applied=context_applied,
+                current_text=current_text,
+            )
         if not isinstance(output, tuple) or len(output) != 3:
             raise TypeError("V2/V3 router model must return three logits tensors")
         domain_logits, intent_logits, relation_logits = output
@@ -462,6 +507,7 @@ class LearnedConversationRouter:
         output: ConversationRouterOutput,
         *,
         context_applied: bool,
+        current_text: str = "",
     ) -> ConversationRouteResult:
         domain_candidates, domain_confidence = _top_candidates(
             output.domain_logits,
@@ -479,6 +525,11 @@ class LearnedConversationRouter:
         ood_probability = domain_probabilities["out_of_domain"]
         banking_probability = 1.0 - ood_probability
         relations, active_relations, rescue_probability = self._relations(output.relation_logits)
+        active_relations = stabilize_active_relations(
+            active_relations,
+            current_text=current_text,
+            context_applied=context_applied,
+        )
         route = self._route(banking_probability, rescue_probability)
         intent_candidates, intent_confidence = _top_candidates(
             output.intent_logits,
@@ -519,9 +570,7 @@ class LearnedConversationRouter:
             family_scores=output.family_logits.float()[0].cpu().tolist(),
             intent_scores=output.intent_logits.float()[0].cpu().tolist(),
             action_scores=output.action_logits.float()[0].cpu().tolist(),
-            entity_resolution_scores=(
-                output.entity_resolution_logits.float()[0].cpu().tolist()
-            ),
+            entity_resolution_scores=(output.entity_resolution_logits.float()[0].cpu().tolist()),
             domain_labels=self.domain_labels,
             lane_labels=self.lane_labels,
             family_labels=self.family_labels,
@@ -610,6 +659,13 @@ class LearnedConversationRouter:
             entity_resolution_confidence=entity_confidence,
             entity_resolution_candidates=entity_candidates,
             constraint_diagnostics=diagnostics,
+            selected_intent_probability=_candidate_probability(
+                intent_candidates,
+                "intent",
+                intent,
+            ),
+            joint_decision_contract="hierarchical-router-joint-decision/v1",
+            joint_decision_accepted=route == "in_domain",
         )
 
     def _relations(
@@ -777,6 +833,73 @@ def _all_candidates(
         {key: label, "probability": float(probability.cpu())}
         for label, probability in zip(labels, probabilities, strict=True)
     )
+
+
+def _candidate_probability(
+    candidates: Sequence[Mapping[str, float | str]],
+    key: str,
+    selected: str | None,
+) -> float:
+    if selected is None:
+        return 0.0
+    return next(
+        (
+            float(candidate["probability"])
+            for candidate in candidates
+            if candidate.get(key) == selected
+        ),
+        0.0,
+    )
+
+
+def _needs_topic_shift_recheck(result: ConversationRouteResult) -> bool:
+    return (
+        result.route == "in_domain"
+        and result.context_applied
+        and set(result.active_relations) == {"topic_shift"}
+    )
+
+
+def _prefer_current_only_topic_shift(
+    contextual: ConversationRouteResult,
+    current_only: ConversationRouteResult,
+) -> bool:
+    return (
+        current_only.route == "in_domain"
+        and current_only.joint_decision_accepted
+        and current_only.selected_intent_probability >= 0.75
+        and current_only.intent != contextual.intent
+    )
+
+
+def stabilize_active_relations(
+    active_relations: Sequence[str],
+    *,
+    current_text: str,
+    context_applied: bool,
+) -> tuple[str, ...]:
+    """Complete explicit prior-answer repairs without changing the learned intent."""
+
+    active = set(active_relations)
+    normalized = " ".join(current_text.casefold().replace("’", "'").split())
+    repair_markers = (
+        "didn't ask",
+        "did not ask",
+        "wasn't asking",
+        "was not asking",
+        "never asked",
+        "not what i asked",
+        "not my request",
+        "wrong subject",
+        "wrong topic",
+    )
+    if (
+        context_applied
+        and "topic_shift" in active
+        and any(marker in normalized for marker in repair_markers)
+    ):
+        active.update(("agent_repair", "context_dependent"))
+    return tuple(label for label in RELATION_LABELS if label in active)
 
 
 def _top_candidates(

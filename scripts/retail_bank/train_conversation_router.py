@@ -41,6 +41,7 @@ from hello_slm.banking_conversation_router import (
     ConversationRouterModel,
     ConversationRouterOutput,
     decode_v4_joint,
+    stabilize_active_relations,
 )
 from hello_slm.banking_conversation_router_data import RELATION_LABELS
 from hello_slm.banking_domain_taxonomy import (
@@ -82,6 +83,7 @@ TARGETED_SOURCES = frozenset(
         "self-authored-router-v5-resume-trajectory",
         "self-authored-router-v6-hierarchical-entity-state",
         "self-authored-router-v6-transfer-transaction-contrast",
+        "self-authored-router-v7-servicing-policy-shift",
     }
 )
 RELATION_F1_CALIBRATION_TOLERANCE = 0.005
@@ -304,6 +306,7 @@ def evaluate_predictions(
     relation_labels: Sequence[Sequence[int]],
     example_kinds: Sequence[str],
     current_texts: Sequence[str] | None = None,
+    context_applied_flags: Sequence[bool] | None = None,
     relation_thresholds: Mapping[str, float] | None = None,
     ood_banking_threshold: float,
     in_domain_threshold: float,
@@ -329,6 +332,7 @@ def evaluate_predictions(
     counterfactual_targets: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     current_texts = current_texts or ["" for _ in domain_labels]
+    context_applied_flags = context_applied_flags or [False for _ in domain_labels]
     relation_thresholds = relation_thresholds or {label: 0.5 for label in RELATION_LABELS}
     row_count = len(domain_labels)
     v4_decisions_supplied = all(
@@ -398,6 +402,7 @@ def evaluate_predictions(
         len(relation_labels),
         len(example_kinds),
         len(current_texts),
+        len(context_applied_flags),
         len(domain_predictions),
         len(domain_indices),
         len(lane_predictions),
@@ -528,20 +533,36 @@ def evaluate_predictions(
         )
         if label >= 0
     ]
+    active_relation_sets = [
+        set(
+            stabilize_active_relations(
+                [
+                    relation_name
+                    for relation_name, probability in zip(
+                        RELATION_LABELS,
+                        probabilities,
+                        strict=True,
+                    )
+                    if probability >= relation_thresholds[relation_name]
+                ],
+                current_text=current_text,
+                context_applied=context_applied,
+            )
+        )
+        for probabilities, current_text, context_applied in zip(
+            relation_probabilities,
+            current_texts,
+            context_applied_flags,
+            strict=True,
+        )
+    ]
     relation_pairs = [
         (
-            [
-                probability >= relation_thresholds[relation_name]
-                for relation_name, probability in zip(
-                    RELATION_LABELS,
-                    probabilities,
-                    strict=True,
-                )
-            ],
+            [relation_name in active_relations for relation_name in RELATION_LABELS],
             [bool(label) for label in labels],
         )
-        for probabilities, labels in zip(
-            relation_probabilities,
+        for active_relations, labels in zip(
+            active_relation_sets,
             relation_labels,
             strict=True,
         )
@@ -776,12 +797,12 @@ def evaluate_predictions(
         )
     }
     trajectory_indices = [*resume_indices, *state_negative_indices]
-    metrics["trajectory_runtime_transition_error_rate"] = _safe_ratio(
+    effective_transition_error_rate = _safe_ratio(
         sum(
             not _runtime_transition_matches(
                 kind=example_kinds[index],
-                route=routes[index],
-                exposed_intent=exposed_intents[index],
+                decision_accepted=accepted[index],
+                effective_intent=exposed_intents[index],
                 expected_intent=(
                     INTENT_LABELS[intent_labels[index]] if intent_labels[index] >= 0 else None
                 ),
@@ -794,6 +815,8 @@ def evaluate_predictions(
         ),
         len(trajectory_indices),
     )
+    metrics["trajectory_runtime_transition_error_rate"] = effective_transition_error_rate
+    metrics["trajectory_effective_decision_transition_error_rate"] = effective_transition_error_rate
     for kind, metric_name in (
         (
             "heldout_social_generalization",
@@ -811,8 +834,8 @@ def evaluate_predictions(
             sum(
                 not _runtime_transition_matches(
                     kind=kind,
-                    route=routes[index],
-                    exposed_intent=exposed_intents[index],
+                    decision_accepted=accepted[index],
+                    effective_intent=exposed_intents[index],
                     expected_intent=INTENT_LABELS[intent_labels[index]],
                     resume_active=(
                         relation_probabilities[index][resume_relation_index]
@@ -836,10 +859,9 @@ def evaluate_predictions(
     )
     heldout_relation_errors = sum(
         any(
-            (probability >= relation_thresholds[relation_name]) != bool(label)
-            for relation_name, probability, label in zip(
+            (relation_name in active_relation_sets[index]) != bool(label)
+            for relation_name, label in zip(
                 RELATION_LABELS,
-                relation_probabilities[index],
                 relation_labels[index],
                 strict=True,
             )
@@ -901,17 +923,17 @@ def evaluate_predictions(
 def _runtime_transition_matches(
     *,
     kind: str,
-    route: str,
-    exposed_intent: str | None,
+    decision_accepted: bool,
+    effective_intent: str | None,
     expected_intent: str | None,
     resume_active: bool,
 ) -> bool:
-    """Mirror the observations that DialogueState.begin_turn will act on."""
+    """Score the finalized decision consumed by DialogueState.begin_turn."""
     if kind == "resume_previous_service":
-        return route == "in_domain" and exposed_intent == expected_intent and resume_active
+        return decision_accepted and effective_intent == expected_intent and resume_active
     if kind == "state_ood_detour":
-        return route == "out_of_domain" and not resume_active
-    return route == "in_domain" and exposed_intent == expected_intent and not resume_active
+        return not decision_accepted and effective_intent is None and not resume_active
+    return decision_accepted and effective_intent == expected_intent and not resume_active
 
 
 def _scores_from_predictions(
@@ -1477,6 +1499,7 @@ def make_collate(tokenizer: Any, *, max_length: int) -> Any:
             ),
             "example_kinds": [str(row["example_kind"]) for row in rows],
             "current_texts": [str(row["current_text"]) for row in rows],
+            "context_applied_flags": [bool(row.get("history")) for row in rows],
             "counterfactual_pair_ids": [
                 str(row.get("counterfactual_pair_id") or "") for row in rows
             ],
@@ -1659,6 +1682,7 @@ def predict(
         "relation_labels": [],
         "example_kinds": [],
         "current_texts": [],
+        "context_applied_flags": [],
         "action_predictions": [],
         "action_scores": [],
         "action_indices": [],
@@ -1709,6 +1733,9 @@ def predict(
             result["relation_labels"].extend(batch["relation_labels"].tolist())
             result["example_kinds"].extend(batch["example_kinds"])
             result["current_texts"].extend(batch["current_texts"])
+            result["context_applied_flags"].extend(
+                batch.get("context_applied_flags", [False] * len(batch["current_texts"]))
+            )
             result["action_predictions"].extend(output.action_logits.argmax(dim=-1).cpu().tolist())
             result["action_scores"].extend(output.action_logits.float().cpu().tolist())
             result["action_indices"].extend(batch["action_indices"].tolist())
@@ -1818,7 +1845,11 @@ def save_artifact(
             "[PREVIOUS_USER]\\n{user}"
         ),
         "runtime_constraints": "hierarchy-action-entity-v4",
-        "generation_guidance_contract": "intent-selects-tool-schema-no-arguments-v1",
+        "runtime_contract_version": 7,
+        "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+        "generation_guidance_contract": (
+            "intent-selects-tool-schema-with-grounded-public-selector-v2"
+        ),
     }
     (output / "router_config.json").write_text(
         json.dumps(router_config, indent=2, sort_keys=True) + "\n",
@@ -1844,6 +1875,11 @@ def save_artifact(
     manifest = {
         "contract": "banking-conversation-router-artifact",
         "format_version": 4,
+        "runtime_contract_version": 7,
+        "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+        "generation_guidance_contract": (
+            "intent-selects-tool-schema-with-grounded-public-selector-v2"
+        ),
         "implementation_version": os.environ.get("SOURCE_COMMIT", "local"),
         "release_eligible": metrics["release_eligible"],
         "signed": False,

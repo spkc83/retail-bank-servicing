@@ -539,6 +539,48 @@ def test_continuation_contract_resolution_matches_training_with_legacy_fallback(
     assert WORKER.training_tools_for_record({"expected": {}}, adapter) is None
 
 
+def test_v7_shadow_loader_enforces_predicted_e2e_schema(tmp_path: Path) -> None:
+    shadow = tmp_path / "granite-v7-shadow.jsonl"
+    row = {
+        "record_id": "shadow-v7",
+        "metadata": {"trainable": False},
+        "expected": {
+            "generation_contract": {
+                "version": "banking-v7-route-to-generation/v1",
+                "mode": "execute_tool",
+                "entity_state": "resolved",
+                "tool_names": ["replace_card"],
+                "argument_constraints": {"last4": {"const": "8462"}},
+            }
+        },
+    }
+    shadow.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "behavioral_gates": [
+                    {
+                        "name": "granite-v7-shadow",
+                        "path": shadow.name,
+                        "record_count": 1,
+                        "sha256": hashlib.sha256(shadow.read_bytes()).hexdigest(),
+                        "allowed_use": [
+                            "checkpoint-selection",
+                            "generalization-evaluation",
+                        ],
+                        "trainable": False,
+                        "gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert WORKER.load_granite_v7_shadow_records(manifest) == [row]
+
+
 def test_worker_enables_input_grads_for_trainable_peft_checkpointing() -> None:
     source = WORKER_PATH.read_text(encoding="utf-8")
     remote_body = source.split("def run_remote_continuation", 1)[1].split(

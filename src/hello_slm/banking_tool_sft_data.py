@@ -49,8 +49,9 @@ def load_canonical_policy_corpus(
 BANKING_TOOL_SFT_CONTRACT = "banking-tool-sft/v1"
 BANKING_TOOL_SFT_MANIFEST_CONTRACT = "banking-tool-sft-manifest"
 CREATED_AT = "2026-07-29T00:00:00Z"
-GENERATOR_VERSION = "banking-tool-sft/v1.6-v6-generation-contract"
-GENERATION_CONTRACT_VERSION = "banking-v6-route-to-generation/v1"
+GENERATOR_VERSION = "banking-tool-sft/v1.7-v7-argument-contract"
+GENERATION_CONTRACT_VERSION = "banking-v7-route-to-generation/v1"
+LEGACY_GENERATION_CONTRACT_VERSION = "banking-v6-route-to-generation/v1"
 DEFAULT_OUTPUT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
 SPLITS = ("train", "validation", "test")
@@ -256,7 +257,7 @@ REALIZER_FINAL_CLOSERS = (
 GENERATION_MODES = frozenset(
     {"execute_tool", "clarify", "converse", "retrieve_policy", "refuse_ood"}
 )
-ENTITY_STATES = frozenset({"resolved", "missing", "ambiguous", "not_required"})
+ENTITY_STATES = frozenset({"resolved", "missing", "ambiguous", "ineligible", "not_required"})
 ENTITY_REQUIRED_TOOLS = frozenset(
     {"cancel_transfer", "dispute_transaction", "freeze_card", "replace_card"}
 )
@@ -573,7 +574,7 @@ def import_teacher_realizations(
 
 
 def generation_contract_for_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Return the V6 generation contract without exposing classifier logits to Granite."""
+    """Return the V7 oracle contract rendered as an exact one/no-tool schema."""
 
     expected = record.get("expected")
     metadata = record.get("metadata")
@@ -592,22 +593,29 @@ def generation_contract_for_record(record: Mapping[str, Any]) -> dict[str, Any] 
         return None
     if tool_names:
         name = tool_names[0]
+        arguments = calls[0].get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            raise BankingToolSftDataError("generation contract arguments must be an object")
         return {
             "version": GENERATION_CONTRACT_VERSION,
             "mode": "execute_tool",
             "entity_state": "resolved" if name in ENTITY_REQUIRED_TOOLS else "not_required",
             "tool_names": [name],
+            "argument_constraints": {
+                str(argument): {"const": value} for argument, value in arguments.items()
+            },
         }
 
     path = str(expected.get("path", ""))
     family = str(metadata.get("scenario_family", ""))
     if path == "clarification":
         grounding = tuple(str(value) for value in expected.get("grounding_facts", ()))
-        entity_state = (
-            "ambiguous"
-            if "ambigu" in family or any("ambiguous" in fact for fact in grounding)
-            else "missing"
-        )
+        if "ineligible" in family or any("ineligible" in fact for fact in grounding):
+            entity_state = "ineligible"
+        elif "ambigu" in family or any("ambiguous" in fact for fact in grounding):
+            entity_state = "ambiguous"
+        else:
+            entity_state = "missing"
         mode = "clarify"
     elif path == "retrieval_grounded_policy":
         mode, entity_state = "retrieve_policy", "not_required"
@@ -620,6 +628,7 @@ def generation_contract_for_record(record: Mapping[str, Any]) -> dict[str, Any] 
         "mode": mode,
         "entity_state": entity_state,
         "tool_names": [],
+        "argument_constraints": {},
     }
 
 
@@ -705,8 +714,9 @@ def _validate_generation_contract(
     mode = str(contract.get("mode", ""))
     entity_state = str(contract.get("entity_state", ""))
     tool_names = contract.get("tool_names")
-    if contract.get("version") != GENERATION_CONTRACT_VERSION:
-        raise BankingToolSftDataError(f"{record_id} has stale V6 generation contract")
+    version = contract.get("version")
+    if version not in {GENERATION_CONTRACT_VERSION, LEGACY_GENERATION_CONTRACT_VERSION}:
+        raise BankingToolSftDataError(f"{record_id} has unsupported generation contract")
     if mode not in GENERATION_MODES or entity_state not in ENTITY_STATES:
         raise BankingToolSftDataError(f"{record_id} has invalid V6 generation decision")
     if not isinstance(tool_names, list) or any(name not in ALLOWED_ARGS for name in tool_names):
@@ -723,10 +733,24 @@ def _validate_generation_contract(
     else:
         if tool_names or expected_names:
             raise BankingToolSftDataError(f"{record_id} non-tool mode must expose no tools")
-        if mode == "clarify" and entity_state not in {"missing", "ambiguous"}:
+        if mode == "clarify" and entity_state not in {"missing", "ambiguous", "ineligible"}:
             raise BankingToolSftDataError(f"{record_id} clarification needs unresolved entity")
         if mode != "clarify" and entity_state != "not_required":
             raise BankingToolSftDataError(f"{record_id} non-tool response has invalid entity state")
+
+    if version == LEGACY_GENERATION_CONTRACT_VERSION:
+        return
+    constraints = contract.get("argument_constraints")
+    if not isinstance(constraints, Mapping):
+        raise BankingToolSftDataError(f"{record_id} has invalid argument constraints")
+    if mode != "execute_tool" and constraints:
+        raise BankingToolSftDataError(f"{record_id} non-tool mode has argument constraints")
+    if mode == "execute_tool":
+        expected_arguments = expected_calls[0].get("arguments", {})
+        if constraints != {
+            str(argument): {"const": value} for argument, value in expected_arguments.items()
+        }:
+            raise BankingToolSftDataError(f"{record_id} has non-exact argument constraints")
 
 
 def validate_records(

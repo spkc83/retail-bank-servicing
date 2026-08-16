@@ -4,47 +4,74 @@
       "allowed_use": [
         "post-selection-evaluation-once"
       ],
-      "bytes": 93324,
+      "bytes": 93260,
       "name": "coreference-shadow",
       "pair_count": 16,
       "path": "coreference-shadow.jsonl",
       "record_count": 32,
-      "sha256": "79f2d04359adb278abc15efc8b750fabf9fbc9a2bd58a6057f1aec2c0374df5f",
+      "sha256": "55c9df4b185dd9120fe69dbcf317ff76ad7568c88261798b5cec9aec2e0a934b",
+      "trainable": false
+    },
+    {
+      "allowed_use": [
+        "checkpoint-selection",
+        "generalization-evaluation"
+      ],
+      "bytes": 33642,
+      "gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+      "name": "granite-v7-shadow",
+      "path": "granite-v7-shadow.jsonl",
+      "record_count": 13,
+      "sha256": "ec90d2f05c1e4493d9cb34af5930ea5efbb80eb9ca9c1756693e0abcc66dd067",
       "trainable": false
     }
   ],
   "contract": "banking-tool-sft-manifest",
   "created_at": "2026-07-31T00:00:00Z",
+  "evaluation_fixtures": [
+    {
+      "allowed_use": [
+        "regression-evaluation"
+      ],
+      "bytes": 6124,
+      "gate_contract": "banking-v7-screenshot-regression/v1",
+      "name": "screenshot-regression",
+      "path": "screenshot-regression.jsonl",
+      "record_count": 9,
+      "sha256": "1b64e470662f71c50b0269a3b1ad251d1beae7e7a649c2fe10e5215f54b9206a",
+      "trainable": false
+    }
+  ],
   "format_version": 1,
   "generation_contract_model_inputs": "compatible tool schemas only; routing metadata is not rendered",
-  "generation_contract_version": "banking-v6-route-to-generation/v1",
-  "generator_version": "banking-servicing-alignment-sft/v6.0-generation-contract",
+  "generation_contract_version": "banking-v7-route-to-generation/v1",
+  "generator_version": "banking-servicing-alignment-sft/v7.0-argument-contract",
   "name": "retail-bank-servicing-alignment-v5",
   "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "report": {
     "alignment_generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 353,
-        "converse": 12,
-        "execute_tool": 896,
+        "clarify": 356,
+        "converse": 13,
+        "execute_tool": 920,
         "refuse_ood": 32,
-        "retrieve_policy": 32
+        "retrieve_policy": 33
       },
       "validation": {
-        "clarify": 25,
-        "converse": 4,
-        "execute_tool": 160,
+        "clarify": 28,
+        "converse": 5,
+        "execute_tool": 168,
         "refuse_ood": 8,
-        "retrieve_policy": 8
+        "retrieve_policy": 9
       }
     },
     "alignment_split_counts": {
       "test": 35,
-      "train": 1325,
-      "validation": 205
+      "train": 1354,
+      "validation": 218
     },
-    "base_manifest_sha256": "7fb837ea4abeb9c3db13d4c9fd48e8b67079ab234c0d669d916c4194ce246df3",
+    "base_manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
     "base_split_counts": {
       "test": 180,
       "train": 841,
@@ -61,21 +88,21 @@
     "generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 389,
-        "converse": 177,
-        "execute_tool": 1295,
+        "clarify": 392,
+        "converse": 178,
+        "execute_tool": 1319,
         "refuse_ood": 58,
-        "retrieve_policy": 247
+        "retrieve_policy": 248
       },
       "validation": {
-        "clarify": 25,
-        "converse": 43,
-        "execute_tool": 265,
+        "clarify": 28,
+        "converse": 44,
+        "execute_tool": 273,
         "refuse_ood": 17,
-        "retrieve_policy": 34
+        "retrieve_policy": 35
       }
     },
-    "generator_version": "banking-servicing-alignment-sft/v6.0-generation-contract",
+    "generator_version": "banking-servicing-alignment-sft/v7.0-argument-contract",
     "heldout_exact_currents_in_train": [],
     "heldout_long_ngram_leaks_in_train": [],
     "path_counts": {
@@ -85,22 +112,22 @@
         "retrieval_grounded_policy": 4
       },
       "train": {
-        "clarification": 353,
-        "conversation": 12,
+        "clarification": 356,
+        "conversation": 13,
         "multi_turn": 768,
         "ood": 32,
-        "retrieval_grounded_policy": 32,
-        "tool_error": 64,
-        "tool_success": 64
+        "retrieval_grounded_policy": 33,
+        "tool_error": 65,
+        "tool_success": 87
       },
       "validation": {
-        "clarification": 25,
-        "conversation": 4,
+        "clarification": 28,
+        "conversation": 5,
         "multi_turn": 128,
         "ood": 8,
-        "retrieval_grounded_policy": 8,
-        "tool_error": 16,
-        "tool_success": 16
+        "retrieval_grounded_policy": 9,
+        "tool_error": 17,
+        "tool_success": 23
       }
     },
     "pii_matches": 0,
@@ -129,7 +156,14 @@
         "policy_detour": 32,
         "policy_resume": 32,
         "service_case_context": 64,
-        "tool_outcome_consistency": 128
+        "tool_outcome_consistency": 128,
+        "v7_grounded_selector": 1,
+        "v7_list_transactions_limit": 20,
+        "v7_list_transfers": 1,
+        "v7_mortgage_policy_detour": 1,
+        "v7_natural_greeting": 1,
+        "v7_selector_clarification": 3,
+        "v7_tool_outcome": 2
       },
       "validation": {
         "agent_repair": 16,
@@ -146,22 +180,29 @@
         "policy_detour": 8,
         "policy_resume": 8,
         "service_case_context": 16,
-        "tool_outcome_consistency": 32
+        "tool_outcome_consistency": 32,
+        "v7_grounded_selector": 1,
+        "v7_list_transactions_limit": 4,
+        "v7_list_transfers": 1,
+        "v7_mortgage_policy_detour": 1,
+        "v7_natural_greeting": 1,
+        "v7_selector_clarification": 3,
+        "v7_tool_outcome": 2
       }
     },
     "split_counts": {
       "test": 215,
-      "train": 2166,
-      "validation": 384
+      "train": 2195,
+      "validation": 397
     }
   },
   "schema_version": "banking-tool-sft/v1",
   "signed": false,
   "source_roles": {
     "released-retail-bank-agent-sft": {
-      "generator_version": "banking-tool-sft/v1.6-v6-generation-contract",
+      "generator_version": "banking-tool-sft/v1.7-v7-argument-contract",
       "license": "MIT",
-      "manifest_sha256": "7fb837ea4abeb9c3db13d4c9fd48e8b67079ab234c0d669d916c4194ce246df3",
+      "manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
       "role": "base-tool-use-sft",
       "trainable": true
     },
@@ -177,31 +218,31 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 6422984,
+      "bytes": 6585572,
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 2166,
-      "sha256": "6559351d338f432dd5b05574184bace34cd83ee8852f097eac4219f4ac5b3163"
+      "record_count": 2195,
+      "sha256": "899a3f8d5158e1fe66bab92d4208cc661f0a7d7a372e92cb6969aaeeb341ebb8"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1135882,
+      "bytes": 1185003,
       "name": "validation",
       "path": "validation.jsonl",
-      "record_count": 384,
-      "sha256": "0630e925615f489b90a37069f32f66d5a1b4d58900ecff466b1577e0192a4ee1"
+      "record_count": 397,
+      "sha256": "528db224235607345525f9f335f169a8ce595eda50fece465126376686ca30b7"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 594984,
+      "bytes": 594554,
       "name": "test",
       "path": "test.jsonl",
       "record_count": 215,
-      "sha256": "015a47ca36676dcb69b6c396a631bc6e0c737ad6140babd7bf233f81461f62aa"
+      "sha256": "36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811"
     }
   ]
 }

@@ -25,7 +25,7 @@ from hello_slm.config import file_sha256
 
 SPLITS = ("train", "validation", "test")
 CREATED_AT = "2026-07-31T00:00:00Z"
-GENERATOR_VERSION = "banking-servicing-alignment-sft/v6.0-generation-contract"
+GENERATOR_VERSION = "banking-servicing-alignment-sft/v7.0-argument-contract"
 DEFAULT_OUTPUT_DIR = Path("data/banking-servicing-alignment-v5")
 DEFAULT_BASE_SFT_DIR = Path("data/banking-v5-tool-sft")
 DEFAULT_SYNTHETIC_BANK_PATH = Path("poc/retail-bank-customer-service-poc/synthetic_bank.json")
@@ -39,6 +39,8 @@ SCREENSHOT_HELDOUT_CURRENTS = frozenset(
         "i didn't ask about mortgage",
         "why are you repeating yourself",
         "what about the weather there?",
+        "what happened with the money i sent recently?",
+        "show my five most recent transactions.",
     }
 )
 
@@ -179,6 +181,186 @@ def build_coreference_shadow_gate() -> list[dict[str, Any]]:
     return records
 
 
+def build_granite_v7_shadow_gate() -> list[dict[str, Any]]:
+    records = _granite_v7_examples("shadow")
+    for record in records:
+        record["metadata"]["trainable"] = False
+        _attach_generation_contract(record)
+    validate_records(records)
+    _assert_no_duplicate_current(records, split="granite-v7-shadow")
+    if _count_pii_matches({"shadow": records}):
+        raise ValueError("Granite V7 shadow gate contains PII-like text")
+    return records
+
+
+def build_screenshot_regression_fixture() -> list[dict[str, Any]]:
+    case_history = [
+        {"role": "user", "content": "Show my recent service cases."},
+        {"role": "assistant", "content": "You have a closed mailing-address update case."},
+    ]
+    card_history = [
+        {"role": "user", "content": "Show me the cards on my profile."},
+        {
+            "role": "assistant",
+            "content": "Your active debit card ends in 4821. Is that the one to replace?",
+        },
+    ]
+    wrong_answer_history = [
+        {"role": "user", "content": "Tell me when my mailing-address case was opened."},
+        {"role": "assistant", "content": "Mortgage applicants are typically at least 18."},
+    ]
+    balance_history = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I can help with your banking questions."},
+        {"role": "user", "content": "Show my account balances."},
+        {
+            "role": "assistant",
+            "content": (
+                "Everyday Checking ending in 1042 has USD 3,245.67 available; "
+                "Goal Saver ending in 8831 has USD 12,500.00 available."
+            ),
+        },
+    ]
+    transfer_history = [
+        *balance_history,
+        {"role": "user", "content": "What happened with the money I sent recently?"},
+        {"role": "assistant", "content": "I could not provide the transfer details."},
+    ]
+    cases: tuple[tuple[Any, ...], ...] = (
+        (
+            "service-case-created",
+            case_history,
+            "When was that created?",
+            "service",
+            "view_service_cases",
+            "resolved",
+            "list_service_cases",
+            {},
+            ("created",),
+        ),
+        (
+            "service-case-details",
+            case_history,
+            "what is that all about? when was it created?",
+            "service",
+            "view_service_cases",
+            "resolved",
+            "list_service_cases",
+            {},
+            ("address", "created"),
+        ),
+        (
+            "mailing-address-standalone",
+            [],
+            "was the mailing address updated recently?",
+            "service",
+            "view_service_cases",
+            "not_required",
+            "list_service_cases",
+            {},
+            ("address",),
+        ),
+        (
+            "card-selection",
+            card_history,
+            "ok, thats the one i want to replace",
+            "service",
+            "replace_card",
+            "resolved",
+            "replace_card",
+            {"last4": {"const": "4821"}},
+            ("4821", "replacement"),
+        ),
+        (
+            "agent-repetition-repair",
+            wrong_answer_history,
+            "why are you repeating yourself",
+            "service",
+            "view_service_cases",
+            "resolved",
+            "list_service_cases",
+            {},
+            ("address", "case"),
+        ),
+        (
+            "wrong-topic-repair",
+            wrong_answer_history,
+            "I didn't ask about mortgage",
+            "service",
+            "view_service_cases",
+            "resolved",
+            "list_service_cases",
+            {},
+            ("address", "case"),
+        ),
+        (
+            "weather-topic-shift",
+            case_history,
+            "what about the weather there?",
+            "ood",
+            "refuse_ood",
+            "not_required",
+            None,
+            {},
+            ("retail banking",),
+        ),
+        (
+            "recent-sent-money-status",
+            balance_history,
+            "What happened with the money I sent recently?",
+            "service",
+            "view_transfers",
+            "not_required",
+            "list_transfers",
+            {},
+            ("transfer",),
+        ),
+        (
+            "explicit-recent-transactions",
+            transfer_history,
+            "Show my five most recent transactions.",
+            "service",
+            "view_transactions",
+            "not_required",
+            "list_transactions",
+            {"limit": {"const": 5}},
+            ("transaction",),
+        ),
+    )
+    return [
+        {
+            "contract": "banking-v7-screenshot-regression/v1",
+            "record_id": f"screenshot-{case_id}",
+            "history": list(history),
+            "current": current,
+            "expected": {
+                "route": route,
+                "effective_action": action,
+                "entity_state": entity_state,
+                "tool_name": tool_name,
+                "argument_constraints": constraints,
+                "response_properties": {
+                    "must_include": list(must_include),
+                    "must_not_include": ["password", "pin", "customer id"],
+                    "grounded": tool_name is not None,
+                },
+            },
+            "metadata": {"trainable": False, "regression_only": True},
+        }
+        for (
+            case_id,
+            history,
+            current,
+            route,
+            action,
+            entity_state,
+            tool_name,
+            constraints,
+            must_include,
+        ) in cases
+    ]
+
+
 def load_base_sft_splits(
     base_sft_dir: Path = DEFAULT_BASE_SFT_DIR,
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
@@ -208,7 +390,11 @@ def write_servicing_alignment_dataset(
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
     shadow_records = build_coreference_shadow_gate()
+    granite_shadow_records = build_granite_v7_shadow_gate()
+    screenshot_records = build_screenshot_regression_fixture()
     _assert_shadow_isolation(alignment_splits, shadow_records)
+    _assert_granite_shadow_isolation(alignment_splits, granite_shadow_records)
+    _assert_screenshot_fixture_isolation(alignment_splits, screenshot_records)
     base_manifest, base_splits = load_base_sft_splits(base_sft_dir)
     policy_revision = load_canonical_policy_corpus()["corpus_revision"]
     if base_manifest.get("policy_corpus_revision") != policy_revision:
@@ -257,6 +443,10 @@ def write_servicing_alignment_dataset(
         )
     shadow_path = output_dir / "coreference-shadow.jsonl"
     shadow_path.write_bytes(_jsonl_bytes(shadow_records))
+    granite_shadow_path = output_dir / "granite-v7-shadow.jsonl"
+    granite_shadow_path.write_bytes(_jsonl_bytes(granite_shadow_records))
+    screenshot_path = output_dir / "screenshot-regression.jsonl"
+    screenshot_path.write_bytes(_jsonl_bytes(screenshot_records))
     behavioral_gates = [
         {
             "name": "coreference-shadow",
@@ -267,7 +457,17 @@ def write_servicing_alignment_dataset(
             "bytes": shadow_path.stat().st_size,
             "allowed_use": ["post-selection-evaluation-once"],
             "trainable": False,
-        }
+        },
+        {
+            "name": "granite-v7-shadow",
+            "path": granite_shadow_path.name,
+            "record_count": len(granite_shadow_records),
+            "sha256": _sha256_bytes(granite_shadow_path.read_bytes()),
+            "bytes": granite_shadow_path.stat().st_size,
+            "allowed_use": ["checkpoint-selection", "generalization-evaluation"],
+            "trainable": False,
+            "gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+        },
     ]
     manifest = {
         "format_version": 1,
@@ -283,6 +483,18 @@ def write_servicing_alignment_dataset(
         "policy_corpus_revision": policy_revision,
         "tool_sft": entries,
         "behavioral_gates": behavioral_gates,
+        "evaluation_fixtures": [
+            {
+                "name": "screenshot-regression",
+                "path": screenshot_path.name,
+                "record_count": len(screenshot_records),
+                "sha256": _sha256_bytes(screenshot_path.read_bytes()),
+                "bytes": screenshot_path.stat().st_size,
+                "allowed_use": ["regression-evaluation"],
+                "trainable": False,
+                "gate_contract": "banking-v7-screenshot-regression/v1",
+            }
+        ],
         "source_roles": {
             "released-retail-bank-agent-sft": {
                 "role": "base-tool-use-sft",
@@ -328,6 +540,7 @@ def _train_records() -> list[dict[str, Any]]:
         *_deictic_replace_curriculum("train"),
         *_missing_entity_records("train"),
         *_social_style_records("train"),
+        *_granite_v7_examples("train"),
     ]
 
 
@@ -347,6 +560,7 @@ def _validation_records() -> list[dict[str, Any]]:
         *_deictic_replace_curriculum("validation"),
         *_missing_entity_records("validation"),
         *_social_style_records("validation"),
+        *_granite_v7_examples("validation"),
     ]
 
 
@@ -1321,6 +1535,257 @@ def _missing_entity_records(split: str) -> list[dict[str, Any]]:
     ]
 
 
+def _granite_v7_examples(split: str) -> list[dict[str, Any]]:
+    if split not in {"train", "validation", "shadow"}:
+        raise ValueError(f"unsupported Granite V7 split: {split}")
+    tag = {"train": "Harbor", "validation": "Granite", "shadow": "Prairie"}[split]
+    card_last4 = {"train": "6158", "validation": "3074", "shadow": "8462"}[split]
+    other_last4 = {"train": "2046", "validation": "8662", "shadow": "1935"}[split]
+    recipient = {
+        "train": "Summit Plumbing",
+        "validation": "Juniper Internet",
+        "shadow": "Prairie Electric",
+    }[split]
+    records = [
+        _record(
+            record_id=f"v7_greeting_{split}",
+            split=split,
+            scenario_family="v7_natural_greeting",
+            current=f"Hello {tag}, good to see you.",
+            final=f"Hello from the {tag} review! I’m ready to help with your banking.",
+            tool_plan=[],
+            grounding_facts=[],
+            path="conversation",
+            pre_messages=[],
+        ),
+        _record(
+            record_id=f"v7_mortgage_detour_{split}",
+            split=split,
+            scenario_family="v7_mortgage_policy_detour",
+            current=(
+                "Pause the service-case review and explain how a mortgage application "
+                f"works, {tag}."
+            ),
+            final=(
+                f"For the {tag} review, {POLICY_CHUNKS['faq-mortgage-opening-v1']['answer']} "
+                f"[Policy: {POLICY_CHUNKS['faq-mortgage-opening-v1']['chunk_id']}]."
+            ),
+            tool_plan=[],
+            grounding_facts=list(POLICY_CHUNKS["faq-mortgage-opening-v1"]["required_claims"]),
+            path="retrieval_grounded_policy",
+            pre_messages=_case_history(split),
+            policy=POLICY_CHUNKS["faq-mortgage-opening-v1"],
+        ),
+        _record(
+            record_id=f"v7_list_transfers_{split}",
+            split=split,
+            scenario_family="v7_list_transfers",
+            current=f"List the transfers visible in my {tag.lower()} session.",
+            final=f"I found a pending transfer to {recipient}.",
+            tool_plan=[("list_transfers", {})],
+            grounding_facts=[f"transfer.recipient={recipient}", "transfer.status=pending"],
+            path="tool_success",
+            pre_messages=[],
+            tool_envelopes=[
+                _success_envelope(transfers=[{"recipient": recipient, "status": "pending"}])
+            ],
+        ),
+        _record(
+            record_id=f"v7_selector_grounded_{split}",
+            split=split,
+            scenario_family="v7_grounded_selector",
+            current=f"Replace the {tag} debit card from those results.",
+            final=f"Replacement is pending for the {tag} debit card ending in {card_last4}.",
+            tool_plan=[("replace_card", {"last4": card_last4})],
+            grounding_facts=[f"card.last4={card_last4}", "card.status=replacement_pending"],
+            path="tool_success",
+            pre_messages=[
+                _user(f"Show my cards and recent transfers for this {tag.lower()} review."),
+                _assistant(
+                    f"The {tag} debit card ends in {card_last4}; a transfer to {recipient} "
+                    "is also pending.",
+                    loss=False,
+                ),
+            ],
+            tool_envelopes=[
+                _success_envelope(
+                    card={
+                        "name": f"{tag} Debit",
+                        "last4": card_last4,
+                        "status": "replacement_pending",
+                    }
+                )
+            ],
+        ),
+        _record(
+            record_id=f"v7_selector_missing_{split}",
+            split=split,
+            scenario_family="v7_selector_clarification",
+            current=f"Replace my debit card during this {tag.lower()} review.",
+            final=(
+                f"For the {tag} review, which card should I replace? Please share the last "
+                "four digits shown in the app."
+            ),
+            tool_plan=[],
+            grounding_facts=["missing_field=last4"],
+            path="clarification",
+            pre_messages=[],
+        ),
+        _record(
+            record_id=f"v7_selector_ambiguous_{split}",
+            split=split,
+            scenario_family="v7_selector_clarification",
+            current=f"Replace the card from that {tag.lower()} list.",
+            final=(
+                f"Two eligible cards were listed in the {tag} review. Which one should I "
+                "replace? Please share its last four digits."
+            ),
+            tool_plan=[],
+            grounding_facts=["ambiguous_field=last4"],
+            path="clarification",
+            pre_messages=[
+                _user(f"Show the cards in my {tag.lower()} profile."),
+                _assistant(f"I found cards ending in {card_last4} and {other_last4}.", loss=False),
+            ],
+        ),
+        _record(
+            record_id=f"v7_selector_ineligible_{split}",
+            split=split,
+            scenario_family="v7_selector_clarification",
+            current=f"Replace the closed {tag} card you just mentioned.",
+            final=(
+                f"That {tag} card is closed and cannot be replaced. Please choose an eligible "
+                "card and share its last four digits."
+            ),
+            tool_plan=[],
+            grounding_facts=["ineligible_selector=closed_card"],
+            path="clarification",
+            pre_messages=[
+                _user(f"Check the status of my {tag} card ending in {card_last4}."),
+                _assistant(f"That card ending in {card_last4} is closed.", loss=False),
+            ],
+        ),
+        _record(
+            record_id=f"v7_tool_success_{split}",
+            split=split,
+            scenario_family="v7_tool_outcome",
+            current=f"Freeze the active {tag} card ending in {card_last4}.",
+            final=f"The {tag} card ending in {card_last4} is now frozen.",
+            tool_plan=[("freeze_card", {"last4": card_last4})],
+            grounding_facts=["card.status=frozen"],
+            path="tool_success",
+            pre_messages=[],
+            tool_envelopes=[
+                _success_envelope(
+                    card={"name": f"{tag} Card", "last4": card_last4, "status": "frozen"}
+                )
+            ],
+        ),
+        _record(
+            record_id=f"v7_tool_error_{split}",
+            split=split,
+            scenario_family="v7_tool_outcome",
+            current=f"Cancel the transfer to {recipient} even if it already settled.",
+            final=(
+                f"I could not cancel the transfer to {recipient} because it was not pending. "
+                "Its status was unchanged."
+            ),
+            tool_plan=[("cancel_transfer", {"recipient": recipient})],
+            grounding_facts=["error.code=transfer_not_pending"],
+            path="tool_error",
+            pre_messages=[],
+            tool_envelopes=[
+                _error_envelope("transfer_not_pending", "The transfer was not pending.")
+            ],
+        ),
+    ]
+    limit_values = range(1, 21) if split == "train" else (2, 7, 13, 19)
+    number_words = {
+        1: "one",
+        2: "two",
+        3: "three",
+        4: "four",
+        5: "five",
+        6: "six",
+        7: "seven",
+        8: "eight",
+        9: "nine",
+        10: "ten",
+        11: "eleven",
+        12: "twelve",
+        13: "thirteen",
+        14: "fourteen",
+        15: "fifteen",
+        16: "sixteen",
+        17: "seventeen",
+        18: "eighteen",
+        19: "nineteen",
+        20: "twenty",
+    }
+    for limit in limit_values:
+        rendered_limit = number_words[limit] if limit % 2 else str(limit)
+        records.append(
+            _record(
+                record_id=f"v7_transactions_limit_{limit:02d}_{split}",
+                split=split,
+                scenario_family="v7_list_transactions_limit",
+                current=(
+                    f"Show my most recent {rendered_limit} transactions for the "
+                    f"{tag.lower()} review."
+                ),
+                final=(
+                    f"I returned the {limit} most recent transactions requested for the "
+                    f"{tag} review."
+                ),
+                tool_plan=[("list_transactions", {"limit": limit})],
+                grounding_facts=[f"transactions.limit={limit}"],
+                path="tool_success",
+                pre_messages=[],
+                tool_envelopes=[
+                    _success_envelope(
+                        transactions=[
+                            {"description": f"{tag} item {index + 1}"} for index in range(limit)
+                        ]
+                    )
+                ],
+            )
+        )
+    if split == "shadow":
+        shadow_currents = {
+            "v7_greeting_shadow": "Prairie checking in—hello.",
+            "v7_mortgage_detour_shadow": (
+                "Temporarily leave support history aside. Describe home-loan application review."
+            ),
+            "v7_list_transfers_shadow": "Which outbound money movements appear?",
+            "v7_selector_grounded_shadow": (
+                "Use the Prairie debit selection above for replacement."
+            ),
+            "v7_selector_missing_shadow": (
+                "A debit replacement is needed; the specific card is unstated."
+            ),
+            "v7_selector_ambiguous_shadow": (
+                "Both displayed cards qualify; request a replacement without choosing."
+            ),
+            "v7_selector_ineligible_shadow": ("Proceed using the closed Prairie payment card."),
+            "v7_tool_success_shadow": "Apply a freeze to Prairie card 8462.",
+            "v7_tool_error_shadow": (
+                "The Prairie Electric payment already settled; try cancellation."
+            ),
+            **{
+                f"v7_transactions_limit_{limit:02d}_shadow": (
+                    f"For activity review, return {limit} entries from transaction history."
+                )
+                for limit in limit_values
+            },
+        }
+        for record in records:
+            for message in reversed(record["messages"]):
+                if message.get("role") == "user":
+                    message["content"] = shadow_currents[str(record["record_id"])]
+                    break
+    return records
+
+
 def _heldout_regression_records() -> list[dict[str, Any]]:
     return [
         _record(
@@ -1810,6 +2275,63 @@ def _assert_shadow_isolation(
         raise ValueError("held-out screenshot current leaked into coreference shadow")
     if _heldout_long_ngram_leaks_in_train(shadow_as_train):
         raise ValueError("held-out screenshot n-gram leaked into coreference shadow")
+
+
+def _assert_granite_shadow_isolation(
+    splits: Mapping[str, Sequence[dict[str, Any]]],
+    shadow_records: Sequence[dict[str, Any]],
+) -> None:
+    governed = [*splits["train"], *splits["validation"]]
+    governed_prompts = {_normalize(_last_user_text(record)) for record in governed}
+    shadow_prompts = {_normalize(_last_user_text(record)) for record in shadow_records}
+    if governed_prompts & shadow_prompts:
+        raise ValueError("Granite V7 shadow prompt leaked into train or validation")
+    governed_ngrams = set().union(
+        *(_word_ngrams(_last_user_text(record), size=4) for record in governed)
+    )
+    shadow_ngrams = set().union(
+        *(_word_ngrams(_last_user_text(record), size=4) for record in shadow_records)
+    )
+    if governed_ngrams & shadow_ngrams:
+        raise ValueError("Granite V7 shadow long n-gram leaked into train or validation")
+    shadow_as_train = {"train": list(shadow_records)}
+    if _heldout_exact_currents_in_train(shadow_as_train):
+        raise ValueError("held-out screenshot current leaked into Granite V7 shadow")
+    if _heldout_long_ngram_leaks_in_train(shadow_as_train):
+        raise ValueError("held-out screenshot n-gram leaked into Granite V7 shadow")
+
+
+def _assert_screenshot_fixture_isolation(
+    splits: Mapping[str, Sequence[dict[str, Any]]],
+    fixture: Sequence[Mapping[str, Any]],
+) -> None:
+    if len(fixture) != 9:
+        raise ValueError("screenshot regression fixture must contain exactly nine cases")
+    governed = [*splits["train"], *splits["validation"]]
+    governed_currents = {_normalize(_last_user_text(record)) for record in governed}
+    fixture_currents = {_normalize(str(row.get("current", ""))) for row in fixture}
+    if governed_currents & fixture_currents:
+        raise ValueError("screenshot regression current leaked into train or validation")
+    fixture_ngrams = set().union(
+        *(_word_ngrams(str(row.get("current", "")), size=4) for row in fixture)
+    )
+    leaks = [
+        str(record["record_id"])
+        for record in governed
+        if _word_ngrams(_last_user_text(record), size=4) & fixture_ngrams
+    ]
+    if leaks:
+        raise ValueError(f"screenshot regression long n-gram leaked into training: {leaks}")
+    required = {
+        "route",
+        "effective_action",
+        "entity_state",
+        "tool_name",
+        "argument_constraints",
+        "response_properties",
+    }
+    if any(set(row.get("expected", {})) != required for row in fixture):
+        raise ValueError("screenshot regression fixture has an incomplete expected contract")
 
 
 def _assert_no_cross_split_leakage(

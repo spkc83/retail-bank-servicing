@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from branding import STREAMLIT_CSS
 from streamlit_app import render_snapshot, resolve_local_router_artifact
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +83,17 @@ def test_experiment_diagnostics_use_an_on_demand_sidebar_popover() -> None:
     assert "router_data_sha256=" in source
     assert "router_artifact=" in source
     assert 'st.expander("Model, router, tool-call, and raw-output diagnostics"' not in source
+
+
+def test_streamlit_tables_are_scoped_to_assistant_chat_and_scroll_horizontally() -> None:
+    assistant_scope = (
+        '[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])'
+    )
+
+    assert f"{assistant_scope} table" in STREAMLIT_CSS
+    assert "overflow-x: auto" in STREAMLIT_CSS
+    assert "white-space: nowrap" in STREAMLIT_CSS
+    assert "overflow-wrap: normal" in STREAMLIT_CSS
 
 
 def test_streamlit_presentation_uses_shared_brand_and_warm_copy() -> None:

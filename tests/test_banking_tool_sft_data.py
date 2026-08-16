@@ -178,25 +178,32 @@ def test_v5_customer_facing_contract_is_grounded_varied_and_preset_free() -> Non
     assert "sorry" in _final(emergency).lower()
 
 
-def test_v6_generation_contract_is_train_only_and_social_targets_are_natural() -> None:
+def test_v7_generation_contract_has_exact_argument_constraints() -> None:
     records = generate_records(pilot_count=1200, split_seed=711)
 
-    train_and_validation = [
-        row for row in records if row["metadata"]["split"] in {"train", "validation"}
-    ]
-    assert all("generation_contract" in row["expected"] for row in train_and_validation)
     contracted = [row for row in records if "generation_contract" in row["expected"]]
     assert contracted
-    assert {row["metadata"]["split"] for row in contracted} <= {"train", "validation"}
     for row in contracted:
         contract = row["expected"]["generation_contract"]
         calls = row["expected"]["tool_calls"]
+        assert contract["version"] == "banking-v7-route-to-generation/v1"
         if contract["mode"] == "execute_tool":
             assert len(contract["tool_names"]) == 1
             assert {call["name"] for call in calls} == set(contract["tool_names"])
+            assert contract["argument_constraints"] == {
+                name: {"const": value} for name, value in calls[0]["arguments"].items()
+            }
         else:
             assert contract["tool_names"] == []
+            assert contract["argument_constraints"] == {}
             assert calls == []
+
+
+def test_v7_social_targets_are_natural_and_multistage_is_single_tool() -> None:
+    records = generate_records(pilot_count=1200, split_seed=711)
+    train_and_validation = [
+        row for row in records if row["metadata"]["split"] in {"train", "validation"}
+    ]
 
     social = [
         row
@@ -218,6 +225,9 @@ def test_v6_generation_contract_is_train_only_and_social_targets_are_natural() -
     assert multistage
     for row in multistage:
         assert row["expected"]["generation_contract"]["tool_names"] == ["freeze_card"]
+        assert row["expected"]["generation_contract"]["argument_constraints"] == {
+            "last4": {"const": row["expected"]["tool_calls"][0]["arguments"]["last4"]}
+        }
         assistant_calls = [message for message in row["messages"] if message.get("tool_calls")]
         assert [message["loss"] for message in assistant_calls] == [False, True]
         assert assistant_calls[-1]["tool_calls"][0]["function"]["name"] == "freeze_card"
@@ -493,7 +503,7 @@ def test_prepare_writes_manifest_report_and_is_split_isolated(tmp_path: Path) ->
 
     manifest = validate_banking_tool_sft_manifest(tmp_path / "tool-sft" / "manifest.json")
     assert manifest["contract"] == "banking-tool-sft-manifest"
-    assert manifest["generation_contract_version"] == "banking-v6-route-to-generation/v1"
+    assert manifest["generation_contract_version"] == "banking-v7-route-to-generation/v1"
     assert manifest["generation_contract_model_inputs"] == (
         "compatible tool schemas only; routing metadata is not rendered"
     )

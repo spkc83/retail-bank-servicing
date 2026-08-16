@@ -117,6 +117,12 @@ def test_gradio_presentation_uses_shared_harborlight_brand(app_module) -> None:
     assert "Ask the signed-in synthetic bank agent" not in source
     assert "Synthetic backend state" not in source
     assert 'gr.Accordion("Technical details", open=False)' in source
+    assert 'elem_classes=["harbor-layout"]' in source
+    assert 'elem_classes=["harbor-chat"]' in source
+    assert "with gr.Column(scale=3, min_width=720" in source
+    assert source.index('gr.Accordion("Technical details"') > source.index(
+        "with gr.Column(scale=3, min_width=720"
+    )
     assert "#082f49" in app_module.CSS
     assert "#0f766e" in app_module.CSS
 
@@ -153,6 +159,11 @@ def test_diagnostics_show_v6_hierarchy_and_exact_exposed_tools(app_module) -> No
     assert "V6 entity resolution: `resolved`" in diagnostics
     assert 'Exposed tools: `["freeze_card"]`' in diagnostics
     assert "list_accounts" not in diagnostics
+    summary = diagnostics.split("### Full technical details", 1)[0]
+    assert "Outcome: `test`" in summary
+    assert "Granite passes: `0`" in summary
+    assert "Relation probabilities" not in summary
+    assert "SHA-256" not in summary
 
 
 def test_diagnostics_retain_v3_route_compatibility(app_module) -> None:
@@ -379,6 +390,42 @@ def test_gpu_failure_never_generates_cpu_servicing_answer(
     assert "could not allocate" in result[4].lower()
 
 
+def test_generic_model_error_preserves_safe_message_and_attached_trace(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = SimpleNamespace(
+        label="base",
+        input_tokens=10,
+        prompt_sha256="prompt-hash",
+        output_chars=14,
+        output_sha256="output-hash",
+        raw_output="partial model trace",
+        runtime_device="cuda:0",
+        cuda_device_name="test GPU",
+    )
+
+    class TracedRuntimeError(RuntimeError):
+        model_passes = (trace,)
+
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(
+        app_module,
+        "generate_text",
+        lambda *_args: (_ for _ in ()).throw(
+            TracedRuntimeError("generation failed token=do-not-show")
+        ),
+    )
+    monkeypatch.setattr(app_module, "route_query", lambda *_args: route())
+
+    result = app_module.run_model_turn("Show my transfers.", [], [], {}, request())
+
+    assert "Error: `generation failed token=&lt;redacted&gt;`" in result[5]
+    assert "Granite passes: `1`" in result[5]
+    assert "partial model trace" in result[5]
+    assert "do-not-show" not in result[5]
+
+
 def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics(
     app_module,
     monkeypatch: pytest.MonkeyPatch,
@@ -410,6 +457,50 @@ def test_second_pass_failure_preserves_executed_write_in_history_and_diagnostics
     assert "`frozen`" in result[3]
     assert result[1][-1]["content"] == app_module.MODEL_FAILURE_RESPONSE
     assert result[-1]["pending_servicing"] is None
+
+
+def test_hf_turn_uses_same_unique_card_grounding_contract(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_tools: list[object] = []
+    outputs = iter(
+        [
+            '<tool_call>{"name":"freeze_card","arguments":{"last4":"4821"}}</tool_call>',
+            "I froze your Everyday Visa Debit card ending in 4821.",
+        ]
+    )
+
+    def generate(_messages, tools, _max_new_tokens):
+        seen_tools.append(tools)
+        return next(outputs)
+
+    routed = {
+        **route(capability="cards", intent="freeze_card"),
+        "domain": "banking",
+        "lane": "servicing",
+        "family": "cards",
+        "action": "execute_tool",
+        "entity_resolution": "resolved",
+        "joint_decision_contract": "hierarchical-router-joint-decision/v1",
+        "joint_decision_accepted": True,
+    }
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", generate)
+    monkeypatch.setattr(app_module, "route_query", lambda *_args: routed)
+
+    result = app_module.run_model_turn(
+        "My debit card was taken. Lock it now.",
+        [],
+        [],
+        {},
+        request(session_hash="grounding-parity"),
+    )
+
+    schema = seen_tools[0][0]["function"]["parameters"]
+    assert schema["properties"]["last4"]["const"] == "4821"
+    assert "Grounding source: `live_candidate`" in result[5]
+    assert "`frozen`" in result[3]
 
 
 def test_first_pass_parse_failure_preserves_raw_output_in_diagnostics(

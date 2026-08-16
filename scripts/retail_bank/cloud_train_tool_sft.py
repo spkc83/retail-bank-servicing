@@ -454,7 +454,7 @@ def training_tools_for_record(
     record: Mapping[str, Any],
     adapter: ToolWireAdapter,
 ) -> list[Mapping[str, Any]] | None:
-    """Resolve V6 tool availability; None preserves legacy all-tool rendering."""
+    """Resolve V7 exact schemas; None preserves legacy all-tool rendering."""
 
     expected = record.get("expected")
     if not isinstance(expected, Mapping):
@@ -473,7 +473,39 @@ def training_tools_for_record(
     unknown = [name for name in names if name not in available]
     if unknown:
         raise ValueError(f"generation_contract references unknown tools: {unknown}")
-    return [available[name] for name in names]
+    constraints = contract.get("argument_constraints", {})
+    if not isinstance(constraints, Mapping):
+        raise ValueError("generation_contract.argument_constraints must be an object")
+    if not names:
+        if constraints:
+            raise ValueError("no-tool generation_contract cannot constrain arguments")
+        return []
+    if len(names) != 1:
+        raise ValueError("generation_contract must expose exactly one or no tools")
+    selected = available[names[0]]
+    parameters = dict(selected.get("parameters", {}))
+    properties = {
+        str(name): dict(value)
+        for name, value in parameters.get("properties", {}).items()
+        if isinstance(value, Mapping)
+    }
+    unknown_arguments = [name for name in constraints if name not in properties]
+    if unknown_arguments:
+        raise ValueError(f"generation_contract constrains unknown arguments: {unknown_arguments}")
+    for name, constraint in constraints.items():
+        if not isinstance(constraint, Mapping) or set(constraint) != {"const"}:
+            raise ValueError("argument constraints must contain exactly one const")
+        properties[str(name)] = {**properties[str(name)], "const": constraint["const"]}
+    exact_parameters = {
+        **parameters,
+        "properties": properties,
+        "additionalProperties": False,
+    }
+    if constraints:
+        exact_parameters["required"] = list(constraints)
+    else:
+        exact_parameters.pop("required", None)
+    return [{**selected, "parameters": exact_parameters}]
 
 
 def collate_pretokenized(

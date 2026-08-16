@@ -53,6 +53,8 @@ from model_service import (
     router_diagnostic_fields,
 )
 from dialogue_state import DialogueState, begin_turn, commit_operations, finish_turn
+from diagnostics import diagnostic_summary, error_model_passes
+from entity_grounding import ground_servicing_decision
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
 from responses import (
     MODEL_FAILURE_RESPONSE,
@@ -142,7 +144,13 @@ def run_model_turn(
     conversation = canonical_conversation(conversation_history)
     prior_state = DialogueState.from_dict(dialogue_state_payload)
 
-    route = route_query(message, conversation, prior_state.as_dict())
+    learned_route = route_query(message, conversation, prior_state.as_dict())
+    route = ground_servicing_decision(
+        learned_route,
+        message=message.strip(),
+        trusted_tool_results=conversation,
+        live_snapshot=BANK.snapshot(username, session_hash),
+    )
     transition = begin_turn(prior_state, route, message.strip())
     if route.get("route") == "classifier_error":
         return _direct_turn(
@@ -182,7 +190,7 @@ def run_model_turn(
     agent = ConversationalBankingAgent(bank=BANK, model=_RuntimeModel())
     try:
         pinned_exchange = list(transition.anchor_exchange) or None
-        if transition.lane == "policy":
+        if (route.get("lane") or transition.lane) == "policy":
             lookup = POLICY_KNOWLEDGE.lookup(message.strip())
             if not lookup.matched:
                 return _direct_turn(
@@ -237,6 +245,7 @@ def run_model_turn(
             "9B execution failure",
             error.model_passes,
             dialogue_state=failed_state.as_dict(),
+            diagnostic_error=error,
         )
         return (
             gr.update(value="", interactive=True),
@@ -265,7 +274,9 @@ def run_model_turn(
             (),
             (),
             "9B model failure",
+            error_model_passes(error),
             dialogue_state=transition.state.as_dict(),
+            diagnostic_error=error,
         )
         enabled = gr.update(interactive=True)
         return (
@@ -586,6 +597,7 @@ def _render_diagnostics(
     visible_response: str | None = None,
     policy_sources: tuple[str, ...] = (),
     dialogue_state: dict[str, Any] | None = None,
+    diagnostic_error: object | None = None,
 ) -> str:
     decision = router_diagnostic_fields(route)
     candidates = route.get("capability_candidates")
@@ -642,8 +654,17 @@ def _render_diagnostics(
         else "not recorded"
     )
     space_commit = os.environ.get("SPACE_COMMIT_SHA", "unavailable")
+    summary = diagnostic_summary(
+        route=route,
+        calls=calls,
+        results=results,
+        response_path=response_path,
+        model_passes=model_passes,
+        policy_sources=policy_sources,
+        error=diagnostic_error,
+    )
     return (
-        "### Experiment diagnostics\n\n"
+        f"{summary}\n\n### Full technical details\n\n"
         f"- Route: `{route.get('route')}`\n"
         f"- In-domain probability: `{route.get('banking_probability')}`\n"
         f"- OOD probability: `{route.get('ood_probability')}`\n"
@@ -701,23 +722,22 @@ with gr.Blocks(
         <div class="prototype-notice">{PROTOTYPE_NOTICE}</div>
         """
     )
-    with gr.Row():
-        with gr.Column(scale=1, min_width=300):
+    with gr.Row(elem_classes=["harbor-layout"]):
+        with gr.Column(scale=1, min_width=300, elem_classes=["harbor-sidebar"]):
             profile_panel = gr.HTML()
             snapshot_panel = gr.Markdown()
             activity_panel = gr.Markdown()
-            with gr.Accordion("Technical details", open=False):
-                diagnostics_panel = gr.Markdown()
             with gr.Row():
                 refresh_button = gr.Button("Refresh state", size="sm")
                 reset_button = gr.Button("Reset demo", size="sm")
             gr.Button("Log out", link="/logout?all_session=false", size="sm")
-        with gr.Column(scale=2, min_width=580):
+        with gr.Column(scale=3, min_width=720, elem_classes=["harbor-main"]):
             chatbot = gr.Chatbot(
                 label=f"Chat with {ASSISTANT_NAME}",
                 height=590,
                 layout="bubble",
                 type="messages",
+                elem_classes=["harbor-chat"],
                 placeholder=f"{ASSISTANT_NAME} is here to help with your banking questions.",
             )
             with gr.Row():
@@ -733,6 +753,8 @@ with gr.Blocks(
                 inputs=message_box,
                 label=f"Try asking {ASSISTANT_NAME}",
             )
+    with gr.Accordion("Technical details", open=False):
+        diagnostics_panel = gr.Markdown()
 
     conversation_history = gr.State([])
     dialogue_state = gr.State(DialogueState().as_dict())

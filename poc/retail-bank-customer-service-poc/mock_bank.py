@@ -169,9 +169,7 @@ class SessionBankRegistry:
                 raise ValueError(f"read bundle cannot execute {tool_name}")
             extras = set(arguments) - TOOL_ARGUMENTS[tool_name]
             if extras:
-                raise ValueError(
-                    f"unsupported arguments for {tool_name}: {sorted(extras)}"
-                )
+                raise ValueError(f"unsupported arguments for {tool_name}: {sorted(extras)}")
         entry = self._entry(username, session_hash)
         with entry.lock:
             entry.connection.execute("BEGIN")
@@ -218,9 +216,7 @@ class SessionBankRegistry:
                 )
                 connection.row_factory = sqlite3.Row
                 _initialize(connection)
-                customer_count = connection.execute(
-                    "SELECT COUNT(*) FROM customer"
-                ).fetchone()[0]
+                customer_count = connection.execute("SELECT COUNT(*) FROM customer").fetchone()[0]
                 if customer_count == 0:
                     _seed_customer(connection, self._customers[username])
                 entry = SessionEntry(connection=connection, last_access=now)
@@ -458,7 +454,8 @@ def _execute(
     if tool_name == "list_transfers":
         return {"transfers": _snapshot(connection)["transfers"]}
     if tool_name in {"freeze_card", "replace_card"}:
-        card = _selected_card(connection, arguments.get("last4"))
+        last4 = _required_public_selector(tool_name, arguments, "last4")
+        card = _selected_card(connection, tool_name, last4)
         status = "frozen" if tool_name == "freeze_card" else "replacement_pending"
         connection.execute(
             "UPDATE card SET status = ? WHERE card_id = ?",
@@ -473,6 +470,8 @@ def _execute(
         card["status"] = status
         return {"card": card, "simulated": True}
     if tool_name == "dispute_transaction":
+        if arguments.get("transaction_id") is None:
+            _required_public_selector(tool_name, arguments, "description")
         transaction = _selected_transaction(
             connection,
             arguments.get("transaction_id"),
@@ -490,6 +489,8 @@ def _execute(
         transaction["disputed"] = True
         return {"transaction": transaction, "simulated": True}
     if tool_name == "cancel_transfer":
+        if arguments.get("transfer_id") is None:
+            _required_public_selector(tool_name, arguments, "recipient")
         transfer = _selected_transfer(
             connection,
             arguments.get("transfer_id"),
@@ -504,13 +505,30 @@ def _execute(
     raise ValueError(f"unsupported tool: {tool_name}")
 
 
-def _selected_card(connection: sqlite3.Connection, last4: Any) -> dict[str, Any]:
-    if last4 is None:
-        return _one(
-            connection,
-            "SELECT * FROM card ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END LIMIT 1",
-        )
-    return _one(connection, "SELECT * FROM card WHERE last4 = ?", (str(last4),))
+def _required_public_selector(
+    tool_name: str,
+    arguments: dict[str, Any],
+    selector: str,
+) -> str:
+    value = arguments.get(selector)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{tool_name} requires public selector {selector}")
+    return value.strip()
+
+
+def _selected_card(
+    connection: sqlite3.Connection,
+    tool_name: str,
+    last4: str,
+) -> dict[str, Any]:
+    eligible_statuses = ("active",) if tool_name == "freeze_card" else ("active", "frozen")
+    placeholders = ", ".join("?" for _status in eligible_statuses)
+    return _one_eligible(
+        connection,
+        f"SELECT * FROM card WHERE last4 = ? AND status IN ({placeholders})",
+        (last4, *eligible_statuses),
+        "card",
+    )
 
 
 def _selected_transaction(
@@ -525,24 +543,21 @@ def _selected_transaction(
             connection,
             """
             SELECT * FROM bank_transaction
-            WHERE amount_cents < 0 AND disputed = 0 AND lower(description) = lower(?)
+            WHERE amount_cents < 0 AND status = 'posted' AND disputed = 0
+              AND lower(description) = lower(?)
             """,
             str(description),
             "transaction",
         )
-    if transaction_id is None:
-        return _one(
-            connection,
-            """
-            SELECT * FROM bank_transaction
-            WHERE amount_cents < 0 AND disputed = 0
-            ORDER BY posted_at DESC LIMIT 1
-            """,
-        )
-    return _one(
+    return _one_eligible(
         connection,
-        "SELECT * FROM bank_transaction WHERE transaction_id = ?",
+        """
+        SELECT * FROM bank_transaction
+        WHERE transaction_id = ? AND amount_cents < 0
+          AND status = 'posted' AND disputed = 0
+        """,
         (str(transaction_id),),
+        "transaction",
     )
 
 
@@ -563,19 +578,11 @@ def _selected_transfer(
             str(recipient),
             "transfer",
         )
-    if transfer_id is None:
-        return _one(
-            connection,
-            """
-            SELECT * FROM bank_transfer
-            WHERE status = 'pending'
-            ORDER BY created_at DESC LIMIT 1
-            """,
-        )
-    return _one(
+    return _one_eligible(
         connection,
         "SELECT * FROM bank_transfer WHERE transfer_id = ? AND status = 'pending'",
         (str(transfer_id),),
+        "transfer",
     )
 
 
@@ -588,7 +595,21 @@ def _one_casefold_match(
     rows = connection.execute(query, (value,)).fetchall()
     if len(rows) != 1:
         raise ValueError(
-            f"expected exactly one matching synthetic {record_type}; found {len(rows)}"
+            f"expected exactly one matching synthetic eligible {record_type}; found {len(rows)}"
+        )
+    return _row(rows[0])
+
+
+def _one_eligible(
+    connection: sqlite3.Connection,
+    query: str,
+    parameters: tuple[Any, ...],
+    record_type: str,
+) -> dict[str, Any]:
+    rows = connection.execute(query, parameters).fetchall()
+    if len(rows) != 1:
+        raise ValueError(
+            f"expected exactly one matching synthetic eligible {record_type}; found {len(rows)}"
         )
     return _row(rows[0])
 

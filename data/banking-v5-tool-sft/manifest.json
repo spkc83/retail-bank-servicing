@@ -3,8 +3,8 @@
   "created_at": "2026-07-29T00:00:00Z",
   "format_version": 1,
   "generation_contract_model_inputs": "compatible tool schemas only; routing metadata is not rendered",
-  "generation_contract_version": "banking-v6-route-to-generation/v1",
-  "generator_version": "banking-tool-sft/v1.6-v6-generation-contract",
+  "generation_contract_version": "banking-v7-route-to-generation/v1",
+  "generator_version": "banking-tool-sft/v1.7-v7-argument-contract",
   "name": "retail-bank-servicing-v5-tool-sft",
   "policy_corpus_revision": "sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a",
   "schema_version": "banking-tool-sft/v1",
@@ -18,7 +18,7 @@
   "tool_manifest_hash": "sha256:1eb463390ad06a0b31bf3954a794c25015730285bde913fd3df7980cda9c568d",
   "tool_sft": [
     {
-      "bytes": 2622137,
+      "bytes": 2654313,
       "licenses": [
         "MIT"
       ],
@@ -27,10 +27,10 @@
       "record_count": 841,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "818ec38da6c6326df9a79a0dccb578b60bce554d00d024223075726158b3b586"
+      "sha256": "f31ad7fb6921768bc464f41ff613db457eab9182b0d91dd16575742968360188"
     },
     {
-      "bytes": 551702,
+      "bytes": 558621,
       "licenses": [
         "MIT"
       ],
@@ -39,10 +39,10 @@
       "record_count": 179,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "ef66a59927aaa0a61f919df413130263fd4975a22e4024fe08db386d789770f6"
+      "sha256": "1ff54f6d850c969952c6db4628c18b9542d8cab3b94b15d47eee186dd88d1c14"
     },
     {
-      "bytes": 514769,
+      "bytes": 514409,
       "licenses": [
         "MIT"
       ],
@@ -51,7 +51,7 @@
       "record_count": 180,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "e759bbd62ac5d1ddd28fa6c07b5fca1a3b5976a275552ded0caf2b9e6d271e2c"
+      "sha256": "9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c"
     }
   ]
 }

@@ -19,6 +19,7 @@
 # explicit = true
 # ///
 """Generate read-only banking V5 frozen tool-eval predictions from a merged Hub model."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -35,6 +36,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from cloud_train_tool_sft import training_tools_for_record  # type: ignore[import-not-found]
 
 from hello_slm.banking_counterfactual_eval_data import (
     COUNTERFACTUAL_GATE_CONTRACT,
@@ -49,7 +55,7 @@ from hello_slm.banking_tool_eval import (
     load_predictions_jsonl,
     release_gate_failures,
 )
-from hello_slm.banking_tool_sft_data import public_tool_manifest
+from hello_slm.banking_tool_sft_data import generation_contract_for_record, public_tool_manifest
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.config import canonical_json_bytes
 
@@ -77,6 +83,7 @@ class GenerationBackend(Protocol):
         messages: Sequence[Mapping[str, Any]],
         *,
         max_new_tokens: int,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         """Generate one assistant continuation for already-rendered banking messages."""
 
@@ -270,6 +277,7 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         "eligible": not gate_failures,
         "failures": gate_failures,
     }
+    metadata["oracle_contract_gate"] = build_oracle_contract_gate(records, adapter)
     write_json(output_paths["metadata"], metadata)
     if config.push_to_hub:
         publish_eval_artifacts(config, output_paths)
@@ -463,6 +471,7 @@ def generate_record_prediction_row(
     expected_grounding_facts = (
         expected.get("grounding_facts", []) if isinstance(expected, Mapping) else []
     )
+    generation_contract, tools = evaluation_contract_and_tools(record, adapter)
     return {
         "contract": "banking-tool-eval-prediction/v1",
         "record_id": required_str(record, "record_id"),
@@ -470,6 +479,10 @@ def generate_record_prediction_row(
         "expected_path": expected_path,
         "expected_tool_calls": expected_tool_calls,
         "expected_grounding_facts": expected_grounding_facts,
+        "generation_contract": dict(generation_contract)
+        if isinstance(generation_contract, Mapping)
+        else None,
+        "oracle_contract_artifact": oracle_contract_artifact(tools, adapter),
         **trajectory,
         "created_at": datetime.now(UTC).isoformat(),
     }
@@ -498,11 +511,16 @@ def generate_iterative_trajectory(
     final_parsed: dict[str, Any] | None = None
     final_parse_error: str | None = None
     requires_tool = expected_requires_tool(record)
+    _generation_contract, tools = evaluation_contract_and_tools(record, adapter)
 
     for pass_index in range(max_tool_passes):
         max_new_tokens = max_new_tokens_first if pass_index == 0 else max_new_tokens_final
         prompt_count = len(transcript)
-        raw = backend.generate_text(transcript, max_new_tokens=max_new_tokens)
+        raw = backend.generate_text(
+            transcript,
+            max_new_tokens=max_new_tokens,
+            tools=tools,
+        )
         parsed, parse_error = parse_or_error(adapter, raw)
         raw_passes.append(raw)
         pass_report: dict[str, Any] = {
@@ -658,6 +676,63 @@ def parse_or_error(
         return None, str(exc)
 
 
+def oracle_contract_artifact(
+    tools: Sequence[Mapping[str, Any]] | None,
+    adapter: ToolWireAdapter,
+) -> dict[str, Any]:
+    rendered = adapter.render_tools(tools) if tools is not None else adapter.render_tools()
+    return {
+        "contract": "banking-v7-granite-oracle-contract-artifact/v1",
+        "legacy_fallback": tools is None,
+        "tool_names": [str(tool["function"]["name"]) for tool in rendered],
+        "tool_schemas_sha256": hashlib.sha256(canonical_json_bytes(rendered)).hexdigest(),
+    }
+
+
+def evaluation_contract_and_tools(
+    record: Mapping[str, Any],
+    adapter: ToolWireAdapter,
+) -> tuple[Mapping[str, Any] | None, list[Mapping[str, Any]] | None]:
+    expected = record.get("expected")
+    explicit = expected.get("generation_contract") if isinstance(expected, Mapping) else None
+    contract: Mapping[str, Any] | None
+    if isinstance(explicit, Mapping):
+        contract = {str(key): value for key, value in explicit.items()}
+    elif isinstance(record.get("metadata"), Mapping):
+        contract = generation_contract_for_record(record)
+    else:
+        contract = None
+    if contract is None:
+        return None, None
+    contracted_record = {
+        **record,
+        "expected": {**dict(expected or {}), "generation_contract": dict(contract)},
+    }
+    return contract, training_tools_for_record(contracted_record, adapter)
+
+
+def build_oracle_contract_gate(
+    records: Sequence[Mapping[str, Any]],
+    adapter: ToolWireAdapter,
+) -> dict[str, Any]:
+    resolved = [evaluation_contract_and_tools(record, adapter) for record in records]
+    artifacts = [oracle_contract_artifact(tools, adapter) for _contract, tools in resolved]
+    contracted = [
+        artifact
+        for (contract, _tools), artifact in zip(resolved, artifacts, strict=True)
+        if contract is not None
+    ]
+    exact = [artifact for artifact in contracted if len(artifact["tool_names"]) <= 1]
+    return {
+        "contract": "banking-v7-granite-oracle-contract-gate/v1",
+        "record_count": len(records),
+        "contracted_record_count": len(contracted),
+        "exact_one_or_no_tool_count": len(exact),
+        "eligible": len(contracted) == len(exact),
+        "predicted_e2e_gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+    }
+
+
 class TransformersGenerationBackend:
     def __init__(self, config: EvalConfig) -> None:
         self.config = config
@@ -725,12 +800,13 @@ class TransformersGenerationBackend:
         messages: Sequence[Mapping[str, Any]],
         *,
         max_new_tokens: int,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         if self.model is None or self.tokenizer is None or self.adapter is None:
             raise ToolEvalGenerationError("generation backend is not initialized")
         import torch
 
-        rendered = self.adapter.render_generation(messages)
+        rendered = self.adapter.render_generation(messages, tools=tools)
         inputs = {
             key: value.to(self.model.device)
             for key, value in rendered.items()

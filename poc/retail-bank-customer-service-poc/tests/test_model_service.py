@@ -14,6 +14,7 @@ from model_service import (
     AgentProtocolError,
     ConversationalBankingAgent,
     parse_tool_calls,
+    router_diagnostic_fields,
     select_token_budgeted_context,
 )
 
@@ -519,6 +520,117 @@ def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:
     assert result.tool_calls == ()
     assert model.calls[0]["tools"] is None
     assert "classifier abstained" in model.calls[0]["messages"][0]["content"]
+
+
+def test_v7_grounded_write_exposes_required_exact_selector_schema() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>',
+            "Replacement is pending for your card ending in 4821.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="v7-schema",
+        message="Replace card 4821.",
+        conversation=[],
+        router_result={
+            **v4_router_guidance(action="execute_tool"),
+            "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+            "decision_accepted": True,
+            "argument_constraints": {"last4": "4821"},
+        },
+    )
+
+    schema = model.calls[0]["tools"][0]["function"]["parameters"]
+    assert schema["required"] == ["last4"]
+    assert schema["properties"]["last4"] == {
+        "type": "string",
+        "pattern": "^4821$",
+        "const": "4821",
+        "enum": ["4821"],
+    }
+    assert result.tool_calls[0].arguments == {"last4": "4821"}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ({}, "required argument"),
+        ({"last4": "7319"}, "const"),
+        (
+            {
+                "last4": "4821 ",
+            },
+            "const",
+        ),
+    ],
+)
+def test_v7_grounded_write_rejects_missing_or_non_exact_model_argument(
+    arguments: dict[str, Any],
+    error: str,
+) -> None:
+    model = RecordingModel(
+        [f'<tool_call>{{"name":"replace_card","arguments":{json.dumps(arguments)}}}</tool_call>']
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    with pytest.raises(AgentExecutionError, match=error):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="v7-schema-reject",
+            message="Replace card 4821.",
+            conversation=[],
+            router_result={
+                **v4_router_guidance(action="execute_tool"),
+                "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+                "decision_accepted": True,
+                "argument_constraints": {"last4": "4821"},
+            },
+        )
+
+
+def test_v7_rejected_effective_decision_exposes_no_tool() -> None:
+    model = RecordingModel(["Which card would you like me to replace?"])
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="v7-rejected",
+        message="Replace that card.",
+        conversation=[],
+        router_result={
+            **v4_router_guidance(action="clarify", entity_resolution="ambiguous"),
+            "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+            "decision_accepted": False,
+            "learned_action": "execute_tool",
+            "learned_entity_resolution": "resolved",
+            "argument_constraints": {},
+            "entity_grounding_source": "live_candidate",
+            "entity_candidate_count": 2,
+        },
+    )
+
+    assert result.tool_calls == ()
+    assert model.calls[0]["tools"] is None
+    diagnostics = router_diagnostic_fields(
+        {
+            **v4_router_guidance(action="clarify", entity_resolution="ambiguous"),
+            "effective_decision_contract": "retail-bank-effective-turn-decision/v1",
+            "decision_accepted": False,
+            "learned_action": "execute_tool",
+            "learned_entity_resolution": "resolved",
+            "argument_constraints": {},
+            "entity_grounding_source": "live_candidate",
+            "entity_candidate_count": 2,
+        }
+    )
+    assert diagnostics["learned_action"] == "execute_tool"
+    assert diagnostics["effective_action"] == "clarify"
+    assert diagnostics["learned_entity_resolution"] == "resolved"
+    assert diagnostics["effective_entity_resolution"] == "ambiguous"
 
 
 def test_internal_language_leak_gets_one_customer_experience_repair() -> None:

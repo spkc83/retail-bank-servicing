@@ -7,6 +7,7 @@ from typing import Any
 
 STATE_VERSION = 1
 DEFAULT_INTENT_CONFIDENCE = 0.5
+EFFECTIVE_DECISION_CONTRACT = "retail-bank-effective-turn-decision/v1"
 
 SERVICING_TOOLS = {
     "view_accounts": "list_accounts",
@@ -105,13 +106,21 @@ def begin_turn(
     intent = route.get("intent", route.get("fine_intent"))
     confidence = route.get("intent_confidence", route.get("confidence"))
     relations = route.get("active_relations", route.get("relations", ()))
+    is_effective_decision = route.get("effective_decision_contract") == EFFECTIVE_DECISION_CONTRACT
+    decision_accepted = route.get("decision_accepted") is True
 
     if (
         route_name != "in_domain"
         or not isinstance(intent, str)
-        or isinstance(confidence, bool)
-        or not isinstance(confidence, int | float)
-        or float(confidence) < confidence_threshold
+        or (is_effective_decision and not decision_accepted)
+        or (
+            not is_effective_decision
+            and (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, int | float)
+                or float(confidence) < confidence_threshold
+            )
+        )
     ):
         return TransitionResult(state=state, lane="unchanged")
 

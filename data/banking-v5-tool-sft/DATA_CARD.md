@@ -23,7 +23,7 @@ tool-using model.
 - Train: 841
 - Validation: 179
 - Test: 180
-- Corpus fingerprint: `6e24a3ded9c98c01fae4e01e87a7854e8e7e22cb71d1406378ef815abd9f23c1`
+- Corpus fingerprint: `b9764177398118f5f5dea285a05636a7844e66716d6e86c804ee9e341213e23d`
 - Split seed: `711`
 
 ## Coverage
@@ -31,7 +31,7 @@ tool-using model.
 The corpus covers all nine public synthetic-bank tools, successful and failed
 tool results, clarification, general banking FAQ, hard-negative private-field
 requests, out-of-domain refusal, and multi-turn context. Train and validation
-rows carry a `banking-v6-route-to-generation/v1` generation contract: an
+rows carry a `banking-v7-route-to-generation/v1` generation contract: an
 `execute_tool` row exposes exactly one compatible tool schema, while
 clarification, conversation, policy, and refusal rows expose no tools. The
 contract metadata itself is not rendered into the model input.

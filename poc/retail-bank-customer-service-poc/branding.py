@@ -20,9 +20,24 @@ GRADIO_CSS = """
   --harbor-ink: #163042;
 }
 .gradio-container {
-  max-width: 1220px !important;
+  max-width: 1680px !important;
+  margin: 0 auto;
   color: var(--harbor-ink);
   background: #f7fafb;
+}
+.harbor-layout { align-items: flex-start; flex-wrap: nowrap; }
+.harbor-sidebar { min-width: 300px; }
+.harbor-main { min-width: 720px; }
+.harbor-chat .message.bot table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.harbor-chat .message.bot th,
+.harbor-chat .message.bot td {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 .harbor-header {
   border-radius: 18px;
@@ -48,6 +63,10 @@ GRADIO_CSS = """
 .profile-card h3 { color: var(--harbor-navy); }
 .status-ok { color: var(--harbor-teal); font-weight: 700; }
 .primary { background: var(--harbor-teal) !important; }
+@media (max-width: 900px) {
+  .harbor-layout { flex-direction: column; }
+  .harbor-layout > * { width: 100%; min-width: 0; }
+}
 """
 
 STREAMLIT_CSS = """
@@ -66,6 +85,17 @@ h1, h2, h3 { color: var(--harbor-navy); }
 }
 .harbor-kicker { color: var(--harbor-teal); font-weight: 700; letter-spacing: .02em; }
 .prototype-notice { color: #607684; font-size: .82rem; margin: -.35rem 0 1.25rem; }
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) th,
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) td {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+}
 </style>
 """
 
