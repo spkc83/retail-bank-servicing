@@ -20,7 +20,7 @@ ROUTER_REPO_ID = os.environ.get(
 )
 ROUTER_REVISION = os.environ.get(
     "RETAIL_BANK_ROUTER_REVISION",
-    "c0d71b433fd1eef510fce36f6308eb36e423e329",
+    "25176d6b7f46d10812443cb0f8f043e3dbd36f48",
 )
 RELATION_LABELS = (
     "context_dependent",
@@ -198,7 +198,7 @@ class LearnedBankingRouter:
     def from_hub(cls) -> LearnedBankingRouter:
         if not _is_commit(ROUTER_REVISION):
             raise RuntimeError(
-                "RETAIL_BANK_ROUTER_REVISION must pin the published V6 router commit"
+                "RETAIL_BANK_ROUTER_REVISION must pin the published V7 router commit"
             )
         root = Path(snapshot_download(ROUTER_REPO_ID, revision=ROUTER_REVISION))
         return cls.from_artifact_dir(

@@ -88,6 +88,7 @@ hf jobs uv run \
   --model-revision "$model_revision" \
   --dataset-repo "$dataset_repo" \
   --dataset-revision "$dataset_revision" \
+  --evaluation-targets test granite-v7-shadow screenshot-regression \
   --dtype "$dtype" \
   "${peft_args[@]}" \
   --output-dir "/data/retail-bank-agent-eval-${model_revision:0:8}-${dataset_revision:0:8}"

@@ -18,7 +18,7 @@
 # url = "https://download.pytorch.org/whl/cu126"
 # explicit = true
 # ///
-"""Generate read-only banking V5 frozen tool-eval predictions from a merged Hub model."""
+"""Generate read-only frozen and V7 fixture predictions from one pinned banking model."""
 # ruff: noqa: E402
 
 from __future__ import annotations
@@ -55,7 +55,11 @@ from hello_slm.banking_tool_eval import (
     load_predictions_jsonl,
     release_gate_failures,
 )
-from hello_slm.banking_tool_sft_data import generation_contract_for_record, public_tool_manifest
+from hello_slm.banking_tool_sft_data import (
+    SYSTEM_PROMPT,
+    generation_contract_for_record,
+    public_tool_manifest,
+)
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.config import canonical_json_bytes
 
@@ -69,6 +73,20 @@ DEFAULT_FAMILY = "granite"
 REVISION_HEX_LENGTH = 40
 
 PUBLIC_BANKING_TOOL_MANIFEST: tuple[dict[str, Any], ...] = tuple(public_tool_manifest())
+FIXTURE_TARGETS: dict[str, dict[str, Any]] = {
+    "granite-v7-shadow": {
+        "section": "behavioral_gates",
+        "allowed_use": ["checkpoint-selection", "generalization-evaluation"],
+        "gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
+        "record_count": 13,
+    },
+    "screenshot-regression": {
+        "section": "evaluation_fixtures",
+        "allowed_use": ["regression-evaluation"],
+        "gate_contract": "banking-v7-screenshot-regression/v1",
+        "record_count": 9,
+    },
+}
 
 
 class ToolEvalGenerationError(ValueError):
@@ -200,6 +218,8 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
     if is_counterfactual:
         validate_counterfactual_manifest(manifest_path)
     records = load_manifest_records(manifest_path, config.split)
+    if config.limit is not None and fixture_gate_contract(records) is not None:
+        raise ToolEvalGenerationError("non-trainable fixture evaluations cannot be limited")
     if config.limit is not None:
         records = records[: config.limit]
     if not records:
@@ -252,7 +272,16 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         adapter=TaggedJsonToolAdapter(template_hash=adapter.template_hash),
         checkpoint_revision=active_model_revision(config),
     )
-    if is_counterfactual:
+    fixture_gate = None
+    target_contract = fixture_gate_contract(records)
+    if target_contract is not None:
+        fixture_gate = build_predicted_e2e_gate(
+            records,
+            read_prediction_rows(output_paths["predictions"]),
+        )
+        gate_contract = target_contract
+        gate_failures = list(fixture_gate["failures"])
+    elif is_counterfactual:
         gate_contract = COUNTERFACTUAL_GATE_CONTRACT
         gate_failures = counterfactual_gate_failures(report, records)
     else:
@@ -278,6 +307,8 @@ def run_eval(config: EvalConfig, backend: GenerationBackend | None = None) -> di
         "failures": gate_failures,
     }
     metadata["oracle_contract_gate"] = build_oracle_contract_gate(records, adapter)
+    if fixture_gate is not None:
+        metadata["predicted_e2e_gate"] = fixture_gate
     write_json(output_paths["metadata"], metadata)
     if config.push_to_hub:
         publish_eval_artifacts(config, output_paths)
@@ -369,6 +400,7 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     base_dir = manifest_path.parent
     paths: list[Path] = []
+    fixture_contract: str | None = None
     if "splits" in manifest and split in manifest["splits"]:
         entry = manifest["splits"][split]
         value = entry["path"] if isinstance(entry, Mapping) else entry
@@ -377,7 +409,11 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
         for entry in manifest["tool_sft"]:
             if entry.get("name") == split and entry.get("included", True):
                 paths.append(resolve_data_path(base_dir, entry["path"]))
-    else:
+    if not paths and split in FIXTURE_TARGETS:
+        entry = validated_fixture_entry(manifest, manifest_path=manifest_path, name=split)
+        paths.append(resolve_data_path(base_dir, entry["path"]))
+        fixture_contract = str(entry["gate_contract"])
+    if not paths:
         raise ToolEvalGenerationError(f"manifest {manifest_path} does not declare split {split!r}")
 
     records: list[dict[str, Any]] = []
@@ -388,7 +424,199 @@ def load_manifest_records(manifest_path: Path, split: str) -> list[dict[str, Any
                     records.append(json.loads(line))
     if not records:
         raise ToolEvalGenerationError(f"manifest split {split!r} is empty")
+    if fixture_contract is not None:
+        entry = validated_fixture_entry(manifest, manifest_path=manifest_path, name=split)
+        if len(records) != int(entry["record_count"]):
+            raise ToolEvalGenerationError(f"{split} record count mismatch")
+        if split == "screenshot-regression":
+            records = [normalize_screenshot_fixture(record) for record in records]
+        for record in records:
+            expected = record.get("expected")
+            if not isinstance(expected, dict):
+                raise ToolEvalGenerationError(f"{split} record is missing expected metadata")
+            expected["fixture_gate_contract"] = fixture_contract
+            metadata = record.get("metadata")
+            if not isinstance(metadata, dict) or metadata.get("trainable") is not False:
+                raise ToolEvalGenerationError(f"{split} records must be non-trainable")
     return records
+
+
+def validated_fixture_entry(
+    manifest: Mapping[str, Any],
+    *,
+    manifest_path: Path,
+    name: str,
+) -> Mapping[str, Any]:
+    spec = FIXTURE_TARGETS[name]
+    entries = manifest.get(spec["section"])
+    matches = (
+        [entry for entry in entries if isinstance(entry, Mapping) and entry.get("name") == name]
+        if isinstance(entries, list)
+        else []
+    )
+    if len(matches) != 1:
+        raise ToolEvalGenerationError(f"manifest must declare exactly one {name} fixture")
+    entry = matches[0]
+    if entry.get("trainable") is not False:
+        raise ToolEvalGenerationError(f"{name} must be non-trainable")
+    if entry.get("allowed_use") != spec["allowed_use"]:
+        raise ToolEvalGenerationError(f"{name} allowed_use mismatch")
+    if entry.get("gate_contract") != spec["gate_contract"]:
+        raise ToolEvalGenerationError(f"{name} gate contract mismatch")
+    declared = Path(str(entry.get("path", "")))
+    if declared.is_absolute():
+        raise ToolEvalGenerationError(f"{name} path must be manifest-relative")
+    path = manifest_path.parent / declared
+    if not path.is_file():
+        raise ToolEvalGenerationError(f"{name} fixture is unavailable: {path}")
+    payload = path.read_bytes()
+    if len(payload) != entry.get("bytes"):
+        raise ToolEvalGenerationError(f"{name} byte count mismatch")
+    if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
+        raise ToolEvalGenerationError(f"{name} SHA256 mismatch")
+    if entry.get("record_count") != spec["record_count"]:
+        raise ToolEvalGenerationError(f"{name} record_count must equal {spec['record_count']}")
+    return entry
+
+
+def normalize_screenshot_fixture(record: Mapping[str, Any]) -> dict[str, Any]:
+    expected_value = record.get("expected")
+    history = record.get("history")
+    current = record.get("current")
+    if (
+        record.get("contract") != "banking-v7-screenshot-regression/v1"
+        or not isinstance(expected_value, Mapping)
+        or not isinstance(history, list)
+        or not isinstance(current, str)
+    ):
+        raise ToolEvalGenerationError("invalid screenshot regression record")
+    if any(
+        not isinstance(message, Mapping)
+        or message.get("role") not in {"user", "assistant"}
+        or not isinstance(message.get("content"), str)
+        for message in history
+    ):
+        raise ToolEvalGenerationError("screenshot history must contain complete text messages")
+    tool_name = expected_value.get("tool_name")
+    constraints = expected_value.get("argument_constraints", {})
+    if not isinstance(constraints, Mapping):
+        raise ToolEvalGenerationError("screenshot argument constraints must be an object")
+    arguments = {
+        str(name): constraint["const"]
+        for name, constraint in constraints.items()
+        if isinstance(constraint, Mapping) and set(constraint) == {"const"}
+    }
+    if len(arguments) != len(constraints):
+        raise ToolEvalGenerationError("screenshot argument constraints must be exact consts")
+    available_tools = {str(tool["function"]["name"]) for tool in PUBLIC_BANKING_TOOL_MANIFEST}
+    if tool_name is not None and str(tool_name) not in available_tools:
+        raise ToolEvalGenerationError(f"unsupported screenshot tool: {tool_name}")
+    if tool_name is None and constraints:
+        raise ToolEvalGenerationError("no-tool screenshot cannot constrain arguments")
+    calls = [] if tool_name is None else [{"name": str(tool_name), "arguments": arguments}]
+    record_id = required_str(record, "record_id")
+    messages = [{"role": "system", "content": SYSTEM_PROMPT, "loss": False}]
+    messages.extend(
+        {"role": str(message["role"]), "content": str(message["content"]), "loss": False}
+        for message in history
+    )
+    messages.append({"role": "user", "content": current, "loss": False})
+    if calls:
+        call_id = f"call_{record_id}_0"
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "loss": True,
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "index": 0,
+                            "type": "function",
+                            "function": calls[0],
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": str(tool_name),
+                    "content": screenshot_tool_result(str(tool_name), arguments),
+                    "loss": False,
+                },
+            ]
+        )
+    response_properties = expected_value.get("response_properties", {})
+    if not isinstance(response_properties, Mapping):
+        raise ToolEvalGenerationError("screenshot response_properties must be an object")
+    if response_properties.get("grounded") is not bool(tool_name):
+        raise ToolEvalGenerationError("screenshot grounded property disagrees with its tool")
+    required_terms = [str(term) for term in response_properties.get("must_include", ())]
+    messages.append(
+        {
+            "role": "assistant",
+            "content": "The grounded response includes " + ", ".join(required_terms) + ".",
+            "loss": True,
+        }
+    )
+    entity_state = str(expected_value.get("entity_state", "not_required"))
+    mode = "execute_tool" if calls else "refuse_ood"
+    return {
+        "schema_version": "banking-tool-sft/v1",
+        "record_id": record_id,
+        "messages": messages,
+        "expected": {
+            "requires_tool": bool(calls),
+            "tool_calls": calls,
+            "grounding_facts": required_terms,
+            "forbidden_facts": [
+                str(term) for term in response_properties.get("must_not_include", ())
+            ],
+            "path": "tool_success" if calls else "ood",
+            "response_properties": dict(response_properties),
+            "generation_contract": {
+                "version": "banking-v7-route-to-generation/v1",
+                "mode": mode,
+                "entity_state": entity_state,
+                "tool_names": [] if tool_name is None else [str(tool_name)],
+                "argument_constraints": dict(constraints),
+            },
+        },
+        "metadata": {
+            **dict(record.get("metadata", {})),
+            "scenario_family": "screenshot_regression",
+            "split": "screenshot-regression",
+            "trainable": False,
+        },
+    }
+
+
+def screenshot_tool_result(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    results: dict[str, Any] = {
+        "list_service_cases": {
+            "service_cases": [
+                {
+                    "case_type": "address_update",
+                    "status": "closed",
+                    "created_at": "2026-06-18T14:00:00Z",
+                }
+            ]
+        },
+        "replace_card": {
+            "card": {"last4": arguments.get("last4"), "status": "replacement_pending"}
+        },
+        "list_transfers": {"transfers": [{"recipient": "River Consulting", "status": "pending"}]},
+        "list_transactions": {
+            "transactions": [
+                {"description": f"Recent transaction {index + 1}"}
+                for index in range(int(arguments.get("limit", 5)))
+            ]
+        },
+    }
+    if name not in results:
+        raise ToolEvalGenerationError(f"unsupported screenshot tool: {name}")
+    return {"ok": True, "result": results[name]}
 
 
 def resolve_data_path(base_dir: Path, value: Any) -> Path:
@@ -731,6 +959,152 @@ def build_oracle_contract_gate(
         "eligible": len(contracted) == len(exact),
         "predicted_e2e_gate_contract": "banking-v7-granite-predicted-e2e-gate/v1",
     }
+
+
+def read_prediction_rows(path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def fixture_gate_contract(records: Sequence[Mapping[str, Any]]) -> str | None:
+    contracts = [
+        expected.get("fixture_gate_contract")
+        if isinstance((expected := record.get("expected")), Mapping)
+        else None
+        for record in records
+    ]
+    if all(contract is None for contract in contracts):
+        return None
+    unique = {str(contract) for contract in contracts if contract is not None}
+    if len(unique) != 1 or any(contract is None for contract in contracts):
+        raise ToolEvalGenerationError("fixture records have inconsistent gate contracts")
+    return unique.pop()
+
+
+def build_predicted_e2e_gate(
+    records: Sequence[Mapping[str, Any]],
+    predictions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    by_id = {str(row.get("record_id", "")): row for row in predictions}
+    metric_names = (
+        "exact_tool_or_no_tool",
+        "exact_arguments",
+        "parse_success",
+        "executable",
+        "grounded_final",
+    )
+    passed_counts = {name: 0 for name in metric_names}
+    record_reports: dict[str, Any] = {}
+    failures: list[str] = []
+    for record in records:
+        record_id = required_str(record, "record_id")
+        expected_calls = expected_tool_calls(record)
+        prediction = by_id.get(record_id)
+        if prediction is None:
+            checks = {name: False for name in metric_names}
+        else:
+            emitted = prediction.get("ordered_emitted_tool_calls")
+            emitted_calls = list(emitted) if isinstance(emitted, list) else []
+            exact_tool = [call.get("name") for call in emitted_calls] == [
+                call["name"] for call in expected_calls
+            ]
+            exact_arguments = emitted_calls == expected_calls
+            pass_reports = prediction.get("pass_reports")
+            parse_success = (
+                isinstance(pass_reports, list)
+                and bool(pass_reports)
+                and all(
+                    isinstance(item, Mapping) and item.get("parse_error") is None
+                    for item in pass_reports
+                )
+                and prediction.get("first_assistant_parse_error") is None
+                and (not expected_calls or prediction.get("grounded_final_parse_error") is None)
+            )
+            final_parsed = (
+                prediction.get("grounded_final_parsed")
+                if expected_calls
+                else prediction.get("first_assistant_parsed")
+            )
+            final_content = (
+                str(final_parsed.get("content", "")) if isinstance(final_parsed, Mapping) else ""
+            )
+            appended = prediction.get("appended_tool_results")
+            appended_count = len(appended) if isinstance(appended, list) else 0
+            executable = (
+                parse_success
+                and exact_arguments
+                and appended_count == len(expected_calls)
+                and prediction.get("stop_reason") == "final_answer"
+                and bool(final_content.strip())
+            )
+            checks = {
+                "exact_tool_or_no_tool": exact_tool,
+                "exact_arguments": exact_arguments,
+                "parse_success": parse_success,
+                "executable": executable,
+                "grounded_final": executable and fixture_grounding_pass(final_content, record),
+            }
+        for name, passed in checks.items():
+            passed_counts[name] += int(passed)
+        failed_checks = [name for name, passed in checks.items() if not passed]
+        if failed_checks:
+            failures.append(f"{record_id}: " + ", ".join(failed_checks))
+        record_reports[record_id] = {**checks, "passed": not failed_checks}
+    total = len(records)
+    metrics = {name: {"passed": passed_counts[name], "total": total} for name in metric_names}
+    return {
+        "contract": "banking-v7-predicted-e2e-gate-report/v1",
+        "target_gate_contract": fixture_gate_contract(records),
+        "record_count": total,
+        "metrics": metrics,
+        "records": record_reports,
+        "eligible": not failures and total > 0,
+        "failures": failures,
+    }
+
+
+def fixture_grounding_pass(content: str, record: Mapping[str, Any]) -> bool:
+    expected = record.get("expected")
+    if not isinstance(expected, Mapping):
+        return False
+    normalized = " ".join(content.lower().split())
+    properties = expected.get("response_properties")
+    if isinstance(properties, Mapping):
+        required = [str(value).lower() for value in properties.get("must_include", ())]
+        forbidden = [str(value).lower() for value in properties.get("must_not_include", ())]
+        return all(value in normalized for value in required) and not any(
+            value in normalized for value in forbidden
+        )
+    facts = [str(value) for value in expected.get("grounding_facts", ())]
+    for fact in facts:
+        if fact.startswith("transactions.limit="):
+            continue
+        if fact == "missing_field=last4":
+            if "last four" not in normalized:
+                return False
+            continue
+        if fact.startswith("error.code="):
+            if not any(marker in normalized for marker in ("could not", "not ", "unchanged")):
+                return False
+            continue
+        if fact.startswith(("ambiguous_field=", "ineligible_selector=")):
+            continue
+        value = fact.split("=", 1)[-1].replace("_", " ").lower()
+        if fact.startswith("case.created_at="):
+            if "2026-06-18" not in normalized or "14:00" not in normalized:
+                return False
+        elif value == "replacement pending":
+            if "replacement" not in normalized or "pending" not in normalized:
+                return False
+        elif value not in normalized:
+            return False
+    path = str(expected.get("path", ""))
+    if path == "clarification" and "last four" not in normalized:
+        return False
+    if path == "retrieval_grounded_policy" and "[policy:" not in content.lower():
+        return False
+    return len(normalized.split()) >= 3
 
 
 class TransformersGenerationBackend:

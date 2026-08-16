@@ -144,6 +144,37 @@ class TwoStepBackend:
         return "Done. I checked your accounts and cards."
 
 
+class ScreenshotFixtureBackend:
+    tokenizer = TemplateTokenizer()
+
+    def generate_text(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_new_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> str:
+        del max_new_tokens, tools
+        tool_messages = [message for message in messages if message.get("role") == "tool"]
+        if tool_messages:
+            return {
+                "list_service_cases": "The address case was created recently.",
+                "replace_card": "Replacement is pending for the card ending in 4821.",
+                "list_transfers": "I found the recent transfer.",
+                "list_transactions": "I found the requested transaction history.",
+            }[tool_messages[-1]["name"]]
+        current = str(messages[-1]["content"]).lower()
+        if "weather" in current:
+            return "I can only help with retail banking requests."
+        if "replace" in current:
+            return '<tool_call>{"name":"replace_card","arguments":{"last4":"4821"}}</tool_call>'
+        if "money i sent" in current:
+            return '<tool_call>{"name":"list_transfers","arguments":{}}</tool_call>'
+        if "transactions" in current:
+            return '<tool_call>{"name":"list_transactions","arguments":{"limit":5}}</tool_call>'
+        return '<tool_call>{"name":"list_service_cases","arguments":{}}</tool_call>'
+
+
 def _tool_record() -> dict[str, Any]:
     return {
         "schema_version": "banking-tool-sft/v1",
@@ -267,6 +298,29 @@ def _write_manifest(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return manifest_path
+
+
+def _perfect_fixture_prediction(record: dict[str, Any]) -> dict[str, Any]:
+    expected_calls = record["expected"]["tool_calls"]
+    final = next(
+        message["content"]
+        for message in reversed(record["messages"])
+        if message["role"] == "assistant" and not message.get("tool_calls")
+    )
+    parsed = {"role": "assistant", "content": final, "tool_calls": []}
+    return {
+        "record_id": record["record_id"],
+        "ordered_emitted_tool_calls": expected_calls,
+        "appended_tool_results": [
+            {"expected_index": index} for index, _call in enumerate(expected_calls)
+        ],
+        "pass_reports": [{"parse_error": None}],
+        "first_assistant_parse_error": None,
+        "first_assistant_parsed": parsed if not expected_calls else {"tool_calls": []},
+        "grounded_final_parse_error": None,
+        "grounded_final_parsed": parsed if expected_calls else None,
+        "stop_reason": "final_answer",
+    }
 
 
 def _config(tmp_path: Path) -> Any:
@@ -780,6 +834,131 @@ def test_local_manifest_accepts_only_matching_sha256_identity(tmp_path: Path) ->
         runner.validate_config(mismatched)
 
 
+def test_named_non_trainable_fixtures_load_with_validated_identity() -> None:
+    manifest = Path("data/banking-servicing-alignment-v5/manifest.json")
+
+    shadow = runner.load_manifest_records(manifest, "granite-v7-shadow")
+    screenshots = runner.load_manifest_records(manifest, "screenshot-regression")
+
+    assert len(shadow) == 13
+    assert len(screenshots) == 9
+    assert all(row["metadata"]["trainable"] is False for row in [*shadow, *screenshots])
+    assert all(row["expected"]["fixture_gate_contract"] for row in screenshots)
+    card = next(row for row in screenshots if row["record_id"] == "screenshot-card-selection")
+    assert card["expected"]["tool_calls"] == [
+        {"name": "replace_card", "arguments": {"last4": "4821"}}
+    ]
+    assert [message["role"] for message in card["messages"][:4]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+
+
+def test_named_fixture_loader_rejects_tampered_manifest_contract(tmp_path: Path) -> None:
+    source = Path("data/banking-servicing-alignment-v5")
+    fixture = tmp_path / "granite-v7-shadow.jsonl"
+    fixture.write_bytes((source / fixture.name).read_bytes())
+    entry = json.loads((source / "manifest.json").read_text())["behavioral_gates"][1]
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"behavioral_gates": [{**entry, "bytes": entry["bytes"] + 1}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(runner.ToolEvalGenerationError, match="byte count mismatch"):
+        runner.load_manifest_records(manifest, "granite-v7-shadow")
+
+
+def test_run_eval_executes_and_enforces_screenshot_fixture_gate(tmp_path: Path) -> None:
+    source = Path("data/banking-servicing-alignment-v5")
+    rows = [
+        json.loads(line)
+        for line in (source / "screenshot-regression.jsonl").read_text().splitlines()
+    ]
+    fixture = tmp_path / "screenshot-regression.jsonl"
+    fixture.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "fixture-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "evaluation_fixtures": [
+                    {
+                        "name": "screenshot-regression",
+                        "path": fixture.name,
+                        "record_count": 9,
+                        "bytes": fixture.stat().st_size,
+                        "sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                        "allowed_use": ["regression-evaluation"],
+                        "trainable": False,
+                        "gate_contract": "banking-v7-screenshot-regression/v1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = _config(tmp_path)
+    config = runner.EvalConfig(
+        **{
+            **base.__dict__,
+            "manifest": manifest,
+            "split": "screenshot-regression",
+            "enforce_release_gates": True,
+        }
+    )
+
+    metadata = runner.run_eval(config, backend=ScreenshotFixtureBackend())
+
+    assert metadata["predicted_e2e_gate"]["eligible"] is True
+    assert metadata["release_gate"] == {
+        "contract": "banking-v7-screenshot-regression/v1",
+        "enforced": True,
+        "eligible": True,
+        "failures": [],
+    }
+
+    limited = runner.EvalConfig(**{**config.__dict__, "limit": 1})
+    with pytest.raises(runner.ToolEvalGenerationError, match="cannot be limited"):
+        runner.run_eval(limited, backend=ScreenshotFixtureBackend())
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_count"),
+    (("granite-v7-shadow", 13), ("screenshot-regression", 9)),
+)
+def test_predicted_e2e_gate_uses_fixture_record_count(
+    target: str,
+    expected_count: int,
+) -> None:
+    records = runner.load_manifest_records(
+        Path("data/banking-servicing-alignment-v5/manifest.json"), target
+    )
+    predictions = [_perfect_fixture_prediction(record) for record in records]
+
+    gate = runner.build_predicted_e2e_gate(records, predictions)
+
+    assert gate["record_count"] == expected_count
+    assert gate["metrics"] == {
+        "exact_tool_or_no_tool": {"passed": expected_count, "total": expected_count},
+        "exact_arguments": {"passed": expected_count, "total": expected_count},
+        "parse_success": {"passed": expected_count, "total": expected_count},
+        "executable": {"passed": expected_count, "total": expected_count},
+        "grounded_final": {"passed": expected_count, "total": expected_count},
+    }
+    assert gate["eligible"] is True
+    assert gate["failures"] == []
+
+    predictions[0]["ordered_emitted_tool_calls"] = [{"name": "list_cards", "arguments": {}}]
+    failed = runner.build_predicted_e2e_gate(records, predictions)
+    assert failed["eligible"] is False
+    assert failed["records"][records[0]["record_id"]]["passed"] is False
+
+
 def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:
     job = _load_module(JOB_PATH, "hf_job_tool_eval")
     source = JOB_PATH.read_text(encoding="utf-8")
@@ -795,6 +974,9 @@ def test_hf_job_requires_exact_revisions_and_invokes_eval_runner() -> None:
     assert '"peft==0.18.1"' in source
     assert 'parser.add_argument("--base-model-revision", default=BASE_MODEL_REVISION)' in source
     assert 'parser.add_argument("--adapter-revision", default=MODEL_REVISION)' in source
+    assert "EVALUATION_TARGETS" in source
+    assert "for evaluation_target in args.evaluation_targets:" in source
+    assert '"--split",' in source
     assert '"--model-revision",' in source
     assert '"--dataset-revision",' in source
     assert '"--push-to-hub",' in source
@@ -824,3 +1006,4 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert "cc95e446af2b5e1d8d9df2751a8192613ad386e3" in source
     assert '--base-model-revision "$base_model_revision"' in source
     assert '--adapter-revision "$adapter_revision"' in source
+    assert "--evaluation-targets test granite-v7-shadow screenshot-regression" in source

@@ -10,7 +10,7 @@
 #   "transformers==5.13.0",
 # ]
 # ///
-"""Bootstrap pinned banking V5 frozen tool evaluation inside a Hugging Face GPU Job."""
+"""Bootstrap pinned frozen and V7 fixture evaluation inside a Hugging Face GPU Job."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ MODEL_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
 BASE_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
 BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
+EVALUATION_TARGETS = ("test", "granite-v7-shadow", "screenshot-regression")
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens-first", type=int, default=192)
     parser.add_argument("--max-new-tokens-final", type=int, default=220)
     parser.add_argument("--dtype", choices=("fp16", "bf16"), default="bf16")
+    parser.add_argument(
+        "--evaluation-targets",
+        nargs="+",
+        choices=EVALUATION_TARGETS,
+        default=list(EVALUATION_TARGETS),
+    )
     return parser.parse_args()
 
 
@@ -108,42 +115,45 @@ def main() -> int:
             "RETAIL_BANK_TOOL_EVAL_DATASET_REPO": args.dataset_repo,
             "RETAIL_BANK_TOOL_EVAL_DATASET_REVISION": args.dataset_revision,
         }
-        command = [
-            sys.executable,
-            str(source_root / "scripts/retail_bank/cloud_generate_tool_eval.py"),
-            "--model-repo",
-            args.model_repo,
-            "--model-revision",
-            args.model_revision,
-            "--dataset-repo",
-            args.dataset_repo,
-            "--dataset-revision",
-            args.dataset_revision,
-            "--output-dir",
-            args.output_dir,
-            "--max-new-tokens-first",
-            str(args.max_new_tokens_first),
-            "--max-new-tokens-final",
-            str(args.max_new_tokens_final),
-            "--dtype",
-            args.dtype,
-            "--push-to-hub",
-            "--enforce-release-gates",
-        ]
-        if args.adapter_repo:
-            command.extend(
-                [
-                    "--base-model-repo",
-                    args.base_model_repo,
-                    "--base-model-revision",
-                    args.base_model_revision,
-                    "--adapter-repo",
-                    args.adapter_repo,
-                    "--adapter-revision",
-                    args.adapter_revision,
-                ]
-            )
-        subprocess.run(command, cwd=source_root, env=env, check=True)
+        for evaluation_target in args.evaluation_targets:
+            command = [
+                sys.executable,
+                str(source_root / "scripts/retail_bank/cloud_generate_tool_eval.py"),
+                "--model-repo",
+                args.model_repo,
+                "--model-revision",
+                args.model_revision,
+                "--dataset-repo",
+                args.dataset_repo,
+                "--dataset-revision",
+                args.dataset_revision,
+                "--output-dir",
+                args.output_dir,
+                "--split",
+                evaluation_target,
+                "--max-new-tokens-first",
+                str(args.max_new_tokens_first),
+                "--max-new-tokens-final",
+                str(args.max_new_tokens_final),
+                "--dtype",
+                args.dtype,
+                "--push-to-hub",
+                "--enforce-release-gates",
+            ]
+            if args.adapter_repo:
+                command.extend(
+                    [
+                        "--base-model-repo",
+                        args.base_model_repo,
+                        "--base-model-revision",
+                        args.base_model_revision,
+                        "--adapter-repo",
+                        args.adapter_repo,
+                        "--adapter-revision",
+                        args.adapter_revision,
+                    ]
+                )
+            subprocess.run(command, cwd=source_root, env=env, check=True)
     return 0
 
 

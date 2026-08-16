@@ -91,7 +91,9 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
     )
 
     assert api.upload is not None
-    assert "delete_patterns" not in api.upload
+    assert api.upload["allow_patterns"] == deploy_module.ALLOW_PATTERNS
+    assert api.upload["ignore_patterns"] == deploy_module.IGNORE_PATTERNS
+    assert api.upload["delete_patterns"] == [".mypy_cache/**"]
     assert api.variables == {
         "RETAIL_BANK_MODEL_ID": "spkc83/model",
         "RETAIL_BANK_MODEL_REVISION": MODEL_REVISION,
@@ -106,6 +108,12 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
     }
     assert api.waited == "spkc83/test-space"
     assert result["runtime_stage"] == "RUNNING"
+
+
+def test_plan_limits_remote_cleanup_to_known_stale_mypy_cache(tmp_path: Path) -> None:
+    deployment_plan = deploy_module.plan(_args(tmp_path))
+
+    assert deployment_plan["delete_patterns"] == [".mypy_cache/**"]
 
 
 def test_deploy_requires_both_explicit_guards(tmp_path: Path) -> None:

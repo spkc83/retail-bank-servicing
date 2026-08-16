@@ -208,6 +208,16 @@ execution path uploads only allowlisted files and stores immutable pins as
 Space variables. Treat the deployment as complete only after the Hub reports
 `RUNNING` and an authenticated remote chat smoke test succeeds.
 
+Plan or run the nine isolated screenshot-regression turns with the existing
+`alex.demo` Space credential (the password is read from the environment and is
+never included in the report):
+
+```bash
+RETAIL_BANK_DEMO_PASSWORD='existing-static-password' PYTHONPATH=src \
+  uv run python scripts/retail_bank/smoke_zero_gpu_space.py \
+  --space-id spkc83/retail-bank-servicing-poc --execute
+```
+
 ## Reset and Test
 
 **Reset demo** or **Start over** clears visible/internal conversation, pending

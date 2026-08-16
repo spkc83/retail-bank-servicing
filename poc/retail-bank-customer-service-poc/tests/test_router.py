@@ -28,7 +28,7 @@ from router import (
 
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "c0d71b433fd1eef510fce36f6308eb36e423e329"
+    assert ROUTER_REVISION == "25176d6b7f46d10812443cb0f8f043e3dbd36f48"
 
 
 def test_explicit_topic_repair_relation_closure_matches_runtime_contract() -> None:

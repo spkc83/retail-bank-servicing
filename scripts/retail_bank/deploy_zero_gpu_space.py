@@ -25,6 +25,7 @@ IGNORE_PATTERNS = [
     "**/__pycache__/**",
     "**/*.pyc",
 ]
+DELETE_PATTERNS = [".mypy_cache/**"]
 
 
 class DeployError(ValueError):
@@ -115,6 +116,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
         "source_dir": str(args.source_dir),
         "allow_patterns": ALLOW_PATTERNS,
         "ignore_patterns": IGNORE_PATTERNS,
+        "delete_patterns": DELETE_PATTERNS,
         "runtime_pins": runtime_pins(args),
     }
 
@@ -130,6 +132,7 @@ def deploy(args: argparse.Namespace, api: Any) -> dict[str, Any]:
         path_in_repo=".",
         allow_patterns=ALLOW_PATTERNS,
         ignore_patterns=IGNORE_PATTERNS,
+        delete_patterns=DELETE_PATTERNS,
         commit_message="Deploy pinned retail-bank servicing POC",
         token=args.token,
     )
