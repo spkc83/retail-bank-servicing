@@ -5,6 +5,7 @@
 #   "accelerate==1.12.0",
 #   "bitsandbytes==0.50.0",
 #   "huggingface-hub==1.22.0",
+#   "peft==0.18.1",
 #   "safetensors==0.8.0",
 #   "streamlit==1.48.0",
 #   "torch==2.12.1",
