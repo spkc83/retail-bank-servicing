@@ -2,9 +2,9 @@
   "alignment_generation_contract_counts": {
     "test": {},
     "train": {
-      "clarify": 356,
+      "clarify": 452,
       "converse": 13,
-      "execute_tool": 920,
+      "execute_tool": 1016,
       "refuse_ood": 32,
       "retrieve_policy": 33
     },
@@ -18,7 +18,7 @@
   },
   "alignment_split_counts": {
     "test": 35,
-    "train": 1354,
+    "train": 1546,
     "validation": 218
   },
   "base_manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
@@ -30,7 +30,7 @@
   "contract": "banking-servicing-alignment-sft-report",
   "coreference_pair_counts": {
     "test": 0,
-    "train": 320,
+    "train": 416,
     "validation": 16
   },
   "created_at": "2026-07-31T00:00:00Z",
@@ -38,9 +38,9 @@
   "generation_contract_counts": {
     "test": {},
     "train": {
-      "clarify": 392,
+      "clarify": 488,
       "converse": 178,
-      "execute_tool": 1319,
+      "execute_tool": 1415,
       "refuse_ood": 58,
       "retrieve_policy": 248
     },
@@ -62,9 +62,9 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "clarification": 356,
+      "clarification": 452,
       "conversation": 13,
-      "multi_turn": 768,
+      "multi_turn": 864,
       "ood": 32,
       "retrieval_grounded_policy": 33,
       "tool_error": 65,
@@ -96,8 +96,8 @@
       "banking_topic_shift": 32,
       "card_anaphora_action": 64,
       "clarification_answer": 64,
-      "deictic_replace_action": 320,
-      "deictic_replace_ambiguity": 320,
+      "deictic_replace_action": 416,
+      "deictic_replace_ambiguity": 416,
       "external_topic_shift": 32,
       "history_entity_action": 128,
       "history_entity_ambiguity": 32,
@@ -142,7 +142,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 2195,
+    "train": 2387,
     "validation": 397
   }
 }
