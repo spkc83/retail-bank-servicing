@@ -28,6 +28,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
 from hello_slm.banking_tool_sft_data import public_tool_manifest
 from hello_slm.banking_tool_wire import IGNORED_LABEL, ToolWireAdapter
 
@@ -432,9 +433,7 @@ def tokenize_records(
     selected = records[:limit] if limit is not None else records
     examples: list[dict[str, Tensor]] = []
     for record in selected:
-        messages = record.get("messages")
-        if not isinstance(messages, list):
-            raise ValueError("record missing messages list")
+        messages = messages_with_record_turn_guidance(record)
         rendered = adapter.render_training(
             messages,
             max_seq_len=max_seq_len,

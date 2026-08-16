@@ -519,7 +519,9 @@ def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:
 
     assert result.tool_calls == ()
     assert model.calls[0]["tools"] is None
-    assert "classifier abstained" in model.calls[0]["messages"][0]["content"]
+    prompt = model.calls[0]["messages"][0]["content"]
+    assert "clarification question" in prompt
+    assert all(term not in prompt.lower() for term in ("classifier", "logit", "label"))
 
 
 def test_v7_grounded_write_exposes_required_exact_selector_schema() -> None:

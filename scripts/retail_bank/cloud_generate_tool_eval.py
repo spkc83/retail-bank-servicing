@@ -48,6 +48,7 @@ from hello_slm.banking_counterfactual_eval_data import (
     counterfactual_gate_failures,
     validate_counterfactual_manifest,
 )
+from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
 from hello_slm.banking_tool_eval import (
     StaticPredictionModel,
     TaggedJsonToolAdapter,
@@ -625,7 +626,7 @@ def resolve_data_path(base_dir: Path, value: Any) -> Path:
 
 
 def first_phase_messages(record: Mapping[str, Any]) -> list[dict[str, Any]]:
-    messages = messages_list(record)
+    messages = messages_with_record_turn_guidance(record)
     if expected_requires_tool(record):
         for index, message in enumerate(messages):
             if (
@@ -642,7 +643,7 @@ def first_phase_messages(record: Mapping[str, Any]) -> list[dict[str, Any]]:
 def grounded_final_phase_messages(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     if not expected_requires_tool(record):
         raise ToolEvalGenerationError("grounded final phase requires a tool record")
-    messages = messages_list(record)
+    messages = messages_with_record_turn_guidance(record)
     final_index = final_assistant_index(record)
     prefix = messages[:final_index]
     if not any(message.get("role") == "tool" for message in prefix):

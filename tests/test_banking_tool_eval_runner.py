@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from hello_slm.banking_generation_guidance import render_turn_guidance
+
 RUNNER_PATH = Path("scripts/retail_bank/cloud_generate_tool_eval.py")
 JOB_PATH = Path("scripts/retail_bank/hf_job_tool_eval.py")
 LAUNCHER_PATH = Path("scripts/retail_bank/run_remote_tool_eval_job.sh")
@@ -298,6 +300,17 @@ def _write_manifest(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return manifest_path
+
+
+def test_first_phase_messages_uses_the_same_generation_contract_guidance() -> None:
+    record = _tool_record()
+
+    messages = runner.first_phase_messages(record)
+
+    assert messages[0]["content"].endswith(
+        "TURN GUIDANCE: "
+        + render_turn_guidance(record["expected"]["generation_contract"])
+    )
 
 
 def _perfect_fixture_prediction(record: dict[str, Any]) -> dict[str, Any]:

@@ -179,6 +179,32 @@ def test_v7_generation_contract_selects_exact_one_or_no_tool_schema_with_legacy_
     assert worker.training_tools_for_record(base, adapter) is None
 
 
+def test_v7_tokenization_renders_generation_contract_guidance() -> None:
+    tokenizer = worker.SimpleToolTokenizer()
+    adapter = worker.ToolWireAdapter(
+        tokenizer,
+        family="granite",
+        public_tool_manifest=worker.PUBLIC_BANKING_TOOL_MANIFEST,
+    )
+    record = worker.tiny_smoke_records()[0]
+    record["messages"].insert(
+        0, {"role": "system", "content": "Banking system", "loss": False}
+    )
+    record["expected"] = {
+        "generation_contract": {
+            "mode": "execute_tool",
+            "entity_state": "resolved",
+            "tool_names": ["freeze_card"],
+            "argument_constraints": {"last4": {"const": "4821"}},
+        }
+    }
+
+    rendered = worker.tokenize_records([record], adapter, max_seq_len=1024)
+
+    decoded = tokenizer.decode(rendered[0]["input_ids"])
+    assert "TURN GUIDANCE: Use only freeze_card for this turn" in decoded
+
+
 def test_v6_generation_contract_rejects_unknown_training_tool() -> None:
     adapter = worker.ToolWireAdapter(
         worker.SimpleToolTokenizer(),

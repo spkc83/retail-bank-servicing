@@ -984,6 +984,75 @@ def _system_message(
     }
 
 
+def _render_turn_guidance(contract: dict[str, Any]) -> str:
+    """Standalone copy of the public V7 model-facing guidance contract."""
+
+    mode = contract.get("mode")
+    entity_state = contract.get("entity_state")
+    tool_names = contract.get("tool_names")
+    constraints = contract.get("argument_constraints")
+    valid_modes = {"execute_tool", "clarify", "converse", "retrieve_policy", "refuse_ood"}
+    valid_states = {"resolved", "missing", "ambiguous", "ineligible", "not_required"}
+    if mode not in valid_modes:
+        raise ValueError(f"unsupported generation mode: {mode!r}")
+    if entity_state not in valid_states:
+        raise ValueError(f"unsupported entity state: {entity_state!r}")
+    if not isinstance(tool_names, list | tuple):
+        raise ValueError("generation contract tool_names must be a sequence")
+    names = tuple(str(name) for name in tool_names)
+    if len(names) != len(set(names)) or len(names) > 1:
+        raise ValueError("generation contract must expose exactly one or no tools")
+    if not isinstance(constraints, dict):
+        raise ValueError("generation contract argument_constraints must be an object")
+    if mode == "execute_tool":
+        if len(names) != 1 or entity_state not in {"resolved", "not_required"}:
+            raise ValueError("execute_tool requires one tool and an executable entity state")
+        argument_instruction = (
+            "Emit every required argument exactly as constrained by the exposed schema; "
+            "do not omit, infer, or alter it."
+            if constraints
+            else "Choose every argument from the conversation; this guidance supplies no "
+            "tool arguments."
+        )
+        return (
+            f"Use only {names[0]} for this turn. Call it when the conversation supplies "
+            "the selectors its schema requires; otherwise ask one concise, natural "
+            f"clarification question. {argument_instruction}"
+        )
+    if names or constraints:
+        raise ValueError(f"{mode} cannot expose tools or argument constraints")
+    if mode == "clarify":
+        detail = {
+            "missing": "supply the missing banking detail",
+            "ambiguous": "distinguish which banking item or event they mean",
+            "ineligible": "choose an eligible banking item",
+        }.get(str(entity_state))
+        if detail is None:
+            raise ValueError("clarify requires a missing, ambiguous, or ineligible entity state")
+        return (
+            f"Ask exactly one concise, natural clarification question that helps the customer "
+            f"{detail}. Do not claim that an action was completed."
+        )
+    if entity_state != "not_required":
+        raise ValueError(f"{mode} requires entity_state='not_required'")
+    if mode == "converse":
+        return (
+            "Respond naturally and concisely without looking up customer records or performing "
+            "a banking action. Never infer distress, trouble, or a failed banking event from a "
+            "neutral greeting or social message."
+        )
+    if mode == "retrieve_policy":
+        return (
+            "Answer the banking policy question naturally and concisely without calling a "
+            "customer-record tool. After the answer, resume the prior servicing task only when "
+            "the conversation supports it."
+        )
+    return (
+        "Explain concisely that you can only help with retail banking and financial-services "
+        "questions. Do not call a banking tool or claim that an action was completed."
+    )
+
+
 def _generation_plan(
     router_result: dict[str, Any],
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -992,69 +1061,86 @@ def _generation_plan(
         return system, MODEL_TOOLS
 
     if router_result.get("route") != "in_domain":
+        mode = (
+            "refuse_ood"
+            if router_result.get("action") == "refuse_ood"
+            or router_result.get("route") == "out_of_domain"
+            else "clarify"
+        )
+        guidance = _render_turn_guidance(
+            {
+                "mode": mode,
+                "entity_state": "not_required" if mode == "refuse_ood" else "missing",
+                "tool_names": [],
+                "argument_constraints": {},
+            }
+        )
         return {
             "role": "system",
-            "content": (
-                f"{system['content']}\n\nTURN GUIDANCE: Ask one concise, natural "
-                "clarification question. Do not call a banking tool or claim that an "
-                "action was completed because the classifier abstained on this turn."
-            ),
+            "content": f"{system['content']}\n\nTURN GUIDANCE: {guidance}",
         }, []
 
     action = router_result.get("action")
     entity_resolution = router_result.get("entity_resolution")
     intent = router_result.get("fine_intent", router_result.get("intent"))
     blocked_entity = entity_resolution in {"missing", "ambiguous", "ineligible"}
-    instruction: str
+    contract: dict[str, Any]
     tools: list[dict[str, Any]] = []
 
     if blocked_entity or action == "clarify":
-        instruction = (
-            "Ask exactly one concise, natural clarification question that helps the "
-            "customer supply or distinguish the missing banking detail. Do not claim "
-            "that an action was completed."
-        )
+        contract = {
+            "mode": "clarify",
+            "entity_state": entity_resolution,
+            "tool_names": [],
+            "argument_constraints": {},
+        }
     elif action == "execute_tool" and isinstance(intent, str):
         tool_name = SERVICING_TOOLS.get(intent)
         if tool_name is None:
-            instruction = (
-                "Ask one concise, natural clarification question because no supported "
-                "banking action is available for the predicted request."
-            )
+            contract = {
+                "mode": "clarify",
+                "entity_state": "missing",
+                "tool_names": [],
+                "argument_constraints": {},
+            }
         else:
             tools = [tool for tool in MODEL_TOOLS if tool["function"]["name"] == tool_name]
             constraints = router_result.get("argument_constraints")
             if isinstance(constraints, dict) and constraints:
                 tools = [_narrow_tool_schema(tools[0], constraints)]
-                argument_instruction = (
-                    "Emit every required argument exactly as constrained by the exposed "
-                    "schema; do not omit, infer, or alter it."
-                )
             else:
-                argument_instruction = (
-                    "Choose every argument from the conversation; this guidance supplies "
-                    "no tool arguments."
-                )
-            instruction = (
-                f"Use only {tool_name} for this turn. Call it when the conversation "
-                "supplies the selectors its schema requires; otherwise ask one concise, "
-                f"natural clarification question. {argument_instruction}"
-            )
+                constraints = {}
+            contract = {
+                "mode": "execute_tool",
+                "entity_state": entity_resolution,
+                "tool_names": [tool_name],
+                "argument_constraints": constraints,
+            }
     elif action == "converse":
-        instruction = (
-            "Respond naturally and concisely without looking up customer records or "
-            "performing a banking action. Never infer distress, trouble, or a failed "
-            "banking event from a neutral greeting or social message."
-        )
+        contract = {
+            "mode": "converse",
+            "entity_state": "not_required",
+            "tool_names": [],
+            "argument_constraints": {},
+        }
+    elif action == "retrieve_policy":
+        contract = {
+            "mode": "retrieve_policy",
+            "entity_state": "not_required",
+            "tool_names": [],
+            "argument_constraints": {},
+        }
     else:
-        instruction = (
-            "Respond naturally without calling a banking tool. Ask one concise "
-            "clarification question if the customer's request is not yet clear."
-        )
+        contract = {
+            "mode": "clarify",
+            "entity_state": "missing",
+            "tool_names": [],
+            "argument_constraints": {},
+        }
 
     return {
         "role": "system",
-        "content": f"{system['content']}\n\nTURN GUIDANCE: {instruction}",
+        "content": f"{system['content']}\n\nTURN GUIDANCE: {_render_turn_guidance(contract)}",
     }, tools
 
 
