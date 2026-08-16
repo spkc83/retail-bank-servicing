@@ -508,6 +508,7 @@ def test_continuation_behavioral_generation_uses_per_record_tool_contract() -> N
     )[0]
 
     assert "tools=training_tools_for_record(record, adapter)" in behavior_body
+    assert "messages_with_record_turn_guidance(record)" in behavior_body
 
 
 def test_continuation_contract_resolution_matches_training_with_legacy_fallback() -> None:
@@ -534,7 +535,12 @@ def test_continuation_contract_resolution_matches_training_with_legacy_fallback(
         }
     }
 
-    assert WORKER.training_tools_for_record(execute, adapter) == [{"name": "freeze_card"}]
+    assert WORKER.training_tools_for_record(execute, adapter) == [
+        {
+            "name": "freeze_card",
+            "parameters": {"properties": {}, "additionalProperties": False},
+        }
+    ]
     assert WORKER.training_tools_for_record(converse, adapter) == []
     assert WORKER.training_tools_for_record({"expected": {}}, adapter) is None
 

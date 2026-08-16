@@ -36,6 +36,7 @@ import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -58,11 +59,13 @@ from cloud_train_tool_sft import (  # type: ignore[import-not-found]
     training_tools_for_record,
 )
 from hello_slm.banking_tool_wire import ToolWireAdapter
+from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
 from hello_slm.banking_tool_sft_data import validate_banking_tool_sft_manifest
 
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_CONTINUATION_SFT"
 REMOTE_CONFIRMATION_VALUE = "banking-v6-generation-contract-peft"
 V6_CONTINUATION_PROTOCOL = "retail-bank-peft-v6-generation-contract/v1"
+V7_CHECKPOINT_CORRECTION_PROTOCOL = "retail-bank-peft-v7-checkpoint-correction/v1"
 DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
 ADAPTER_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation"
 BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
@@ -77,6 +80,22 @@ DEFAULT_PROBE_CHECKPOINT_DIR = (
 DEFAULT_PROBE_CHECKPOINT_STEP = 600
 V6_TRAINING_SEED = 20_260_815
 CANDIDATE3_PROBE_DATASET_REVISION = "715064e50e7ed2f815dfd3ce19b61f345a466b9d"
+V7_TRAINING_SOURCE_COMMIT = "0bb83262981e16fa85ad3a411ecd1be6ddbf0b88"
+V7_DATASET_REVISION = "7b58aa748d69bf56d9b32eb65989b8c07e04f835"
+V7_FAILED_JOB_ID = "6a813914c97db76cbdf32acc"
+V7_FAILED_OUTPUT_ROOT = Path(
+    "/data/retail-bank-agent-9b-peft-v6-generation-contract-0bb83262-d965816b-7b58aa74"
+)
+V7_DEFAULT_CORRECTION_CHECKPOINT = V7_FAILED_OUTPUT_ROOT / "trainer/checkpoint-964"
+V7_DEFAULT_CORRECTION_STEP = 964
+CORRECTION_SOURCE_FILES = (
+    "adapter_config.json",
+    "adapter_model.safetensors",
+    "chat_template.jinja",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "trainer_state.json",
+)
 ADAPTER_FILES = (
     "adapter_config.json",
     "adapter_model.safetensors",
@@ -128,6 +147,9 @@ class ContinuationConfig:
     push_to_hub: bool
     trackio_project: str | None
     trackio_run_name: str | None
+    correction_checkpoint_dir: Path | None
+    correction_checkpoint_step: int | None
+    correction_provenance: Path | None
 
 
 @dataclass
@@ -187,6 +209,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--push-to-hub", action="store_true")
     parser.add_argument("--trackio-project")
     parser.add_argument("--trackio-run-name")
+    parser.add_argument("--correction-checkpoint-dir")
+    parser.add_argument("--correction-checkpoint-step", type=int)
+    parser.add_argument("--correction-provenance")
     return parser.parse_args(argv)
 
 
@@ -220,6 +245,13 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         push_to_hub=bool(args.push_to_hub),
         trackio_project=args.trackio_project,
         trackio_run_name=args.trackio_run_name,
+        correction_checkpoint_dir=(
+            Path(args.correction_checkpoint_dir) if args.correction_checkpoint_dir else None
+        ),
+        correction_checkpoint_step=args.correction_checkpoint_step,
+        correction_provenance=(
+            Path(args.correction_provenance) if args.correction_provenance else None
+        ),
     )
 
 
@@ -251,6 +283,177 @@ def validate_pinned_model_inputs(config: ContinuationConfig) -> None:
         )
     require_exact_revision(config.source_adapter_revision, field="--source-adapter-revision")
     require_exact_revision(config.base_revision, field="--base-revision")
+    correction_fields = (
+        config.correction_checkpoint_dir,
+        config.correction_checkpoint_step,
+        config.correction_provenance,
+    )
+    if any(value is not None for value in correction_fields) and not all(
+        value is not None for value in correction_fields
+    ):
+        raise RuntimeError(
+            "checkpoint correction requires its directory, expected step, and provenance together"
+        )
+    if config.correction_checkpoint_step is not None and config.correction_checkpoint_step < 1:
+        raise RuntimeError("checkpoint correction step must be positive")
+
+
+def correction_requested(config: ContinuationConfig) -> bool:
+    return config.correction_checkpoint_dir is not None
+
+
+def _parse_job_time(value: object, *, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise RuntimeError(f"{field} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise RuntimeError(f"{field} must be an ISO-8601 timestamp") from error
+    if parsed.tzinfo is None:
+        raise RuntimeError(f"{field} must include a timezone")
+    return parsed
+
+
+def expected_v7_failed_job_command() -> list[str]:
+    return [
+        "uv",
+        "run",
+        (
+            "https://raw.githubusercontent.com/spkc83/retail-bank-servicing/"
+            f"{V7_TRAINING_SOURCE_COMMIT}/scripts/retail_bank/hf_job_continue_tool_sft.py"
+        ),
+        "--source-commit",
+        V7_TRAINING_SOURCE_COMMIT,
+        "--dataset-revision",
+        V7_DATASET_REVISION,
+        "--source-adapter-repo",
+        ADAPTER_REPO,
+        "--source-adapter-revision",
+        DEFAULT_SOURCE_ADAPTER_REVISION,
+        "--destination-repo",
+        "spkc83/retail-bank-servicing-agent-9b-peft-v7-grounded-generation",
+        "--output-dir",
+        str(V7_FAILED_OUTPUT_ROOT),
+        "--max-steps",
+        "964",
+    ]
+
+
+def validate_bf16_adapter_weights(path: Path) -> list[str]:
+    from safetensors import safe_open  # type: ignore[import-not-found]
+
+    tensor_path = path / "adapter_model.safetensors"
+    with safe_open(tensor_path, framework="pt", device="cpu") as weights:
+        names = list(weights.keys())
+        non_bf16 = [name for name in names if weights.get_slice(name).get_dtype() != "BF16"]
+    if not names:
+        raise RuntimeError("checkpoint adapter contains no tensors")
+    if non_bf16:
+        raise RuntimeError(f"checkpoint adapter contains non-BF16 tensors: {non_bf16[:5]}")
+    return names
+
+
+def validate_checkpoint_correction_source(config: ContinuationConfig) -> dict[str, Any]:
+    if (
+        config.correction_checkpoint_dir is None
+        or config.correction_checkpoint_step is None
+        or config.correction_provenance is None
+    ):
+        raise RuntimeError("checkpoint correction provenance is incomplete")
+    checkpoint = config.correction_checkpoint_dir.resolve()
+    expected_root = V7_FAILED_OUTPUT_ROOT.resolve()
+    if checkpoint.parent != expected_root / "trainer":
+        raise RuntimeError(
+            "checkpoint correction source is outside the exact failed V7 trainer root"
+        )
+    if checkpoint.name != f"checkpoint-{config.correction_checkpoint_step}":
+        raise RuntimeError("checkpoint correction directory does not match its expected step")
+    missing = [name for name in CORRECTION_SOURCE_FILES if not (checkpoint / name).is_file()]
+    if missing:
+        raise RuntimeError(f"checkpoint correction source is missing required files: {missing}")
+
+    provenance = read_json(config.correction_provenance)
+    if provenance.get("contract") != V7_CHECKPOINT_CORRECTION_PROTOCOL:
+        raise RuntimeError("checkpoint correction provenance contract mismatch")
+    identity = provenance.get("training_identity")
+    expected_identity = {
+        "training_source_commit": V7_TRAINING_SOURCE_COMMIT,
+        "dataset_repository": DATASET_REPO,
+        "dataset_revision": V7_DATASET_REVISION,
+        "parent_adapter_repository": ADAPTER_REPO,
+        "parent_adapter_revision": DEFAULT_SOURCE_ADAPTER_REVISION,
+        "base_model": BASE_MODEL,
+        "base_revision": BASE_REVISION,
+    }
+    if identity != expected_identity:
+        raise RuntimeError("checkpoint correction training identity mismatch")
+
+    job = provenance.get("inspected_job")
+    if not isinstance(job, Mapping):
+        raise RuntimeError("checkpoint correction provenance is missing inspected job data")
+    if (
+        job.get("id") != V7_FAILED_JOB_ID
+        or job.get("stage") != "ERROR"
+        or job.get("flavor") != "rtx-pro-6000"
+        or job.get("command") != expected_v7_failed_job_command()
+        or job.get("durable_volume")
+        != {
+            "type": "bucket",
+            "source": "spkc83/jobs-artifacts",
+            "mount_path": "/data",
+            "read_only": False,
+        }
+    ):
+        raise RuntimeError("checkpoint correction inspected job provenance mismatch")
+    created = _parse_job_time(job.get("created_at"), field="job created_at")
+    started = _parse_job_time(job.get("started_at"), field="job started_at")
+    finished = _parse_job_time(job.get("finished_at"), field="job finished_at")
+    if not created <= started <= finished:
+        raise RuntimeError("checkpoint correction job timestamps are not ordered")
+
+    source = provenance.get("checkpoint")
+    if not isinstance(source, Mapping):
+        raise RuntimeError("checkpoint correction provenance is missing checkpoint data")
+    if (
+        source.get("path") != str(checkpoint)
+        or source.get("global_step") != config.correction_checkpoint_step
+    ):
+        raise RuntimeError("checkpoint correction checkpoint identity mismatch")
+    declared_files = source.get("files")
+    if not isinstance(declared_files, Mapping) or set(declared_files) != set(
+        CORRECTION_SOURCE_FILES
+    ):
+        raise RuntimeError("checkpoint correction file digest set mismatch")
+    tolerance = timedelta(minutes=5)
+    for name in CORRECTION_SOURCE_FILES:
+        declared = declared_files.get(name)
+        if not isinstance(declared, Mapping):
+            raise RuntimeError(f"checkpoint correction provenance is missing file metadata: {name}")
+        expected_sha = require_sha256(declared.get("sha256"), field=f"checkpoint {name} SHA256")
+        path = checkpoint / name
+        if sha256(path) != expected_sha:
+            raise RuntimeError(f"checkpoint correction file digest mismatch: {name}")
+        modified = _parse_job_time(declared.get("modified_at"), field=f"checkpoint {name} mtime")
+        if modified < started - tolerance or modified > finished + tolerance:
+            raise RuntimeError(
+                f"checkpoint correction file timestamp is outside job window: {name}"
+            )
+    state = read_json(checkpoint / "trainer_state.json")
+    if state.get("global_step") != config.correction_checkpoint_step:
+        raise RuntimeError("checkpoint correction trainer_state global_step mismatch")
+    tensors = validate_bf16_adapter_weights(checkpoint)
+    return {
+        "contract": V7_CHECKPOINT_CORRECTION_PROTOCOL,
+        "mode": "weights_only_fresh_optimizer",
+        "path": str(checkpoint),
+        "source_job": dict(job),
+        "source_step": config.correction_checkpoint_step,
+        "source_files": {name: dict(declared_files[name]) for name in CORRECTION_SOURCE_FILES},
+        "bf16_tensor_count": len(tensors),
+        "optimizer_resumed": False,
+        "scheduler_resumed": False,
+        "rng_state_resumed": False,
+    }
 
 
 def remote_execution_allowed(config: ContinuationConfig) -> bool:
@@ -519,7 +722,7 @@ def load_granite_v7_shadow_records(manifest_path: Path) -> list[dict[str, Any]]:
 
 
 def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
-    return {
+    plan = {
         "worker": "cloud_continue_tool_sft",
         "mode": "dry_run" if config.dry_run else "execution_requested",
         "source_adapter_repo": config.source_adapter_repo,
@@ -577,6 +780,20 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
             "currently_allowed": remote_execution_allowed(config),
         },
     }
+    if correction_requested(config):
+        plan["training_parent"] = "exact failed V7 checkpoint weights"
+        plan["checkpoint_correction"] = {
+            "contract": V7_CHECKPOINT_CORRECTION_PROTOCOL,
+            "path": str(config.correction_checkpoint_dir),
+            "expected_step": config.correction_checkpoint_step,
+            "provenance": str(config.correction_provenance),
+            "initialization": "BF16 adapter weights and tokenizer only",
+            "optimizer": "fresh",
+            "scheduler": "fresh",
+            "rng_state": "fresh seeded run",
+            "exact_resume_claimed": False,
+        }
+    return plan
 
 
 def build_training_args(config: ContinuationConfig) -> Any:
@@ -664,12 +881,13 @@ def continuation_fingerprint(
     source_snapshot: Path,
     mix_report: Mapping[str, Any],
     dataset: Mapping[str, str],
+    training_initialization: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
     require_exact_revision(source_commit, field="source commit")
     dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
     require_exact_revision(dataset_revision, field="dataset revision")
-    return {
+    fingerprint = {
         "contract": "banking-v6-generation-contract-peft-fingerprint/v1",
         "source_commit": source_commit,
         "base_model": config.base_model,
@@ -694,6 +912,9 @@ def continuation_fingerprint(
             "sampling": dict(mix_report),
         },
     }
+    if training_initialization is not None:
+        fingerprint["training_initialization"] = dict(training_initialization)
+    return fingerprint
 
 
 def write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -894,7 +1115,7 @@ def generate_coreference_behavior_report(
         metadata = record.get("metadata")
         if not isinstance(metadata, Mapping) or "coreference_pair_id" not in metadata:
             continue
-        messages = list(record.get("messages", ()))
+        messages = messages_with_record_turn_guidance(record)
         last_user = max(
             index for index, message in enumerate(messages) if message.get("role") == "user"
         )
@@ -940,6 +1161,15 @@ def generate_coreference_behavior_report(
 
 
 def render_model_card(result: Mapping[str, Any]) -> str:
+    initialization = result.get("training_initialization")
+    initialization_note = ""
+    if isinstance(initialization, Mapping):
+        initialization_note = (
+            "- Correction initialization: weights/tokenizer only from "
+            f"`{initialization.get('path')}` at source step "
+            f"`{initialization.get('source_step')}`; optimizer, scheduler, and RNG state were "
+            "not resumed.\n"
+        )
     return f"""---
 license: apache-2.0
 base_model: {result["base_model"]}
@@ -965,6 +1195,7 @@ weights are included.
 - Dataset: `{result["dataset_identity"]["repository"]}@{result["dataset_identity"]["revision"]}`
 - Optimizer steps: `{result["steps"]}`
 - Adapter SHA256: `{result["adapter_sha256"]}`
+{initialization_note}
 
 Training evaluation completed before publication. Release eligibility still
 requires the unchanged frozen behavioral evaluation gates.
@@ -1115,6 +1346,7 @@ def validate_publication_bundle(
         or metadata.get("coreference_behavioral_gate") != result.get("coreference_behavioral_gate")
         or metadata.get("shadow_coreference_behavioral_gate")
         != result.get("shadow_coreference_behavioral_gate")
+        or metadata.get("training_initialization") != result.get("training_initialization")
         or result.get("source_adapter_repo") != config.source_adapter_repo
         or result.get("source_adapter_revision") != config.source_adapter_revision
         or result.get("base_model") != config.base_model
@@ -1136,6 +1368,7 @@ def validate_publication_bundle(
         or fingerprint.get("base_revision") != config.base_revision
         or fingerprint.get("family") != config.family
         or fingerprint.get("training_seed") != V6_TRAINING_SEED
+        or fingerprint.get("training_initialization") != result.get("training_initialization")
         or not isinstance(source_adapter, Mapping)
         or source_adapter.get("repository") != config.source_adapter_repo
         or source_adapter.get("revision") != config.source_adapter_revision
@@ -1344,6 +1577,11 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     if config.push_to_hub:
         preflight_destination_repo(config)
     dataset = dataset_identity(config.manifest)
+    if correction_requested(config) and dataset["revision"] != V7_DATASET_REVISION:
+        raise RuntimeError(f"checkpoint correction requires dataset revision {V7_DATASET_REVISION}")
+    training_initialization = (
+        validate_checkpoint_correction_source(config) if correction_requested(config) else None
+    )
     config.output_dir.mkdir(parents=True, exist_ok=False)
     seed_training(V6_TRAINING_SEED)
 
@@ -1352,7 +1590,12 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
     from trl import SFTTrainer  # type: ignore[import-not-found]
 
-    source_snapshot = snapshot_source_adapter(config)
+    source_snapshot = (
+        config.correction_checkpoint_dir
+        if training_initialization is not None
+        else snapshot_source_adapter(config)
+    )
+    assert source_snapshot is not None
     tokenizer = AutoTokenizer.from_pretrained(source_snapshot, local_files_only=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -1475,7 +1718,12 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             return control
 
     fingerprint = continuation_fingerprint(
-        config, wire_adapter, source_snapshot, mix_report, dataset
+        config,
+        wire_adapter,
+        source_snapshot,
+        mix_report,
+        dataset,
+        training_initialization,
     )
     behavioral_callback = BehavioralGateCallback(
         model,
@@ -1499,6 +1747,9 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             behavioral_callback,
         ],
     )
+    # A correction run deliberately starts a fresh optimizer and scheduler from
+    # the checkpoint's adapter weights. Passing resume_from_checkpoint here
+    # would make a false exact-resume claim and may reload stale optimizer/RNG state.
     train_output = trainer.train()
     if config.trackio_project:
         from transformers.integrations import TrackioCallback  # type: ignore[import-not-found]
@@ -1550,6 +1801,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
         "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
         "shadow_coreference_behavioral_gate": shadow_gate,
+        "training_initialization": training_initialization,
     }
     metadata_path = config.output_dir / "continuation_training_metadata.json"
     write_json(metadata_path, metadata)
@@ -1572,6 +1824,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
         "selected_behavioral_step": behavioral_callback.gate_tracker.selected_step,
         "consecutive_dev_passes": behavioral_callback.gate_tracker.consecutive_passes,
         "shadow_coreference_behavioral_gate": shadow_gate,
+        "training_initialization": training_initialization,
         "adapter_sha256": sha256(adapter_dir / "adapter_model.safetensors"),
         "merged_model": None,
         "frozen_release_gates": "pending unchanged frozen evaluation",
