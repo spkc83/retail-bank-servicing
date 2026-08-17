@@ -13,6 +13,7 @@ from hello_slm.banking_domain_taxonomy import (
     LANE_LABELS,
 )
 
+from model_service import _generation_plan
 from router import (
     ROUTER_REPO_ID,
     ROUTER_REVISION,
@@ -529,10 +530,11 @@ def test_mutation_intent_with_converse_action_downgrades_to_clarify() -> None:
     assert "constraint:mutation-intent-cannot-converse" in diagnostics
 
 
-def test_v4_live_path_downgrades_mutation_converse_to_clarify() -> None:
+@pytest.mark.parametrize("head_entity_resolution", ["resolved", "not_required"])
+def test_v4_live_path_downgrades_mutation_converse_to_clarify(head_entity_resolution) -> None:
     router = LearnedBankingRouter(
         tokenizer=FakeTokenizer(),
-        model=FakeV4Model(action="converse", entity_resolution="not_required"),
+        model=FakeV4Model(action="converse", entity_resolution=head_entity_resolution),
         intent_labels=INTENT_LABELS,
         relation_labels=RELATION_LABELS,
         domain_labels=DOMAIN_LABELS,
@@ -553,4 +555,28 @@ def test_v4_live_path_downgrades_mutation_converse_to_clarify() -> None:
     assert result["route"] == "in_domain"
     assert result["intent"] == "replace_card"
     assert result["action"] == "clarify"
+    # Regression: clarify must always carry an unresolved entity state, or
+    # _generation_plan._render_turn_guidance raises on the downgraded decision.
+    assert result["entity_resolution"] == "missing"
     assert "constraint:mutation-intent-cannot-converse" in result["constraint_diagnostics"]
+
+
+def test_generation_plan_renders_downgraded_mutation_clarify_without_raising() -> None:
+    # router_result shaped exactly as LearnedBankingRouter._v4_result emits it for a
+    # freeze_card mutation-intent turn after the converse-to-clarify downgrade.
+    router_result = {
+        "route": "in_domain",
+        "domain": "banking",
+        "lane": "servicing",
+        "family": "cards",
+        "intent": "freeze_card",
+        "fine_intent": "freeze_card",
+        "action": "clarify",
+        "entity_resolution": "missing",
+        "constraint_diagnostics": ("constraint:mutation-intent-cannot-converse",),
+    }
+
+    system, tools = _generation_plan(router_result)
+
+    assert tools == []
+    assert "clarification question" in system["content"]

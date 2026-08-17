@@ -621,6 +621,8 @@ class LearnedConversationRouter:
             diagnostics += ("constraint:mutation-intent-cannot-converse",)
             if "clarify" in self.action_labels:
                 action = "clarify"
+                if entity_resolution not in {"missing", "ambiguous", "ineligible"}:
+                    entity_resolution = "missing"
             else:
                 route = "uncertain"
                 intent = None
@@ -1076,6 +1078,8 @@ def _apply_v4_constraints(
     if action == "converse" and intent in MUTATION_FINE_INTENTS:
         if "clarify" in action_labels:
             action = "clarify"
+            if entity_resolution not in {"missing", "ambiguous", "ineligible"}:
+                entity_resolution = "missing"
             diagnostics.append("constraint:mutation-intent-cannot-converse")
         else:
             route = "uncertain"

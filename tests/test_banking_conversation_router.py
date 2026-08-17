@@ -455,14 +455,20 @@ def test_v4_uncertain_route_suppresses_operational_decisions() -> None:
     assert result.intent_candidates[0]["intent"] == "replace_card"
 
 
-def test_v4_live_path_downgrades_mutation_converse_to_clarify() -> None:
-    result = make_v4_router(action="converse", entity_resolution="not_required").classify(
-        [ChatMessage(role="user", content="Replace that card.")]
-    )
+@pytest.mark.parametrize("head_entity_resolution", ["resolved", "not_required"])
+def test_v4_live_path_downgrades_mutation_converse_to_clarify(
+    head_entity_resolution: str,
+) -> None:
+    result = make_v4_router(
+        action="converse", entity_resolution=head_entity_resolution
+    ).classify([ChatMessage(role="user", content="Replace that card.")])
 
     assert result.route == "in_domain"
     assert result.intent == "replace_card"
     assert result.action == "clarify"
+    # Regression: clarify must always carry an unresolved entity state, or
+    # _render_turn_guidance raises on the downgraded decision.
+    assert result.entity_resolution == "missing"
     assert "constraint:mutation-intent-cannot-converse" in result.constraint_diagnostics
 
 
