@@ -305,11 +305,13 @@ class FakeV4Model:
         lane: str = "servicing",
         entity_resolution: str = "resolved",
         rescue: bool = False,
+        action: str = "execute_tool",
     ) -> None:
         self.domain = domain
         self.lane = lane
         self.entity_resolution = entity_resolution
         self.rescue = rescue
+        self.action = action
 
     def to(self, _device: object) -> FakeV4Model:
         return self
@@ -336,7 +338,7 @@ class FakeV4Model:
                     ]
                 ]
             ),
-            action_logits=selected(ACTION_LABELS, "execute_tool"),
+            action_logits=selected(ACTION_LABELS, self.action),
             entity_resolution_logits=selected(ENTITY_RESOLUTION_LABELS, self.entity_resolution),
         )
 
@@ -347,6 +349,7 @@ def make_v4_router(
     lane: str = "servicing",
     entity_resolution: str = "resolved",
     rescue: bool = False,
+    action: str = "execute_tool",
 ) -> LearnedConversationRouter:
     return LearnedConversationRouter(
         tokenizer=RecordingTokenizer(),
@@ -355,6 +358,7 @@ def make_v4_router(
             lane=lane,
             entity_resolution=entity_resolution,
             rescue=rescue,
+            action=action,
         ),
         intent_labels=INTENT_LABELS,
         relation_labels=RELATION_LABELS,
@@ -449,6 +453,17 @@ def test_v4_uncertain_route_suppresses_operational_decisions() -> None:
     assert result.action is None
     assert result.entity_resolution is None
     assert result.intent_candidates[0]["intent"] == "replace_card"
+
+
+def test_v4_live_path_downgrades_mutation_converse_to_clarify() -> None:
+    result = make_v4_router(action="converse", entity_resolution="not_required").classify(
+        [ChatMessage(role="user", content="Replace that card.")]
+    )
+
+    assert result.route == "in_domain"
+    assert result.intent == "replace_card"
+    assert result.action == "clarify"
+    assert "constraint:mutation-intent-cannot-converse" in result.constraint_diagnostics
 
 
 def _write_v4_artifact(tmp_path: Path, *, include_heads: bool) -> None:

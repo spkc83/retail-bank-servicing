@@ -19,6 +19,9 @@ from hello_slm.banking_conversation_router_data import (
 
 MessageRole = Literal["system", "user", "assistant"]
 RouteDecision = Literal["in_domain", "out_of_domain", "uncertain"]
+MUTATION_FINE_INTENTS = frozenset(
+    {"freeze_card", "replace_card", "dispute_transaction", "cancel_transfer"}
+)
 
 
 @dataclass(frozen=True)
@@ -614,6 +617,17 @@ class LearnedConversationRouter:
             action = None
             entity_resolution = None
             diagnostics += ("constraint:domain-route-conflict",)
+        elif action == "converse" and intent in MUTATION_FINE_INTENTS:
+            diagnostics += ("constraint:mutation-intent-cannot-converse",)
+            if "clarify" in self.action_labels:
+                action = "clarify"
+            else:
+                route = "uncertain"
+                intent = None
+                lane = None
+                family = None
+                action = None
+                entity_resolution = None
         confidence = (
             banking_probability
             if route == "in_domain"
@@ -1059,6 +1073,13 @@ def _apply_v4_constraints(
     if action == "clarify" and entity_resolution not in {"missing", "ambiguous"}:
         route = "uncertain"
         diagnostics.append("constraint:clarify-requires-unresolved-entity")
+    if action == "converse" and intent in MUTATION_FINE_INTENTS:
+        if "clarify" in action_labels:
+            action = "clarify"
+            diagnostics.append("constraint:mutation-intent-cannot-converse")
+        else:
+            route = "uncertain"
+            diagnostics.append("constraint:mutation-intent-cannot-converse")
 
     allowed_actions = _allowed_actions(lane)
     if allowed_actions is not None and action not in allowed_actions:

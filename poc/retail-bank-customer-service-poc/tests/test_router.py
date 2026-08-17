@@ -207,10 +207,20 @@ def test_only_three_recent_complete_exchanges_are_rendered() -> None:
 
 
 class FakeV4Model:
-    def __init__(self, *, domain="banking", lane="servicing", rescue=False):
+    def __init__(
+        self,
+        *,
+        domain="banking",
+        lane="servicing",
+        rescue=False,
+        action="execute_tool",
+        entity_resolution="ambiguous",
+    ):
         self.domain = domain
         self.lane = lane
         self.rescue = rescue
+        self.action = action
+        self.entity_resolution = entity_resolution
 
     def to(self, _device):
         return self
@@ -237,8 +247,8 @@ class FakeV4Model:
                     ]
                 ]
             ),
-            action_logits=selected(ACTION_LABELS, "execute_tool"),
-            entity_resolution_logits=selected(ENTITY_RESOLUTION_LABELS, "ambiguous"),
+            action_logits=selected(ACTION_LABELS, self.action),
+            entity_resolution_logits=selected(ENTITY_RESOLUTION_LABELS, self.entity_resolution),
         )
 
 
@@ -517,3 +527,30 @@ def test_mutation_intent_with_converse_action_downgrades_to_clarify() -> None:
 
     assert action == "clarify"
     assert "constraint:mutation-intent-cannot-converse" in diagnostics
+
+
+def test_v4_live_path_downgrades_mutation_converse_to_clarify() -> None:
+    router = LearnedBankingRouter(
+        tokenizer=FakeTokenizer(),
+        model=FakeV4Model(action="converse", entity_resolution="not_required"),
+        intent_labels=INTENT_LABELS,
+        relation_labels=RELATION_LABELS,
+        domain_labels=DOMAIN_LABELS,
+        lane_labels=LANE_LABELS,
+        family_labels=FAMILY_LABELS,
+        action_labels=ACTION_LABELS,
+        entity_resolution_labels=ENTITY_RESOLUTION_LABELS,
+        format_version=4,
+        ood_banking_threshold=0.2,
+        in_domain_threshold=0.5,
+        relation_rescue_threshold=0.5,
+        max_length=256,
+        max_exchanges=3,
+    )
+
+    result = router.classify("Replace that card.", [])
+
+    assert result["route"] == "in_domain"
+    assert result["intent"] == "replace_card"
+    assert result["action"] == "clarify"
+    assert "constraint:mutation-intent-cannot-converse" in result["constraint_diagnostics"]

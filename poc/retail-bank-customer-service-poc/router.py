@@ -518,6 +518,13 @@ class LearnedBankingRouter:
             route = "uncertain"
             intent = lane = family = action = entity_resolution = None
             diagnostics += ("constraint:domain-route-conflict",)
+        elif action == "converse" and intent in MUTATION_FINE_INTENTS:
+            diagnostics += ("constraint:mutation-intent-cannot-converse",)
+            if "clarify" in self.action_labels:
+                action = "clarify"
+            else:
+                route = "uncertain"
+                intent = lane = family = action = entity_resolution = None
         return {
             "route": route,
             "domain": domain,
