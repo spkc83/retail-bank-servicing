@@ -85,6 +85,28 @@
           "status": "posted",
           "category": "dining",
           "disputed": false
+        },
+        {
+          "transaction_id": "txn_alex_005",
+          "account_id": "acct_alex_checking",
+          "posted_at": "2026-07-20T14:30:00Z",
+          "description": "Whole Foods",
+          "amount_cents": -11245,
+          "currency": "USD",
+          "status": "posted",
+          "category": "groceries",
+          "disputed": false
+        },
+        {
+          "transaction_id": "txn_alex_006",
+          "account_id": "acct_alex_checking",
+          "posted_at": "2026-07-18T10:15:00Z",
+          "description": "Local Deli",
+          "amount_cents": -1850,
+          "currency": "USD",
+          "status": "posted",
+          "category": "dining",
+          "disputed": false
         }
       ],
       "transfers": [
@@ -190,6 +212,28 @@
           "currency": "USD",
           "status": "posted",
           "category": "travel",
+          "disputed": false
+        },
+        {
+          "transaction_id": "txn_maya_004",
+          "account_id": "acct_maya_checking",
+          "posted_at": "2026-07-21T16:45:00Z",
+          "description": "Train Station",
+          "amount_cents": -4500,
+          "currency": "USD",
+          "status": "posted",
+          "category": "travel",
+          "disputed": false
+        },
+        {
+          "transaction_id": "txn_maya_005",
+          "account_id": "acct_maya_checking",
+          "posted_at": "2026-07-19T09:22:00Z",
+          "description": "Restaurant Cafe",
+          "amount_cents": -3200,
+          "currency": "USD",
+          "status": "posted",
+          "category": "dining",
           "disputed": false
         }
       ],

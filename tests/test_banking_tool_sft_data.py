@@ -797,3 +797,12 @@ def test_training_finals_are_diverse_without_scaffolding() -> None:
     finals = [_final_text(row) for row in rows]
 
     assert len(set(finals)) == len(finals)
+
+
+def test_every_customer_can_answer_the_five_most_recent_preset() -> None:
+    payload = json.loads(
+        Path("poc/retail-bank-customer-service-poc/synthetic_bank.json").read_text()
+    )
+
+    for customer in payload["customers"]:
+        assert len(customer["transactions"]) >= 5
