@@ -29,6 +29,9 @@ RELATION_LABELS = (
     "clarification_answer",
     "resume_previous_service",
 )
+MUTATION_FINE_INTENTS = frozenset(
+    {"freeze_card", "replace_card", "dispute_transaction", "cancel_transfer"}
+)
 
 
 @dataclass(frozen=True)
@@ -1027,6 +1030,13 @@ def _apply_v4_constraints(
     if action == "clarify" and entity_resolution not in {"missing", "ambiguous"}:
         route = "uncertain"
         diagnostics.append("constraint:clarify-requires-unresolved-entity")
+    if action == "converse" and intent in MUTATION_FINE_INTENTS:
+        if "clarify" in action_labels:
+            action = "clarify"
+            diagnostics.append("constraint:mutation-intent-cannot-converse")
+        else:
+            route = "uncertain"
+            diagnostics.append("constraint:mutation-intent-cannot-converse")
     allowed = _allowed_actions(lane)
     if allowed is not None and action not in allowed:
         route = "uncertain"
