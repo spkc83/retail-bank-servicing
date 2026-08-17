@@ -101,3 +101,18 @@ def test_contractless_messages_preserve_legacy_prompt() -> None:
     messages = [{"role": "system", "content": "Legacy system", "loss": False}]
 
     assert messages_with_turn_guidance(messages, None) == messages
+
+
+def test_poc_realizer_filler_copies_match_the_training_realizer_pools() -> None:
+    from response_policy import (  # type: ignore[import-not-found]
+        REALIZER_FILLER_CLOSERS,
+        REALIZER_FILLER_PREFIXES,
+    )
+
+    from hello_slm.banking_tool_sft_data import (
+        REALIZER_FINAL_CLOSERS,
+        REALIZER_FINAL_PREFIXES,
+    )
+
+    assert set(REALIZER_FILLER_PREFIXES) == set(filter(None, REALIZER_FINAL_PREFIXES))
+    assert set(REALIZER_FILLER_CLOSERS) == set(filter(None, REALIZER_FINAL_CLOSERS))

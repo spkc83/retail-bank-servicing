@@ -13,6 +13,7 @@ from response_policy import (
     build_final_repair_messages,
     leading_prose,
     render_read_tool_results,
+    strip_realizer_filler,
     validate_customer_facing_answer,
     validate_grounded_answer,
     validate_policy_answer,
@@ -459,7 +460,7 @@ class ConversationalBankingAgent:
             if rendered is not None:
                 # Keep the model's own lead-in so read views still sound conversational,
                 # but only when it is grounded; the rendered table stays authoritative.
-                prose = leading_prose(final_output)
+                prose = strip_realizer_filler(leading_prose(final_output))
                 grounded_lead_in = bool(prose) and validate_grounded_answer(
                     prose,
                     all_calls,
@@ -618,6 +619,7 @@ class ConversationalBankingAgent:
         model_passes: list[ModelPassTrace],
         authoritative_evidence: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
     ) -> tuple[str, str]:
+        draft = strip_realizer_filler(draft) or draft
         validation = validate_customer_facing_answer(draft)
         if validation.valid:
             return draft, response_path

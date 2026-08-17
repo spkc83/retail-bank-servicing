@@ -217,6 +217,58 @@ def render_read_tool_results(
     return "\n\n".join(sections)
 
 
+# Standalone copy of the training realizer pools. The corpus needs this scaffolding to
+# keep every final answer unique, so the model learned to emit it; customers should not
+# see it. Kept in sync with hello_slm.banking_tool_sft_data by a parity test.
+REALIZER_FILLER_PREFIXES = (
+    "Here’s the requested update:",
+    "I reviewed the relevant details.",
+    "For clarity,",
+    "The current information shows this:",
+    "Here is the concise result:",
+    "I checked the available information.",
+    "This is the current result:",
+    "I found the following details:",
+    "The account information supports this answer:",
+    "Here’s what applies to your request:",
+    "I can confirm the following:",
+    "The relevant banking details are:",
+    "Your requested summary is below:",
+    "I reviewed this carefully.",
+    "The available record shows this:",
+)
+REALIZER_FILLER_CLOSERS = (
+    "I can help with the next banking step.",
+    "This reflects the information available in this session.",
+    "I’ve kept the result focused on your request.",
+    "You can use this summary to decide what to do next.",
+    "Let me know if you need another related detail.",
+    "That covers the banking request you made.",
+    "I can also explain any item in this result.",
+)
+
+
+def strip_realizer_filler(text: str) -> str:
+    """Remove learned realizer scaffolding, keeping the banking substance.
+
+    Returns an empty string when the draft was nothing but filler; callers decide
+    whether to fall back to the original text or drop the sentence entirely.
+    """
+
+    if not isinstance(text, str):
+        return text
+    stripped = text.strip()
+    for prefix in sorted(REALIZER_FILLER_PREFIXES, key=len, reverse=True):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
+            break
+    for closer in sorted(REALIZER_FILLER_CLOSERS, key=len, reverse=True):
+        if stripped.endswith(closer):
+            stripped = stripped[: -len(closer)].strip()
+            break
+    return stripped
+
+
 def leading_prose(draft: str) -> str:
     """Return the sentence a draft opens with, dropping any table the model wrote itself."""
 

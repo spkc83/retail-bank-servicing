@@ -313,6 +313,17 @@ def test_read_view_falls_back_to_the_table_when_the_lead_in_leaks_a_private_id()
     assert result.response_path == "base_tool_rendered"
 
 
+def test_read_view_strips_canned_realizer_filler_from_the_lead_in() -> None:
+    _model, result = _read_view_turn(
+        "I found the following details: Here are your two most recent transactions. "
+        "This reflects the information available in this session."
+    )
+
+    assert result.response.startswith("Here are your two most recent transactions.")
+    assert "I found the following details:" not in result.response
+    assert "information available in this session" not in result.response
+
+
 def test_grounded_final_guidance_asks_for_a_natural_summary_of_rendered_records() -> None:
     model, _result = _read_view_turn("Here are your two most recent transactions.")
 

@@ -6,6 +6,7 @@ from response_policy import (
     build_final_repair_messages,
     leading_prose,
     render_read_tool_results,
+    strip_realizer_filler,
     validate_customer_facing_answer,
     validate_grounded_answer,
     validate_policy_answer,
@@ -299,3 +300,31 @@ def test_customer_experience_repair_receives_authoritative_evidence() -> None:
     assert "Harborlight Bank" in repair[0]["content"]
     assert "authoritative_evidence" in repair[-1]["content"]
     assert "mortgage.application.overview.us.v1" in repair[-1]["content"]
+
+
+def test_strip_realizer_filler_removes_a_canned_prefix_and_closer() -> None:
+    text = (
+        "I found the following details: Your card ending in 4821 is now frozen. "
+        "This reflects the information available in this session."
+    )
+
+    assert strip_realizer_filler(text) == "Your card ending in 4821 is now frozen."
+
+
+def test_strip_realizer_filler_leaves_a_natural_answer_untouched() -> None:
+    text = "Your Everyday Visa Debit ending in 4821 is now frozen."
+
+    assert strip_realizer_filler(text) == text
+
+
+def test_strip_realizer_filler_empties_an_answer_that_is_only_filler() -> None:
+    assert strip_realizer_filler("I checked the available information.") == ""
+
+
+def test_strip_realizer_filler_drops_a_trailing_closer_after_a_table() -> None:
+    text = (
+        "Here are your cards.\n\n## Cards\n\n| Name |\n| --- |\n\n"
+        "I can help with the next banking step."
+    )
+
+    assert strip_realizer_filler(text).endswith("| --- |")
