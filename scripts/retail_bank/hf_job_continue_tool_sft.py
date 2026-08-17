@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=50)
     parser.add_argument("--positive-multiplier", type=int, default=2)
-    parser.add_argument("--ambiguity-multiplier", type=int, default=2)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=3)
     parser.add_argument("--policy-faq-multiplier", type=int, default=4)
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
