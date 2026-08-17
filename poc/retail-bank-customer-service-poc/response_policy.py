@@ -248,6 +248,32 @@ REALIZER_FILLER_CLOSERS = (
 )
 
 
+COMPLETED_ACTION_CLAIMS = re.compile(
+    r"\b(?:froze|has been frozen|is (?:now )?frozen|replaced|replacement is pending|"
+    r"cancelled|canceled|disputed|has been closed|is now closed)\b",
+    re.IGNORECASE,
+)
+
+
+def validate_no_unsupported_action_claims(
+    answer: str,
+    results: Sequence[Mapping[str, Any]],
+) -> GroundingValidation:
+    """Zero-tool turns must never assert a completed banking action or state change."""
+
+    if results:
+        return GroundingValidation(True, ())
+    if not isinstance(answer, str):
+        return GroundingValidation(False, ("final answer is not text",))
+    match = COMPLETED_ACTION_CLAIMS.search(answer)
+    if match is None:
+        return GroundingValidation(True, ())
+    return GroundingValidation(
+        False,
+        (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
+    )
+
+
 def strip_realizer_filler(text: str) -> str:
     """Remove learned realizer scaffolding, keeping the banking substance.
 

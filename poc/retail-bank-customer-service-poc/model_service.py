@@ -16,6 +16,7 @@ from response_policy import (
     strip_realizer_filler,
     validate_customer_facing_answer,
     validate_grounded_answer,
+    validate_no_unsupported_action_claims,
     validate_policy_answer,
 )
 
@@ -621,12 +622,16 @@ class ConversationalBankingAgent:
     ) -> tuple[str, str]:
         draft = strip_realizer_filler(draft) or draft
         validation = validate_customer_facing_answer(draft)
-        if validation.valid:
+        action_validation = validate_no_unsupported_action_claims(
+            draft, tuple(authoritative_evidence)
+        )
+        errors = (*validation.errors, *action_validation.errors)
+        if validation.valid and action_validation.valid:
             return draft, response_path
         repair_messages = build_customer_experience_repair_messages(
             user_message=user_message,
             draft=draft,
-            errors=validation.errors,
+            errors=errors,
             authoritative_evidence=authoritative_evidence,
         )
         repaired, repair_trace = self._generate_pass(
@@ -634,10 +639,13 @@ class ConversationalBankingAgent:
         )
         model_passes.append(repair_trace)
         repaired_validation = validate_customer_facing_answer(repaired)
-        if not repaired_validation.valid:
+        repaired_action_validation = validate_no_unsupported_action_claims(
+            repaired, tuple(authoritative_evidence)
+        )
+        if not repaired_validation.valid or not repaired_action_validation.valid:
             raise AgentProtocolError(
                 "customer-experience repair failed validation: "
-                + "; ".join(repaired_validation.errors)
+                + "; ".join((*repaired_validation.errors, *repaired_action_validation.errors))
             )
         return repaired, f"{response_path}_customer_repaired"
 

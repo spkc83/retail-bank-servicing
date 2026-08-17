@@ -569,6 +569,32 @@ def test_v4_converse_exposes_no_banking_tools() -> None:
     assert "Never infer distress" in model.calls[0]["messages"][0]["content"]
 
 
+def test_converse_turn_claiming_an_action_is_repaired_or_rejected() -> None:
+    model = RecordingModel(
+        [
+            "I found your active card and froze it to stop unauthorized use.",
+            "I can’t complete that from this conversation yet — would you like me to "
+            "freeze the card ending in 4821?",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="My card was stolen. Freeze it.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="converse",
+            fine_intent="freeze_card",
+            entity_resolution="not_required",
+        ),
+    )
+
+    assert "froze it" not in result.response
+    assert len(model.calls) == 2  # draft + customer-experience repair
+
+
 def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:
     model = RecordingModel(["Which card would you like help with?"])
     agent = ConversationalBankingAgent(bank=bank(), model=model)

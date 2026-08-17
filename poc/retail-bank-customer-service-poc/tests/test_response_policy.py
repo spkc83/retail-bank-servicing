@@ -9,6 +9,7 @@ from response_policy import (
     strip_realizer_filler,
     validate_customer_facing_answer,
     validate_grounded_answer,
+    validate_no_unsupported_action_claims,
     validate_policy_answer,
 )
 
@@ -328,3 +329,38 @@ def test_strip_realizer_filler_drops_a_trailing_closer_after_a_table() -> None:
     )
 
     assert strip_realizer_filler(text).endswith("| --- |")
+
+
+def test_zero_tool_answers_must_not_claim_completed_actions() -> None:
+    fabricated = validate_no_unsupported_action_claims(
+        "I found your active card and froze it to stop unauthorized use.", ()
+    )
+    frozen_state = validate_no_unsupported_action_claims(
+        "Your card ending in 4821 is now frozen.", ()
+    )
+
+    assert not fabricated.valid
+    assert not frozen_state.valid
+    assert any("without tool evidence" in error for error in fabricated.errors)
+
+
+def test_zero_tool_answers_may_ask_and_describe_without_action_claims() -> None:
+    question = validate_no_unsupported_action_claims(
+        "Would you like me to freeze the card ending in 4821?", ()
+    )
+    neutral = validate_no_unsupported_action_claims(
+        "Hi, I’m Harbor. How can I help with your banking today?", ()
+    )
+
+    assert question.valid
+    assert neutral.valid
+
+
+def test_action_claims_are_allowed_when_any_tool_evidence_exists() -> None:
+    evidence = ({"ok": True, "result": {"card": {"last4": "4821", "status": "frozen"}}},)
+
+    validation = validate_no_unsupported_action_claims(
+        "Your Everyday Visa Debit ending in 4821 is now frozen.", evidence
+    )
+
+    assert validation.valid
