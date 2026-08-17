@@ -263,6 +263,64 @@ def test_v4_execute_exposes_only_predicted_intent_tool_across_followup() -> None
     assert "guidance supplies no tool arguments" in system_prompt
 
 
+def _read_view_turn(final_output: str) -> Any:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_transactions", "arguments": {"limit": 2}}</tool_call>',
+            final_output,
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my two latest transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+            entity_resolution="not_required",
+        ),
+    )
+    return model, result
+
+
+def test_read_view_keeps_the_natural_lead_in_above_the_rendered_table() -> None:
+    _model, result = _read_view_turn("Here are your two most recent transactions.")
+
+    assert result.response.startswith("Here are your two most recent transactions.")
+    assert "## Recent transactions" in result.response
+    assert "| Date | Description | Amount | Status | Category | Disputed |" in result.response
+    assert result.response_path == "base_tool_rendered"
+
+
+def test_read_view_drops_a_model_authored_table_and_keeps_the_exact_rendered_one() -> None:
+    _model, result = _read_view_turn(
+        "Here are your recent transactions. | Date | Transaction |\n"
+        "| --- | --- |\n| Recent | North Harbor Market |"
+    )
+
+    assert result.response.startswith("Here are your recent transactions.")
+    assert "| Recent | North Harbor Market |" not in result.response
+    assert "2026-07-25 15:42 UTC" in result.response
+
+
+def test_read_view_falls_back_to_the_table_when_the_lead_in_leaks_a_private_id() -> None:
+    _model, result = _read_view_turn("Here is txn_alex_001 from your records.")
+
+    assert "txn_alex_001" not in result.response
+    assert result.response.startswith("## Recent transactions")
+    assert result.response_path == "base_tool_rendered"
+
+
+def test_grounded_final_guidance_asks_for_a_natural_summary_of_rendered_records() -> None:
+    model, _result = _read_view_turn("Here are your two most recent transactions.")
+
+    followup_system = model.calls[1]["messages"][0]["content"]
+    assert "table" in followup_system
+    assert "do not repeat" in followup_system.casefold()
+
+
 def test_v4_execute_retries_once_when_model_returns_prose_before_required_tool() -> None:
     model = RecordingModel(
         [

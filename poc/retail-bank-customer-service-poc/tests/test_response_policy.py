@@ -4,11 +4,34 @@ from model_service import ToolCall
 from response_policy import (
     build_customer_experience_repair_messages,
     build_final_repair_messages,
+    leading_prose,
     render_read_tool_results,
     validate_customer_facing_answer,
     validate_grounded_answer,
     validate_policy_answer,
 )
+
+
+def test_leading_prose_keeps_the_sentence_before_an_inline_model_table() -> None:
+    draft = "Here are your recent transactions. | Date | Description |\n| --- | --- |"
+
+    assert leading_prose(draft) == "Here are your recent transactions."
+
+
+def test_leading_prose_keeps_the_sentence_before_a_block_model_table() -> None:
+    draft = "Here are your cards.\n\n| Name | Last 4 |\n| --- | --- |\n| Everyday | 4821 |"
+
+    assert leading_prose(draft) == "Here are your cards."
+
+
+def test_leading_prose_is_empty_when_the_draft_opens_with_a_table() -> None:
+    assert leading_prose("| Name | Last 4 |\n| --- | --- |") == ""
+
+
+def test_leading_prose_returns_a_table_free_draft_unchanged() -> None:
+    assert leading_prose("  Here are your two most recent transactions.  ") == (
+        "Here are your two most recent transactions."
+    )
 
 
 def test_read_results_render_exact_markdown_tables() -> None:

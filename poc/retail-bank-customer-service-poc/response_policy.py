@@ -217,6 +217,14 @@ def render_read_tool_results(
     return "\n\n".join(sections)
 
 
+def leading_prose(draft: str) -> str:
+    """Return the sentence a draft opens with, dropping any table the model wrote itself."""
+
+    if not isinstance(draft, str):
+        return ""
+    return draft.split("|", 1)[0].strip()
+
+
 def validate_grounded_answer(
     answer: str,
     calls: Sequence[Any],

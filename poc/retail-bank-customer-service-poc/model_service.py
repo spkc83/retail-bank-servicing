@@ -11,6 +11,7 @@ from mock_bank import SessionBankRegistry
 from response_policy import (
     build_customer_experience_repair_messages,
     build_final_repair_messages,
+    leading_prose,
     render_read_tool_results,
     validate_customer_facing_answer,
     validate_grounded_answer,
@@ -412,7 +413,12 @@ class ConversationalBankingAgent:
                     with_tools.append(self.tool_adapter.render_tool_result(call, result))
 
                 post_tool_passes += 1
-                followup_system = _grounded_final_system(system) if routed_single_call else system
+                records_rendered = render_read_tool_results(all_calls, results) is not None
+                followup_system = (
+                    _grounded_final_system(system, records_rendered=records_rendered)
+                    if routed_single_call
+                    else system
+                )
                 followup_tools = None if routed_single_call else serving_tools
                 followup_context = select_token_budgeted_context(
                     followup_system,
@@ -451,7 +457,15 @@ class ConversationalBankingAgent:
                     response_path = f"{response_path}_chain"
             rendered = render_read_tool_results(all_calls, results)
             if rendered is not None:
-                final_output = rendered
+                # Keep the model's own lead-in so read views still sound conversational,
+                # but only when it is grounded; the rendered table stays authoritative.
+                prose = leading_prose(final_output)
+                grounded_lead_in = bool(prose) and validate_grounded_answer(
+                    prose,
+                    all_calls,
+                    results,
+                ).valid
+                final_output = f"{prose}\n\n{rendered}" if grounded_lead_in else rendered
                 response_path = f"{response_path}_rendered"
             else:
                 validation = validate_grounded_answer(final_output, all_calls, results)
@@ -1205,15 +1219,25 @@ def _required_tool_retry_system(
     }
 
 
-def _grounded_final_system(system: dict[str, str]) -> dict[str, str]:
-    return {
-        "role": "system",
-        "content": (
-            f"{system['content']}\n\nGROUNDED FINAL REQUIRED: The routed banking tool "
-            "has already run. Do not call any tool again. Answer only from the returned "
-            "tool result and do not claim anything the result does not establish."
-        ),
-    }
+def _grounded_final_system(
+    system: dict[str, str],
+    *,
+    records_rendered: bool = False,
+) -> dict[str, str]:
+    guidance = (
+        "GROUNDED FINAL REQUIRED: The routed banking tool has already run. Do not call "
+        "any tool again. Answer only from the returned tool result and do not claim "
+        "anything the result does not establish."
+    )
+    if records_rendered:
+        guidance += (
+            " The records themselves are shown to the customer as a table directly "
+            "beneath your reply, so write one short, natural sentence introducing them "
+            "and do not repeat the records as a table or list."
+        )
+    else:
+        guidance += " Write the reply in a warm, natural, conversational voice."
+    return {"role": "system", "content": f"{system['content']}\n\n{guidance}"}
 
 
 def router_diagnostic_fields(router_result: dict[str, Any]) -> dict[str, Any]:
