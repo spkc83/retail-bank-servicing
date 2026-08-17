@@ -127,3 +127,14 @@ def test_streamlit_snapshot_uses_customer_friendly_product_labels() -> None:
     assert "Your products" in rendered
     assert "Checking account" in rendered
     assert "Synthetic state" not in rendered
+
+
+def test_execute_turn_reruns_so_sidebar_snapshot_is_fresh() -> None:
+    source = Path("poc/retail-bank-customer-service-poc/streamlit_app.py").read_text(
+        encoding="utf-8"
+    )
+    body = source.split("def _execute_turn", 1)[1].split("\ndef ", 1)[0]
+
+    stores = body.index('st.session_state["diagnostics"] = result.diagnostics')
+    rerun = body.index("st.rerun()")
+    assert stores < rerun, "turn results must be stored before the rerun"

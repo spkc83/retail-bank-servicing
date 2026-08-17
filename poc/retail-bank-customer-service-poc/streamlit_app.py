@@ -250,6 +250,8 @@ def _execute_turn(
     with st.chat_message("assistant"):
         st.markdown(result.response)
     st.caption(response_provenance(result.response_path, result.model_passes))
+    # Rerun so the sidebar snapshot and diagnostics reflect this turn's tool effects.
+    st.rerun()
 
 
 def render_snapshot(snapshot: dict[str, Any]) -> str:
