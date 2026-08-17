@@ -97,6 +97,25 @@ def test_policy_detour_preserves_task_and_resume_returns_anchor_exchange() -> No
     )
 
 
+def test_interrogative_relation_resume_observation_does_not_resume_pending_service() -> None:
+    state = pending_state()
+    detour = begin_turn(state, route("policy_knowledge"), "How long do disputes take?")
+
+    assert detour.lane == "policy"
+    assert detour.state.knowledge_detour_active is True
+
+    transition = begin_turn(
+        detour.state,
+        route("conversation", relations=("resume_previous_service",)),
+        "was the card frozen ?",
+    )
+
+    assert transition.resumed is False
+    assert transition.previous_pending is None
+    assert transition.state.pending_servicing == state.pending_servicing
+    assert transition.state.knowledge_detour_active is True
+
+
 def test_same_servicing_intent_implicitly_resumes_policy_detour() -> None:
     state = DialogueState(
         pending_servicing=pending_state("replace_card").pending_servicing,
@@ -207,6 +226,9 @@ def test_is_interrogative_detects_questions() -> None:
     assert is_interrogative("Did that go through")
     assert not is_interrogative("yes do it")
     assert not is_interrogative("freeze the card please")
+    assert not is_interrogative("Do it")
+    assert not is_interrogative("do it now")
+    assert not is_interrogative("go ahead")
 
 
 def test_low_confidence_intent_does_not_mutate_state() -> None:

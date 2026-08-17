@@ -105,6 +105,8 @@ def is_interrogative(message: str) -> bool:
     text = message.strip().lower()
     if text.endswith("?"):
         return True
+    if text.startswith(("do it", "go ahead", "please do")):
+        return False
     first = text.split(maxsplit=1)[0] if text else ""
     return first in _INTERROGATIVE_OPENERS
 
