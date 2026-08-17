@@ -94,6 +94,21 @@ class TransitionResult:
         )
 
 
+_INTERROGATIVE_OPENERS = (
+    "was", "is", "are", "were", "did", "does", "do", "has", "have", "can",
+    "could", "will", "would", "what", "when", "where", "which", "who", "why", "how",
+)
+
+
+def is_interrogative(message: str) -> bool:
+    """Detect a status/clarifying question so it does not resume a pending mutation."""
+    text = message.strip().lower()
+    if text.endswith("?"):
+        return True
+    first = text.split(maxsplit=1)[0] if text else ""
+    return first in _INTERROGATIVE_OPENERS
+
+
 def begin_turn(
     state: DialogueState,
     route: Mapping[str, Any],
@@ -125,10 +140,12 @@ def begin_turn(
         return TransitionResult(state=state, lane="unchanged")
 
     active_relations = _relation_names(relations)
+    interrogative_turn = is_interrogative(user_message)
     if (
         "resume_previous_service" in active_relations
         and state.knowledge_detour_active
         and state.pending_servicing is not None
+        and not interrogative_turn
     ):
         return TransitionResult(
             state=replace(state, knowledge_detour_active=False),
@@ -140,7 +157,7 @@ def begin_turn(
     if intent in SERVICING_TOOLS:
         pending = state.pending_servicing
         if pending is not None and pending.intent == intent:
-            if state.knowledge_detour_active:
+            if state.knowledge_detour_active and not interrogative_turn:
                 return TransitionResult(
                     state=replace(state, knowledge_detour_active=False),
                     lane="servicing",

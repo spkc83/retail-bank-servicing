@@ -8,9 +8,11 @@ from dialogue_state import (
     DialogueState,
     DialogueStateRegistry,
     PendingServicing,
+    TransitionResult,
     begin_turn,
     commit_operations,
     finish_turn,
+    is_interrogative,
 )
 
 
@@ -170,6 +172,41 @@ def test_uncertain_resume_observation_cannot_resume_pending_service() -> None:
     assert transition.state == state
     assert transition.resumed is False
     assert transition.lane == "unchanged"
+
+
+def begin_turn_with_pending(message: str) -> TransitionResult:
+    """Same fixture shape as test_same_servicing_intent_implicitly_resumes_policy_detour:
+    a freeze_card task pending mid policy detour, so any non-interrogative same-intent
+    follow-up would otherwise resume it (resumed=True, previous_pending set)."""
+    state = DialogueState(
+        pending_servicing=pending_state("freeze_card").pending_servicing,
+        knowledge_detour_active=True,
+    )
+    return begin_turn(state, route("freeze_card"), message)
+
+
+def test_status_question_does_not_resume_pending_mutation() -> None:
+    transition = begin_turn_with_pending("was the card frozen ?")
+
+    assert transition.resumed is False
+    assert transition.previous_pending is None
+    assert transition.state.pending_servicing is not None
+    assert transition.state.pending_servicing.intent == "freeze_card"
+    assert transition.state.knowledge_detour_active is True
+
+
+def test_affirmative_continuation_still_resumes_pending_mutation() -> None:
+    transition = begin_turn_with_pending("yes please go ahead")
+
+    assert transition.resumed is True
+    assert transition.state.knowledge_detour_active is False
+
+
+def test_is_interrogative_detects_questions() -> None:
+    assert is_interrogative("was the card frozen ?")
+    assert is_interrogative("Did that go through")
+    assert not is_interrogative("yes do it")
+    assert not is_interrogative("freeze the card please")
 
 
 def test_low_confidence_intent_does_not_mutate_state() -> None:
