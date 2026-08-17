@@ -1060,6 +1060,26 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "prompt": "kindly replace the card shown in that list",
                 "product": "Ivory",
             },
+            {
+                "phrase_family": "presented-above-bridge",
+                "prompt": "the card presented above should be replaced",
+                "product": "Cliff",
+            },
+            {
+                "phrase_family": "onscreen-target-bridge",
+                "prompt": "the card on screen is the one to replace",
+                "product": "Reef",
+            },
+            {
+                "phrase_family": "shown-target-bridge",
+                "prompt": "the card you showed is the replacement candidate",
+                "product": "Vale",
+            },
+            {
+                "phrase_family": "above-reference-bridge",
+                "prompt": "replace the card referenced above",
+                "product": "Moor",
+            },
         )
     if split == "validation":
         return (
