@@ -1388,17 +1388,18 @@ _MISSING_SPECS = (
 
 # (context clause, prior user turn or None, prior assistant turn) -- no card is ever
 # listed, so entity_state defaults to "missing" rather than "ineligible"/"ambiguous".
-_MISSING_HISTORY_FORMS = (
-    ("I don't see a card identified on this profile yet.", None, None),
+_MISSING_HISTORY_FORMS: tuple[tuple[str, tuple[str, str] | None], ...] = (
+    ("I don't see a card identified on this profile yet.", None),
     (
         "No card has been specified in this conversation so far.",
-        "Hi, I need some help today.",
-        "Hello! I'm happy to help with your banking today.",
+        ("Hi, I need some help today.", "Hello! I'm happy to help with your banking today."),
     ),
     (
         "There's no card on file that I can match to your request yet.",
-        "What's my account balance?",
-        "I can pull that up, but I don't have any card selected for this request.",
+        (
+            "What's my account balance?",
+            "I can pull that up, but I don't have any card selected for this request.",
+        ),
     ),
 )
 
@@ -1488,15 +1489,15 @@ def _missing_clarification_records(split: str) -> list[dict[str, Any]]:
         for prompt_index, prompt_form in enumerate(_MISSING_PROMPT_FORMS):
             base_prompt = prompt_form.format(prompt=spec["prompt"])
             ask_clause = _MISSING_ASK_FORMS[prompt_index].format(verb=verb)
-            for history_index, (context_clause, prior_user, prior_assistant) in enumerate(
+            for history_index, (context_clause, prior_turn) in enumerate(
                 _MISSING_HISTORY_FORMS
             ):
                 current = base_prompt + _MISSING_CURRENT_SUFFIXES[history_index]
                 final = f"{context_clause} {ask_clause}"
                 pre_messages = (
                     []
-                    if prior_user is None
-                    else [_user(prior_user), _assistant(prior_assistant, loss=False)]
+                    if prior_turn is None
+                    else [_user(prior_turn[0]), _assistant(prior_turn[1], loss=False)]
                 )
                 realization_key = f"{prompt_index}-{history_index}"
                 record = _record(
