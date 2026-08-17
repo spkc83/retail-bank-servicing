@@ -592,6 +592,23 @@ def test_candidate5_shadow_gate_is_untouched_and_isolated() -> None:
     assert shadow_families.isdisjoint(governed_families)
 
 
+def test_coreference_shadow_carries_runtime_generation_contracts() -> None:
+    shadow = build_coreference_shadow_gate()
+
+    for row in shadow:
+        contract = row["expected"]["generation_contract"]
+        if row["metadata"]["coreference_target"] == "replace_card":
+            assert contract["mode"] == "execute_tool"
+            assert contract["entity_state"] == "resolved"
+            assert contract["tool_names"] == ["replace_card"]
+            assert set(contract["argument_constraints"]) == {"last4"}
+        else:
+            assert contract["mode"] == "clarify"
+            assert contract["entity_state"] == "ambiguous"
+            assert contract["tool_names"] == []
+            assert contract["argument_constraints"] == {}
+
+
 def test_v5_alignment_adds_policy_detour_resume_and_unique_targets() -> None:
     splits, _report = build_servicing_alignment_splits()
     train = splits["train"]

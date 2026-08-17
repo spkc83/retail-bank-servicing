@@ -173,6 +173,7 @@ def build_coreference_shadow_gate() -> list[dict[str, Any]]:
     records = _deictic_replace_curriculum("shadow")
     for record in records:
         record["metadata"]["trainable"] = False
+        _attach_generation_contract(record)
     validate_records(records)
     _assert_no_duplicate_current(records, split="shadow")
     _assert_coreference_pair_integrity({"train": [], "validation": records})
