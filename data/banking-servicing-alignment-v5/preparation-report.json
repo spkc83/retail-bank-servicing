@@ -2,7 +2,7 @@
   "alignment_generation_contract_counts": {
     "test": {},
     "train": {
-      "clarify": 708,
+      "clarify": 852,
       "converse": 13,
       "execute_tool": 1272,
       "refuse_ood": 32,
@@ -18,7 +18,7 @@
   },
   "alignment_split_counts": {
     "test": 35,
-    "train": 2058,
+    "train": 2202,
     "validation": 218
   },
   "base_manifest_sha256": "38555b4a5ae32ed94f9b550ef6210a069b2b5f31d6b3e1af32f452cffce0648d",
@@ -38,7 +38,7 @@
   "generation_contract_counts": {
     "test": {},
     "train": {
-      "clarify": 744,
+      "clarify": 888,
       "converse": 178,
       "execute_tool": 1671,
       "refuse_ood": 58,
@@ -62,7 +62,7 @@
       "retrieval_grounded_policy": 4
     },
     "train": {
-      "clarification": 708,
+      "clarification": 852,
       "conversation": 13,
       "multi_turn": 1120,
       "ood": 32,
@@ -96,6 +96,8 @@
       "banking_topic_shift": 32,
       "card_anaphora_action": 64,
       "clarification_answer": 64,
+      "deictic_ineligible_clarification": 72,
+      "deictic_missing_clarification": 72,
       "deictic_replace_action": 672,
       "deictic_replace_ambiguity": 672,
       "external_topic_shift": 32,
@@ -142,7 +144,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 2899,
+    "train": 3043,
     "validation": 397
   }
 }
