@@ -42,6 +42,13 @@ def _final(record: dict) -> str:
     return str(record["messages"][-1]["content"])
 
 
+def _final_text(record: dict) -> str:
+    for message in reversed(record["messages"]):
+        if message.get("role") == "assistant" and not message.get("tool_calls"):
+            return str(message["content"])
+    raise AssertionError(f"{record.get('record_id')} has no final assistant message")
+
+
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
@@ -768,3 +775,25 @@ def test_validator_rejects_internal_language_in_customer_facing_messages() -> No
     )
     with pytest.raises(BankingToolSftDataError, match="final assistant response leaks"):
         validate_records([record])
+
+
+def test_training_finals_carry_no_realizer_scaffolding_after_teacher_pass() -> None:
+    rows = _read_jsonl(Path("data/banking-v5-tool-sft/train.jsonl"))
+    prefixes = tuple(filter(None, banking_tool_sft_data.REALIZER_FINAL_PREFIXES))
+    closers = tuple(filter(None, banking_tool_sft_data.REALIZER_FINAL_CLOSERS))
+
+    offenders = [
+        row["record_id"]
+        for row in rows
+        for final in [_final_text(row)]
+        if final.startswith(prefixes) or final.endswith(closers)
+    ]
+
+    assert offenders == []
+
+
+def test_training_finals_are_diverse_without_scaffolding() -> None:
+    rows = _read_jsonl(Path("data/banking-v5-tool-sft/train.jsonl"))
+    finals = [_final_text(row) for row in rows]
+
+    assert len(set(finals)) == len(finals)
