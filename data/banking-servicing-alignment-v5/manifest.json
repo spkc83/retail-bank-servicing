@@ -71,7 +71,7 @@
       "train": 2058,
       "validation": 218
     },
-    "base_manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
+    "base_manifest_sha256": "38555b4a5ae32ed94f9b550ef6210a069b2b5f31d6b3e1af32f452cffce0648d",
     "base_split_counts": {
       "test": 180,
       "train": 841,
@@ -202,7 +202,7 @@
     "released-retail-bank-agent-sft": {
       "generator_version": "banking-tool-sft/v1.7-v7-argument-contract",
       "license": "MIT",
-      "manifest_sha256": "ffd8139fc8ab9b886056477371984dae097a0bcfac7f79f76de600dfc912441a",
+      "manifest_sha256": "38555b4a5ae32ed94f9b550ef6210a069b2b5f31d6b3e1af32f452cffce0648d",
       "role": "base-tool-use-sft",
       "trainable": true
     },
@@ -218,21 +218,21 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 8736836,
+      "bytes": 8847375,
       "name": "train",
       "path": "train.jsonl",
       "record_count": 2899,
-      "sha256": "0f19d744d21c2b2320b40d7abecf6e07868f7c6707b0a0b8492ae62fe6562013"
+      "sha256": "a6749550eb26ffd6409aa1380930f2be0a21e71e4f38a7539a9b52e64ca2b9f8"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1185003,
+      "bytes": 1208314,
       "name": "validation",
       "path": "validation.jsonl",
       "record_count": 397,
-      "sha256": "528db224235607345525f9f335f169a8ce595eda50fece465126376686ca30b7"
+      "sha256": "c8b5cc6f9f7f352ba8b9045db87644547b3306a8a0d47c40bedab8fc8bf4af23"
     },
     {
       "allowed_use": [

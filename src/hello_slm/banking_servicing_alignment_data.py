@@ -539,6 +539,7 @@ def _train_records() -> list[dict[str, Any]]:
     return [
         *_expand_records(records, split="train"),
         *_deictic_replace_curriculum("train"),
+        *_deictic_ineligible_curriculum("train"),
         *_missing_entity_records("train"),
         *_social_style_records("train"),
         *_granite_v7_examples("train"),
@@ -1283,6 +1284,239 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                     }
                 )
             records.extend((action, ambiguity))
+    return records
+
+
+_INELIGIBLE_PROMPT_FORMS = (
+    "{prompt}",
+    "okay {prompt}",
+    "{prompt} please",
+    "yes {prompt}",
+)
+_INELIGIBLE_CURRENT_SUFFIXES = ("", " right now", " today")
+
+_INELIGIBLE_SPECS = (
+    {
+        "phrase_family": "frozen-replace-bridge",
+        "prompt": "freeze the card i just asked about",
+        "product": "Cobble",
+    },
+    {
+        "phrase_family": "pending-freeze-bridge",
+        "prompt": "go ahead and freeze that card",
+        "product": "Drift",
+    },
+    {
+        "phrase_family": "closed-card-copy-bridge",
+        "prompt": "send me a new copy of that card",
+        "product": "Ember",
+    },
+    {
+        "phrase_family": "pending-again-bridge",
+        "prompt": "please order another replacement for it",
+        "product": "Foss",
+    },
+    {
+        "phrase_family": "frozen-swap-bridge",
+        "prompt": "swap that card out for a new one",
+        "product": "Gale",
+    },
+    {
+        "phrase_family": "closed-freeze-bridge",
+        "prompt": "freeze the card you just found",
+        "product": "Hollow",
+    },
+)
+
+# (status, blocker clause, single-card history sentence) -- exactly one card is
+# listed and its status is what makes the request ineligible.
+_INELIGIBLE_HISTORY_FORMS = (
+    (
+        "frozen",
+        "is frozen",
+        "You have one card on file: {card_name} ending in {card_last4}, currently frozen.",
+    ),
+    (
+        "replacement_pending",
+        "already has a replacement pending",
+        "Card search results: {card_name} ending in {card_last4} — status: "
+        "replacement pending.",
+    ),
+    (
+        "closed",
+        "has been closed",
+        "I found {card_name} ending in {card_last4}; it shows as closed.",
+    ),
+)
+
+# One distinct final phrasing per family (matched by position) naming the blocker
+# and asking for an eligible, specific card.
+_INELIGIBLE_FINAL_TEMPLATES = (
+    "Your {card_name} ending in {card_last4} {blocker}, so I can't do that. Which "
+    "active card should I use instead? Please share its last four digits.",
+    "That {card_name} ending in {card_last4} {blocker}, so this won't go through. "
+    "Tell me the last four digits of a different card to use.",
+    "I can't proceed because the {card_name} ending in {card_last4} {blocker}. "
+    "Which eligible card should I use, and what are its last four digits?",
+    "The {card_name} ending in {card_last4} {blocker}, which rules it out for this "
+    "request. Please name an eligible card and its last four digits.",
+    "This won't work for the {card_name} ending in {card_last4} — it {blocker}. "
+    "Which other card should I use? Its last four digits would help.",
+    "The {card_name} ending in {card_last4} {blocker}, so it isn't eligible for "
+    "that action. Could you pick an eligible card and give me its last four digits?",
+)
+
+_MISSING_PROMPT_FORMS = _INELIGIBLE_PROMPT_FORMS
+_MISSING_CURRENT_SUFFIXES = ("", " if that's possible", " when you get a chance")
+
+_MISSING_SPECS = (
+    {"phrase_family": "freeze-my-card-bridge", "verb": "freeze", "prompt": "freeze my card"},
+    {"phrase_family": "replace-my-card-bridge", "verb": "replace", "prompt": "replace my card"},
+    {
+        "phrase_family": "copy-my-card-bridge",
+        "verb": "send a new copy of",
+        "prompt": "send a new copy of my card",
+    },
+    {
+        "phrase_family": "replacement-my-card-bridge",
+        "verb": "order a replacement for",
+        "prompt": "order a replacement for my card",
+    },
+    {"phrase_family": "block-my-card-bridge", "verb": "block", "prompt": "block my card"},
+    {"phrase_family": "swap-my-card-bridge", "verb": "swap out", "prompt": "swap out my card"},
+)
+
+# (context clause, prior user turn or None, prior assistant turn) -- no card is ever
+# listed, so entity_state defaults to "missing" rather than "ineligible"/"ambiguous".
+_MISSING_HISTORY_FORMS = (
+    ("I don't see a card identified on this profile yet.", None, None),
+    (
+        "No card has been specified in this conversation so far.",
+        "Hi, I need some help today.",
+        "Hello! I'm happy to help with your banking today.",
+    ),
+    (
+        "There's no card on file that I can match to your request yet.",
+        "What's my account balance?",
+        "I can pull that up, but I don't have any card selected for this request.",
+    ),
+)
+
+_MISSING_ASK_FORMS = (
+    "Which card would you like me to {verb}? Please share its last four digits.",
+    "Okay — which card should I {verb}? What are its last four digits?",
+    "Sure, but which card do you need me to {verb}? Let me know its last four digits.",
+    "Got it — please tell me which card to {verb}, along with its last four digits.",
+)
+
+
+def _deictic_ineligible_curriculum(split: str) -> list[dict[str, Any]]:
+    """Train-only clarify curriculum covering the "ineligible" and "missing"
+    entity states.
+
+    The runtime derives entity_state "ineligible" from three grounding branches (a
+    card that is frozen, replacement_pending, or closed) but the corpus otherwise
+    carries a single ineligible training example, and the "missing" state is thin
+    too, so the model improvises on those turns -- one observed failure fabricated
+    a card freeze. This is modeled directly on `_deictic_replace_curriculum` above:
+    same prompt_forms mechanism, same `_record` builder, same metadata update
+    pattern, but train split only -- the frozen validation gate is not extended.
+    """
+    if split != "train":
+        raise ValueError(f"unsupported ineligible/missing curriculum split: {split}")
+    return [
+        *_ineligible_clarification_records(split),
+        *_missing_clarification_records(split),
+    ]
+
+
+def _ineligible_clarification_records(split: str) -> list[dict[str, Any]]:
+    tiers = ("Everyday Debit", "Rewards Debit", "Travel Debit", "Cashback Debit")
+    number_base = 7100
+    records: list[dict[str, Any]] = []
+    pair_index = 0
+    for family_index, spec in enumerate(_INELIGIBLE_SPECS):
+        family = spec["phrase_family"]
+        product = spec["product"]
+        final_template = _INELIGIBLE_FINAL_TEMPLATES[family_index]
+        for prompt_index, prompt_form in enumerate(_INELIGIBLE_PROMPT_FORMS):
+            base_prompt = prompt_form.format(prompt=spec["prompt"])
+            for history_index, (status, blocker, history_template) in enumerate(
+                _INELIGIBLE_HISTORY_FORMS
+            ):
+                pair_index += 1
+                tier = tiers[(family_index + prompt_index + history_index) % len(tiers)]
+                card_name = f"{product} {tier}"
+                card_last4 = f"{number_base + pair_index:04d}"
+                current = base_prompt + _INELIGIBLE_CURRENT_SUFFIXES[history_index]
+                history_text = history_template.format(
+                    card_name=card_name, card_last4=card_last4
+                )
+                final = final_template.format(
+                    card_name=card_name, card_last4=card_last4, blocker=blocker
+                )
+                realization_key = f"{prompt_index}-{history_index}"
+                record = _record(
+                    record_id=f"deictic_ineligible_{family}_{split}_{realization_key}",
+                    split=split,
+                    scenario_family="deictic_ineligible_clarification",
+                    current=current,
+                    final=final,
+                    tool_plan=[],
+                    grounding_facts=[f"card.last4={card_last4}", f"card.status={status}"],
+                    path="clarification",
+                    pre_messages=[
+                        _user("Check the status of my card."),
+                        _assistant(history_text, loss=False),
+                    ],
+                )
+                record["metadata"].update(
+                    {
+                        "coreference_target": "clarification",
+                        "actionable_card_count": 0,
+                    }
+                )
+                records.append(record)
+    return records
+
+
+def _missing_clarification_records(split: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for spec in _MISSING_SPECS:
+        family = spec["phrase_family"]
+        verb = spec["verb"]
+        for prompt_index, prompt_form in enumerate(_MISSING_PROMPT_FORMS):
+            base_prompt = prompt_form.format(prompt=spec["prompt"])
+            ask_clause = _MISSING_ASK_FORMS[prompt_index].format(verb=verb)
+            for history_index, (context_clause, prior_user, prior_assistant) in enumerate(
+                _MISSING_HISTORY_FORMS
+            ):
+                current = base_prompt + _MISSING_CURRENT_SUFFIXES[history_index]
+                final = f"{context_clause} {ask_clause}"
+                pre_messages = (
+                    []
+                    if prior_user is None
+                    else [_user(prior_user), _assistant(prior_assistant, loss=False)]
+                )
+                realization_key = f"{prompt_index}-{history_index}"
+                record = _record(
+                    record_id=f"deictic_missing_{family}_{split}_{realization_key}",
+                    split=split,
+                    scenario_family="deictic_missing_clarification",
+                    current=current,
+                    final=final,
+                    tool_plan=[],
+                    grounding_facts=["missing_field=last4"],
+                    path="clarification",
+                    pre_messages=pre_messages,
+                )
+                record["metadata"].update(
+                    {
+                        "coreference_target": "clarification",
+                        "actionable_card_count": 0,
+                    }
+                )
+                records.append(record)
     return records
 
 

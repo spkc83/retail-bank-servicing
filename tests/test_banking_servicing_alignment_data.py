@@ -61,7 +61,7 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 2058,
+        "train": 2202,
         "validation": 218,
         "test": 35,
     }
@@ -89,6 +89,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "tool_outcome_consistency": 128,
         "deictic_replace_action": 672,
         "deictic_replace_ambiguity": 672,
+        "deictic_ineligible_clarification": 72,
+        "deictic_missing_clarification": 72,
         "natural_social_style": 12,
         "missing_entity_clarification": 1,
         "v7_natural_greeting": 1,
@@ -130,6 +132,18 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
     ]
     assert ood_records
     assert all(record["expected"]["grounding_facts"] == [] for record in ood_records)
+
+
+def test_train_split_covers_ineligible_and_missing_clarifications() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    states = Counter(
+        row["expected"]["generation_contract"]["entity_state"]
+        for row in splits["train"]
+        if row["expected"].get("generation_contract", {}).get("mode") == "clarify"
+    )
+
+    assert states["ineligible"] >= 64
+    assert states["missing"] >= 64
 
 
 def test_remediation_examples_cover_coreference_ambiguity_and_tool_outcomes() -> None:
@@ -652,7 +666,7 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 2058,
+        "train": 2202,
         "validation": 218,
         "test": 35,
     }
