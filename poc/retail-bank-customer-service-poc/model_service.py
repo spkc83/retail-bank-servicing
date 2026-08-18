@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -599,6 +600,7 @@ class ConversationalBankingAgent:
             draft=first_output,
             response_path=response_path,
             model_passes=model_passes,
+            conversation=current,
         )
         completed = [*current, {"role": "assistant", "content": final_output}]
         return AgentTurnResult(
@@ -619,11 +621,12 @@ class ConversationalBankingAgent:
         response_path: str,
         model_passes: list[ModelPassTrace],
         authoritative_evidence: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+        conversation: Sequence[Mapping[str, Any]] = (),
     ) -> tuple[str, str]:
         draft = strip_realizer_filler(draft) or draft
         validation = validate_customer_facing_answer(draft)
         action_validation = validate_no_unsupported_action_claims(
-            draft, tuple(authoritative_evidence)
+            draft, tuple(authoritative_evidence), conversation=conversation
         )
         errors = (*validation.errors, *action_validation.errors)
         if validation.valid and action_validation.valid:
@@ -640,7 +643,7 @@ class ConversationalBankingAgent:
         model_passes.append(repair_trace)
         repaired_validation = validate_customer_facing_answer(repaired)
         repaired_action_validation = validate_no_unsupported_action_claims(
-            repaired, tuple(authoritative_evidence)
+            repaired, tuple(authoritative_evidence), conversation=conversation
         )
         if not repaired_validation.valid or not repaired_action_validation.valid:
             raise AgentProtocolError(

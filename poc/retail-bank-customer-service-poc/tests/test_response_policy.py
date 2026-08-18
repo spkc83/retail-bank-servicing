@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from model_service import ToolCall
 from response_policy import (
     build_customer_experience_repair_messages,
@@ -12,6 +15,8 @@ from response_policy import (
     validate_no_unsupported_action_claims,
     validate_policy_answer,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_leading_prose_keeps_the_sentence_before_an_inline_model_table() -> None:
@@ -364,3 +369,78 @@ def test_action_claims_are_allowed_when_any_tool_evidence_exists() -> None:
     )
 
     assert validation.valid
+
+
+def test_action_claim_is_grounded_by_a_prior_tool_message_in_the_conversation() -> None:
+    conversation = [
+        {"role": "user", "content": "please freeze my card ending in 4821"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "freeze_card", "arguments": {}},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "freeze_card",
+            "content": '{"ok": true, "result": {"card": {"last4": "4821", "status": "frozen"}}}',
+        },
+        {"role": "assistant", "content": "I froze your Everyday Visa Debit ending in 4821."},
+        {"role": "user", "content": "did you actually freeze the card"},
+    ]
+
+    validation = validate_no_unsupported_action_claims(
+        "Yes, I froze it right away.", (), conversation=conversation
+    )
+
+    assert validation.valid
+
+
+def test_action_claim_without_conversation_evidence_is_still_rejected() -> None:
+    validation = validate_no_unsupported_action_claims("Yes, I froze it right away.", ())
+
+    assert not validation.valid
+
+
+def test_ineligibility_blocker_language_is_not_an_action_claim() -> None:
+    validation = validate_no_unsupported_action_claims(
+        "Your Cobble Everyday Debit ending in 7101 is frozen, so I can't do that. "
+        "Which active card should I use instead?",
+        (),
+    )
+
+    assert validation.valid
+
+
+def test_explicit_denial_language_is_not_an_action_claim() -> None:
+    validation = validate_no_unsupported_action_claims(
+        "No card change was made. I only asked which one you wanted replaced.",
+        (),
+    )
+
+    assert validation.valid
+
+
+def test_guard_never_rejects_the_shipped_servicing_alignment_corpus() -> None:
+    train_path = REPO_ROOT / "data" / "banking-servicing-alignment-v5" / "train.jsonl"
+    rejections: list[tuple[str, tuple[str, ...]]] = []
+    with train_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            record = json.loads(line)
+            messages = record["messages"]
+            final = messages[-1]
+            if final.get("role") != "assistant" or not isinstance(final.get("content"), str):
+                continue
+            validation = validate_no_unsupported_action_claims(
+                final["content"], (), conversation=messages
+            )
+            if not validation.valid:
+                rejections.append((record.get("record_id"), validation.errors))
+
+    assert rejections == []

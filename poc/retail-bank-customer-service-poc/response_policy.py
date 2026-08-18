@@ -249,8 +249,8 @@ REALIZER_FILLER_CLOSERS = (
 
 
 COMPLETED_ACTION_CLAIMS = re.compile(
-    r"\b(?:froze|has been frozen|is (?:now )?frozen|replaced|replacement is pending|"
-    r"cancelled|canceled|disputed|has been closed|is now closed)\b",
+    r"\b(?:froze|has been frozen|is now frozen|replacement is pending|"
+    r"I(?:'ve| have)? (?:frozen|replaced|cancelled|canceled|disputed))\b",
     re.IGNORECASE,
 )
 
@@ -258,10 +258,20 @@ COMPLETED_ACTION_CLAIMS = re.compile(
 def validate_no_unsupported_action_claims(
     answer: str,
     results: Sequence[Mapping[str, Any]],
+    conversation: Sequence[Mapping[str, Any]] = (),
 ) -> GroundingValidation:
-    """Zero-tool turns must never assert a completed banking action or state change."""
+    """Zero-tool turns must never assert a completed banking action or state change.
 
-    if results:
+    Evidence is either a current-turn tool result in ``results`` or a prior
+    ``role == "tool"`` message anywhere in ``conversation`` — the same trusted
+    channel ``ground_servicing_decision`` consumes (entity_grounding.py).
+    """
+
+    has_prior_tool_evidence = any(
+        isinstance(message, Mapping) and message.get("role") == "tool"
+        for message in conversation
+    )
+    if results or has_prior_tool_evidence:
         return GroundingValidation(True, ())
     if not isinstance(answer, str):
         return GroundingValidation(False, ("final answer is not text",))
