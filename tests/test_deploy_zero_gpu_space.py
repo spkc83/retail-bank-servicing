@@ -89,6 +89,7 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         _args(tmp_path, "--execute", "--allow-publish"),
         api,
     )
+    default_adapter_id = "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
 
     assert api.upload is not None
     assert api.upload["allow_patterns"] == deploy_module.ALLOW_PATTERNS
@@ -100,8 +101,8 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         "RETAIL_BANK_MODEL_DTYPE": "bf16",
         "RETAIL_BANK_BASE_MODEL_ID": "spkc83/retail-bank-servicing-agent-9b",
         "RETAIL_BANK_BASE_MODEL_REVISION": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
-        "RETAIL_BANK_ADAPTER_ID": "spkc83/retail-bank-servicing-agent-9b-peft",
-        "RETAIL_BANK_ADAPTER_REVISION": "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+        "RETAIL_BANK_ADAPTER_ID": default_adapter_id,
+        "RETAIL_BANK_ADAPTER_REVISION": "badbc05ad1f861818ea244b462eda49bca6c6fca",
         "RETAIL_BANK_ROUTER_ID": "spkc83/router",
         "RETAIL_BANK_ROUTER_REVISION": ROUTER_REVISION,
         "SPACE_COMMIT_SHA": SPACE_COMMIT,

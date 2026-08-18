@@ -75,8 +75,8 @@ The active evaluation composition is:
 
 ```text
 base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
-adapter:  spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3
-dataset:  spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2
+adapter:  spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca
+dataset:  spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602
 dtype:    BF16 with adapter autocasting disabled
 ```
 

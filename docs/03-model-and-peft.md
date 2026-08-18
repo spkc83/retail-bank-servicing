@@ -174,9 +174,12 @@ The active job uses:
 | Adapter bundle commit | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | BF16 adapter SHA-256 | begins `043b22c5`; the full digest remains in the release metadata |
 
-The final PEFT release revision `cc95e446...` is the inference identity. The
-bundle commit `b4269445...` proves which adapter files it contains; neither
-rejected merged checkpoint is an inference substitute.
+The final PEFT release revision `cc95e446...` was the v7 inference identity.
+The bundle commit `b4269445...` proves which adapter files it contains;
+neither rejected merged checkpoint is an inference substitute. The current
+inference identity is the v8 adapter
+`spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation` at revision
+`badbc05ad1f861818ea244b462eda49bca6c6fca`.
 
 ## Rebuilding on New Infrastructure
 

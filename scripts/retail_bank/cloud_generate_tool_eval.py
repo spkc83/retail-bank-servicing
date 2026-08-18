@@ -64,8 +64,8 @@ from hello_slm.banking_tool_sft_data import (
 from hello_slm.banking_tool_wire import ToolWireAdapter
 from hello_slm.config import canonical_json_bytes
 
-DEFAULT_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b-peft"
-DEFAULT_MODEL_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+DEFAULT_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
+DEFAULT_MODEL_REVISION = "badbc05ad1f861818ea244b462eda49bca6c6fca"
 DEFAULT_BASE_MODEL_REPO = "spkc83/retail-bank-servicing-agent-9b"
 DEFAULT_BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"

@@ -1016,7 +1016,7 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert 'dtype="${4:-bf16}"' in source
     assert '--dtype "$dtype"' in source
     assert "1d56824995aa1adecfe20f62ca42fb1c0c443817" in source
-    assert "cc95e446af2b5e1d8d9df2751a8192613ad386e3" in source
+    assert "badbc05ad1f861818ea244b462eda49bca6c6fca" in source
     assert '--base-model-revision "$base_model_revision"' in source
     assert '--adapter-revision "$adapter_revision"' in source
     assert "--evaluation-targets test granite-v7-shadow screenshot-regression" in source

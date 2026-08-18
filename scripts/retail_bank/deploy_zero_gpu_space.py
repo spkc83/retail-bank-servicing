@@ -13,8 +13,8 @@ from typing import Any
 DEFAULT_SOURCE_DIR = Path("poc/retail-bank-customer-service-poc")
 DEFAULT_BASE_MODEL_ID = "spkc83/retail-bank-servicing-agent-9b"
 DEFAULT_BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-DEFAULT_ADAPTER_ID = "spkc83/retail-bank-servicing-agent-9b-peft"
-DEFAULT_ADAPTER_REVISION = "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+DEFAULT_ADAPTER_ID = "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
+DEFAULT_ADAPTER_REVISION = "badbc05ad1f861818ea244b462eda49bca6c6fca"
 ALLOW_PATTERNS = ["*.py", "*.md", "*.txt", "*.toml", "*.lock", "*.json", "LICENSE"]
 IGNORE_PATTERNS = [
     "tests/**",
