@@ -84,14 +84,14 @@ Reproduce the generation step with:
 
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/cloud_generate_tool_eval.py \
-  --model-repo spkc83/retail-bank-servicing-agent-9b-peft \
-  --model-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  --model-repo spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --model-revision badbc05ad1f861818ea244b462eda49bca6c6fca \
   --base-model-repo spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-repo spkc83/retail-bank-servicing-agent-9b-peft \
-  --adapter-revision cc95e446af2b5e1d8d9df2751a8192613ad386e3 \
+  --adapter-repo spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --adapter-revision badbc05ad1f861818ea244b462eda49bca6c6fca \
   --dataset-repo spkc83/retail-bank-servicing-alignment-sft \
-  --dataset-revision 9d7aed545604bb42fb02b7a0919427a0ed2b81e2 \
+  --dataset-revision a78bed17db8c56099a32f835832b9878a895a602 \
   --manifest data/banking-servicing-alignment-v5/manifest.json \
   --split test \
   --output-dir artifacts/banking-servicing-agent-v5-eval \
@@ -101,7 +101,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/cloud_generate_tool_eval.py \
   --enforce-release-gates
 ```
 
-The failed remote evaluation used the same composition:
+A previously failed remote evaluation used the earlier v7 composition:
 
 ```bash
 bash scripts/retail_bank/run_remote_tool_eval_job.sh \
