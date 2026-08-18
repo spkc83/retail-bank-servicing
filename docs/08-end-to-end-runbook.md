@@ -19,8 +19,8 @@ Router release:
   c0d71b433fd1eef510fce36f6308eb36e423e329
 
 Granite PEFT:
-  spkc83/retail-bank-servicing-agent-9b-peft
-  cc95e446af2b5e1d8d9df2751a8192613ad386e3
+  spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation
+  badbc05ad1f861818ea244b462eda49bca6c6fca
 
 Granite Stage-2 base:
   spkc83/retail-bank-servicing-agent-9b
@@ -177,16 +177,16 @@ exposed tool schema, model passes, and immutable revisions.
 ## 7. Plan and Execute ZeroGPU Deployment
 
 ```bash
-ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
+ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
 ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
   --adapter-revision "$ADAPTER_REVISION" \
   --model-dtype bf16 \
   --router-id spkc83/retail-bank-conversation-router \
@@ -195,9 +195,9 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source/pin deployment is
-`cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`. The runtime is RUNNING and its
-authenticated chat smoke passed on ZeroGPU with the pinned base, adapter, and
-router identities present in the returned diagnostics.
+`bab5b2237b22814ede6a76c6c5ac2a1354097d44`. The runtime is RUNNING with the
+pinned base, adapter, and router identities present in the returned
+diagnostics. Authenticated chat smoke on ZeroGPU is pending.
 
 ## Stop Conditions
 

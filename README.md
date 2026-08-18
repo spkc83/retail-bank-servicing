@@ -23,10 +23,10 @@ fictional. The POC does not connect to a real bank.
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Artifact format | 4 |
 | Release gate | `release_eligible: true`; no failures |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`; runtime running |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@bab5b2237b22814ede6a76c6c5ac2a1354097d44`; runtime running |
 
-The Space is running and its authenticated chat smoke completed on a ZeroGPU
-RTX PRO 6000 worker with the exact base, adapter, and router revisions above.
+The Space is running with the exact base, adapter, and router revisions
+above. Authenticated chat smoke is pending.
 
 ## Request Flow
 

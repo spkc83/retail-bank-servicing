@@ -14,7 +14,7 @@ bank data.
 | Component | Identity |
 | --- | --- |
 | Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
@@ -164,16 +164,16 @@ response. The Gradio queue uses concurrency one for this low-traffic POC.
 Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
-ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
+ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
 ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
   --adapter-revision "$ADAPTER_REVISION" \
   --model-dtype bf16 \
   --router-id spkc83/retail-bank-conversation-router \
@@ -184,9 +184,9 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`cfb78c6f46e5d34fa58698030b855d2ce8dfcec0`. The runtime is **RUNNING** and an
-authenticated chat smoke generated a model-authored response on a ZeroGPU RTX
-PRO 6000 worker using the pinned BF16 base-plus-adapter composition.
+`bab5b2237b22814ede6a76c6c5ac2a1354097d44`. The runtime is **RUNNING**. An
+authenticated chat smoke on a ZeroGPU RTX PRO 6000 worker using the pinned
+BF16 base-plus-adapter composition is pending.
 
 ## Verify
 
