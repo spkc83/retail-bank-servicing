@@ -14,8 +14,8 @@ artifact.
 | Local dataset | `data/banking-conversation-router-v6-hierarchical` |
 | Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@cfb78c6f46e5d34fa58698030b855d2ce8dfcec0` |
-| ZeroGPU runtime | RUNNING; authenticated model-generation smoke passed |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@bab5b2237b22814ede6a76c6c5ac2a1354097d44` |
+| ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
 
 ### Dataset files
 
@@ -48,10 +48,10 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 
 | Component | Identity |
 | --- | --- |
-| PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@9d7aed545604bb42fb02b7a0919427a0ed2b81e2` |
+| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
 The runtime loads the base and attaches the adapter without merging: BF16 on
