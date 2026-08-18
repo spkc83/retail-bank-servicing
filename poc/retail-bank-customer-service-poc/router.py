@@ -999,62 +999,6 @@ def _legal_action_entities(intent: str, lane: str) -> tuple[tuple[str, str], ...
     )
 
 
-def _apply_v4_constraints(
-    *,
-    route: str,
-    domain: str,
-    lane: str,
-    family: str,
-    intent: str,
-    action: str,
-    entity_resolution: str,
-    action_labels: tuple[str, ...],
-) -> tuple[str, str, tuple[str, ...]]:
-    diagnostics: list[str] = []
-    if domain == "out_of_domain":
-        if route != "out_of_domain":
-            route = "uncertain"
-            diagnostics.append("constraint:domain-route-conflict")
-        diagnostics.append("constraint:ood-suppressed-downstream")
-        return route, action, tuple(diagnostics)
-    expected_domain, expected_lane, expected_family = _intent_hierarchy(intent)
-    if domain != expected_domain:
-        route = "uncertain"
-        diagnostics.append("constraint:intent-domain-incompatible")
-    if expected_lane is not None and lane != expected_lane:
-        route = "uncertain"
-        diagnostics.append("constraint:intent-lane-incompatible")
-    if expected_family is not None and family != expected_family:
-        route = "uncertain"
-        diagnostics.append("constraint:intent-family-incompatible")
-    if action == "execute_tool" and entity_resolution in {"missing", "ambiguous"}:
-        if "clarify" in action_labels:
-            action = "clarify"
-            diagnostics.append(f"constraint:{entity_resolution}-entity-requires-clarification")
-        else:
-            route = "uncertain"
-    elif action == "execute_tool" and entity_resolution == "ineligible":
-        route = "uncertain"
-        diagnostics.append("constraint:ineligible-entity-blocked-execution")
-    if action == "clarify" and entity_resolution not in {"missing", "ambiguous"}:
-        route = "uncertain"
-        diagnostics.append("constraint:clarify-requires-unresolved-entity")
-    if action == "converse" and intent in MUTATION_FINE_INTENTS:
-        if "clarify" in action_labels:
-            action = "clarify"
-            if entity_resolution not in {"missing", "ambiguous", "ineligible"}:
-                entity_resolution = "missing"
-            diagnostics.append("constraint:mutation-intent-cannot-converse")
-        else:
-            route = "uncertain"
-            diagnostics.append("constraint:mutation-intent-cannot-converse")
-    allowed = _allowed_actions(lane)
-    if allowed is not None and action not in allowed:
-        route = "uncertain"
-        diagnostics.append("constraint:lane-action-incompatible")
-    return route, action, tuple(diagnostics)
-
-
 def _intent_hierarchy(intent: str) -> tuple[str, str, str]:
     try:
         from hello_slm.banking_domain_taxonomy import hierarchy_for_intent

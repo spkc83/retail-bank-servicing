@@ -19,7 +19,6 @@ from router import (
     ROUTER_REVISION,
     ConversationRouterOutput,
     LearnedBankingRouter,
-    _apply_v4_constraints,
     _stabilize_active_relations,
     render_router_input,
 )
@@ -512,22 +511,6 @@ def test_v4_joint_decoder_core_and_poc_parity() -> None:
         poc.entity_resolution,
         poc.score,
     )
-
-
-def test_mutation_intent_with_converse_action_downgrades_to_clarify() -> None:
-    route, action, diagnostics = _apply_v4_constraints(
-        domain="banking",
-        lane="servicing",
-        family="cards",
-        intent="freeze_card",
-        route="in_domain",
-        action="converse",
-        entity_resolution="resolved",
-        action_labels=("execute_tool", "clarify", "converse"),
-    )
-
-    assert action == "clarify"
-    assert "constraint:mutation-intent-cannot-converse" in diagnostics
 
 
 @pytest.mark.parametrize("head_entity_resolution", ["resolved", "not_required"])
