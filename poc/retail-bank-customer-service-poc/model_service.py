@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from dialogue_state import SERVICING_TOOLS
 from mock_bank import SessionBankRegistry
 from response_policy import (
+    POLICY_FALLBACK_NOTE,
     build_customer_experience_repair_messages,
     build_final_repair_messages,
     leading_prose,
@@ -24,6 +25,10 @@ from response_policy import (
 INPUT_TOKEN_BUDGET = 8192
 MAX_NEW_TOKENS = 512
 MAX_TOOL_CALLS = 8
+
+
+def _is_policy_fallback_turn(router_result: Mapping[str, Any]) -> bool:
+    return POLICY_FALLBACK_NOTE in tuple(router_result.get("constraint_diagnostics") or ())
 
 AGENT_SYSTEM_PROMPT = (
     "You are Harbor, the conversational customer-service assistant for Harborlight "
@@ -396,6 +401,7 @@ class ConversationalBankingAgent:
                     first_output=first_output,
                     response_path="direct_answer",
                     model_passes=model_passes,
+                    strict_action_claims=_is_policy_fallback_turn(router_result),
                 )
             response_path = "base_tool"
             _validate_tool_calls(calls, allowed_tools=public_tools)
@@ -594,13 +600,14 @@ class ConversationalBankingAgent:
         first_output: str,
         response_path: str,
         model_passes: list[ModelPassTrace],
+        strict_action_claims: bool = False,
     ) -> AgentTurnResult:
         final_output, final_path = self._ensure_customer_facing(
             user_message=str(current[-1]["content"]),
             draft=first_output,
             response_path=response_path,
             model_passes=model_passes,
-            conversation=current,
+            conversation=() if strict_action_claims else current,
         )
         completed = [*current, {"role": "assistant", "content": final_output}]
         return AgentTurnResult(

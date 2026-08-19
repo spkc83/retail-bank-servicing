@@ -22,6 +22,7 @@ from model_service import (
     router_diagnostic_fields,
 )
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
+from response_policy import policy_context_fallback_route, tool_evidence_answers_question
 from responses import MODEL_FAILURE_RESPONSE, OOD_RESPONSE, POLICY_NOT_FOUND_RESPONSE
 from router import ROUTER_REVISION
 
@@ -120,26 +121,37 @@ class LocalBankingController:
             if (route.get("lane") or transition.lane) == "policy":
                 lookup = self.policy_knowledge.lookup(message.strip())
                 if not lookup.matched:
-                    return self._direct_result(
+                    if not tool_evidence_answers_question(message.strip(), canonical):
+                        return self._direct_result(
+                            username=username,
+                            session_hash=session_hash,
+                            message=message,
+                            response=POLICY_NOT_FOUND_RESPONSE,
+                            conversation=canonical,
+                            route=route,
+                            response_path="policy_no_match",
+                            activity="No approved current policy passage matched the question.",
+                        )
+                    route = policy_context_fallback_route(route)
+                    turn = agent.run_turn(
                         username=username,
                         session_hash=session_hash,
                         message=message,
-                        response=POLICY_NOT_FOUND_RESPONSE,
                         conversation=canonical,
-                        route=route,
-                        response_path="policy_no_match",
-                        activity="No approved current policy passage matched the question.",
+                        router_result=route,
+                        pinned_exchange=pinned_exchange,
                     )
-                policy_matches = tuple(match.as_dict() for match in lookup.matches)
-                turn = agent.run_policy_turn(
-                    username=username,
-                    session_hash=session_hash,
-                    message=message,
-                    conversation=canonical,
-                    policy_matches=policy_matches,
-                    corpus_revision=lookup.corpus_revision,
-                    pinned_exchange=pinned_exchange,
-                )
+                else:
+                    policy_matches = tuple(match.as_dict() for match in lookup.matches)
+                    turn = agent.run_policy_turn(
+                        username=username,
+                        session_hash=session_hash,
+                        message=message,
+                        conversation=canonical,
+                        policy_matches=policy_matches,
+                        corpus_revision=lookup.corpus_revision,
+                        pinned_exchange=pinned_exchange,
+                    )
             else:
                 turn = agent.run_turn(
                     username=username,
@@ -441,6 +453,8 @@ def render_local_diagnostics(
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
         f"- Router reason: `{route.get('reason', 'not provided')}`\n"
         f"- Router failure type: `{route.get('failure_type', 'none')}`\n"
+        f"- Constraint notes: "
+        f"`{json.dumps(list(route.get('constraint_diagnostics') or []))}`\n"
         f"- Response path: `{response_path}`\n\n"
         f"- Policy sources: `{json.dumps(policy_sources)}`\n"
         f"- Dialogue state: `{json.dumps(dialogue_state or {}, sort_keys=True)}`\n\n"

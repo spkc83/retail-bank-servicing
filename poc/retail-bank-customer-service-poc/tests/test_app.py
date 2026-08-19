@@ -658,3 +658,121 @@ def test_policy_detour_uses_grounded_granite_and_resumes_pending_service(
     assert resumed[-1]["knowledge_detour_active"] is False
     assert resumed[-1]["pending_servicing"]["intent"] == "dispute_transaction"
     assert "I need to dispute a purchase." in str(generated[2][0])
+
+
+def test_policy_no_match_with_relevant_tool_evidence_uses_grounded_fallback(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated: list[tuple[list[dict[str, object]], object]] = []
+    outputs = iter(
+        (
+            '<tool_call>{"name":"list_transactions","arguments":{}}</tool_call>',
+            "Here are your five most recent transactions.",
+            "North Harbor Market is the grocery merchant from your July 25 purchase.",
+        )
+    )
+
+    def classify(message, *_args):
+        if "north harbor market" in message.casefold() and "?" in message:
+            return route(intent="policy_knowledge")
+        return route(intent="view_transactions", capability="transactions")
+
+    def generate(messages, tools, _max_new_tokens):
+        generated.append((messages, tools))
+        return next(outputs)
+
+    monkeypatch.setattr(app_module, "route_query", classify)
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", generate)
+
+    grounded = app_module.run_model_turn(
+        "Show my five most recent transactions.", [], [], {}, request()
+    )
+    followup = app_module.run_model_turn(
+        "what is north harbor market ?",
+        grounded[1],
+        grounded[2],
+        grounded[-1],
+        request(),
+    )
+
+    answer = followup[1][-1]["content"]
+    assert "North Harbor Market" in answer
+    assert "approved current policy" not in answer
+    assert generated[-1][1] is None
+    assert "fallback:policy-no-match-grounded-converse" in followup[5]
+
+
+def test_policy_no_match_with_irrelevant_tool_evidence_keeps_stock_response(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = iter(
+        (
+            '<tool_call>{"name":"list_transactions","arguments":{}}</tool_call>',
+            "Here are your five most recent transactions.",
+        )
+    )
+
+    def classify(message, *_args):
+        if "atm" in message.casefold():
+            return route(intent="policy_knowledge")
+        return route(intent="view_transactions", capability="transactions")
+
+    def generate(messages, tools, _max_new_tokens):
+        return next(outputs)
+
+    monkeypatch.setattr(app_module, "route_query", classify)
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", generate)
+
+    grounded = app_module.run_model_turn(
+        "Show my five most recent transactions.", [], [], {}, request()
+    )
+    followup = app_module.run_model_turn(
+        "What are your ATM withdrawal limits?",
+        grounded[1],
+        grounded[2],
+        grounded[-1],
+        request(),
+    )
+
+    answer = followup[1][-1]["content"]
+    assert "approved current policy" in answer
+
+
+def test_policy_for_x_question_keeps_stock_response_despite_account_evidence(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = iter(
+        (
+            '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>',
+            "Here are your accounts.",
+        )
+    )
+
+    def classify(message, *_args):
+        if "policy" in message.casefold():
+            return route(intent="policy_knowledge")
+        return route(intent="view_accounts", capability="accounts")
+
+    def generate(messages, tools, _max_new_tokens):
+        return next(outputs)
+
+    monkeypatch.setattr(app_module, "route_query", classify)
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(app_module, "generate_text", generate)
+
+    grounded = app_module.run_model_turn("Show my account balances.", [], [], {}, request())
+    followup = app_module.run_model_turn(
+        "What is the policy for a savings account?",
+        grounded[1],
+        grounded[2],
+        grounded[-1],
+        request(),
+    )
+
+    answer = followup[1][-1]["content"]
+    assert "approved current policy" in answer

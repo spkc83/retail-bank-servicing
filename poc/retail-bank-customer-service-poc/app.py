@@ -56,6 +56,7 @@ from dialogue_state import DialogueState, begin_turn, commit_operations, finish_
 from diagnostics import diagnostic_summary, error_model_passes
 from entity_grounding import ground_servicing_decision
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
+from response_policy import policy_context_fallback_route, tool_evidence_answers_question
 from responses import (
     MODEL_FAILURE_RESPONSE,
     OOD_RESPONSE,
@@ -193,31 +194,42 @@ def run_model_turn(
         if (route.get("lane") or transition.lane) == "policy":
             lookup = POLICY_KNOWLEDGE.lookup(message.strip())
             if not lookup.matched:
-                return _direct_turn(
-                    message=message,
-                    response=POLICY_NOT_FOUND_RESPONSE,
-                    visible=visible,
-                    conversation=conversation,
-                    snapshot=render_snapshot(BANK.snapshot(username, session_hash)),
-                    activity="No approved current policy passage matched the question.",
-                    diagnostics=_render_diagnostics(
-                        route,
-                        (),
-                        (),
-                        "policy no match",
+                if not tool_evidence_answers_question(message.strip(), conversation):
+                    return _direct_turn(
+                        message=message,
+                        response=POLICY_NOT_FOUND_RESPONSE,
+                        visible=visible,
+                        conversation=conversation,
+                        snapshot=render_snapshot(BANK.snapshot(username, session_hash)),
+                        activity="No approved current policy passage matched the question.",
+                        diagnostics=_render_diagnostics(
+                            route,
+                            (),
+                            (),
+                            "policy no match",
+                            dialogue_state=transition.state.as_dict(),
+                        ),
                         dialogue_state=transition.state.as_dict(),
-                    ),
-                    dialogue_state=transition.state.as_dict(),
+                    )
+                route = policy_context_fallback_route(route)
+                result = agent.run_turn(
+                    username=username,
+                    session_hash=session_hash,
+                    message=message,
+                    conversation=conversation,
+                    router_result=route,
+                    pinned_exchange=pinned_exchange,
                 )
-            result = agent.run_policy_turn(
-                username=username,
-                session_hash=session_hash,
-                message=message,
-                conversation=conversation,
-                policy_matches=tuple(match.as_dict() for match in lookup.matches),
-                corpus_revision=lookup.corpus_revision,
-                pinned_exchange=pinned_exchange,
-            )
+            else:
+                result = agent.run_policy_turn(
+                    username=username,
+                    session_hash=session_hash,
+                    message=message,
+                    conversation=conversation,
+                    policy_matches=tuple(match.as_dict() for match in lookup.matches),
+                    corpus_revision=lookup.corpus_revision,
+                    pinned_exchange=pinned_exchange,
+                )
         else:
             result = agent.run_turn(
                 username=username,
@@ -680,6 +692,8 @@ def _render_diagnostics(
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
         f"- Router reason: `{route.get('reason', 'not provided')}`\n"
         f"- Router failure type: `{route.get('failure_type', 'none')}`\n"
+        f"- Constraint notes: "
+        f"`{json.dumps(list(route.get('constraint_diagnostics') or []))}`\n"
         f"- Response path: `{response_path}`\n\n"
         f"- Policy sources: `{json.dumps(policy_sources)}`\n"
         f"- Dialogue state: `{json.dumps(dialogue_state or {}, sort_keys=True)}`\n\n"

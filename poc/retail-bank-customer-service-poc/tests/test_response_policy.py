@@ -444,3 +444,93 @@ def test_guard_never_rejects_the_shipped_servicing_alignment_corpus() -> None:
                 rejections.append((record.get("record_id"), validation.errors))
 
     assert rejections == []
+
+
+def test_tool_evidence_gate_requires_question_relevance() -> None:
+    from response_policy import tool_evidence_answers_question
+
+    grounded = [
+        {"role": "user", "content": "Show my five most recent transactions."},
+        {"role": "assistant", "content": "", "tool_calls": [{"name": "list_transactions"}]},
+        {
+            "role": "tool",
+            "name": "list_transactions",
+            "content": '{"rows":[{"description":"North Harbor Market","amount":"-86.24"}]}',
+        },
+        {"role": "assistant", "content": "## Recent transactions"},
+    ]
+    assert tool_evidence_answers_question("what is north harbor market ?", grounded)
+    assert not tool_evidence_answers_question(
+        "What are your ATM withdrawal limits?",
+        grounded,
+    )
+    accounts_evidence = [
+        {
+            "role": "tool",
+            "name": "list_accounts",
+            "content": (
+                '{"accounts":[{"account_id":"acct-1","available_balance_cents":324567,'
+                '"currency":"USD","customer_id":"cust-1","last4":"1042",'
+                '"name":"Everyday Checking","status":"active","type":"checking"}]}'
+            ),
+        }
+    ]
+    for policy_question in (
+        "What is the policy for a savings account?",
+        "What is your policy on an active card?",
+        "What is the policy for my checking account balance?",
+        "Is there a fee?",
+        "What are the transfer limits?",
+    ):
+        assert not tool_evidence_answers_question(policy_question, accounts_evidence), (
+            policy_question
+        )
+    coffee_evidence = [
+        {
+            "role": "tool",
+            "name": "list_transactions",
+            "content": '{"rows":[{"description":"Blue Line Coffee","disputed":false}]}',
+        }
+    ]
+    assert not tool_evidence_answers_question("Is there a fee?", coffee_evidence)
+    assert not tool_evidence_answers_question("what is the status currency?", coffee_evidence)
+    assert not tool_evidence_answers_question("what is north harbor market ?", [])
+    assert not tool_evidence_answers_question(
+        "what is north harbor market ?",
+        [
+            {"role": "user", "content": "north harbor market"},
+            {"role": "assistant", "content": "North Harbor Market appears here."},
+        ],
+    )
+    assert not tool_evidence_answers_question("what?", grounded)
+    stale = [
+        grounded[2],
+        *[
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn {i}"}
+            for i in range(10)
+        ],
+    ]
+    assert not tool_evidence_answers_question("what is north harbor market ?", stale, window=8)
+
+
+def test_policy_fallback_route_keeps_learned_decision_and_tags_diagnostics() -> None:
+    from response_policy import POLICY_FALLBACK_NOTE, policy_context_fallback_route
+
+    route = {
+        "route": "in_domain",
+        "lane": "policy",
+        "intent": "policy_knowledge",
+        "action": "retrieve_policy",
+        "entity_resolution": "not_required",
+        "constraint_diagnostics": ("constraint:example",),
+    }
+    amended = policy_context_fallback_route(route)
+    assert amended["action"] == "converse"
+    assert amended["entity_resolution"] == "not_required"
+    assert amended["lane"] == "policy"
+    assert amended["intent"] == "policy_knowledge"
+    assert amended["learned_action"] == "retrieve_policy"
+    assert amended["learned_entity_resolution"] == "not_required"
+    assert amended["constraint_diagnostics"] == ("constraint:example", POLICY_FALLBACK_NOTE)
+    assert route["action"] == "retrieve_policy"
+    assert route["constraint_diagnostics"] == ("constraint:example",)

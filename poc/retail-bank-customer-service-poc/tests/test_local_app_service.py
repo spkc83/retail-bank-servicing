@@ -568,3 +568,161 @@ def test_failed_mutation_follow_up_commits_action_without_pending_retry(
 
     assert result.snapshot["cards"][0]["status"] == "frozen"
     assert result.dialogue_state["pending_servicing"] is None
+
+
+class NoMatchPolicyResult:
+    matched = False
+    matches = ()
+    corpus_revision = "sha256:policy-v1"
+
+
+class NoMatchPolicyKnowledge:
+    def lookup(self, _query):
+        return NoMatchPolicyResult()
+
+
+def test_policy_no_match_with_tool_evidence_falls_back_to_grounded_converse(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            '<tool_call>{"name":"list_transactions","arguments":{}}</tool_call>',
+            "Here are your five most recent transactions.",
+            "North Harbor Market is the grocery merchant from your July 25 purchase of USD 86.24.",
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [
+                routed("view_transactions"),
+                routed("policy_knowledge"),
+            ]
+        ),
+        policy_knowledge=NoMatchPolicyKnowledge(),
+    )
+
+    grounded = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my five most recent transactions.",
+        conversation=[],
+    )
+    followup = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="what is north harbor market ?",
+        conversation=grounded.conversation,
+    )
+
+    assert followup.response_path != "policy_no_match"
+    assert "North Harbor Market" in followup.response
+    assert "couldn’t find an approved current policy" not in followup.response
+    assert "fallback:policy-no-match-grounded-converse" in followup.diagnostics
+    fallback_prompt = runtime.calls[-1]["messages"]
+    assert runtime.calls[-1]["tools"] is None
+    assert any(message.get("role") == "tool" for message in fallback_prompt)
+
+
+def test_policy_no_match_with_irrelevant_tool_evidence_keeps_stock_response(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            '<tool_call>{"name":"list_transactions","arguments":{}}</tool_call>',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [
+                routed("view_transactions"),
+                routed("policy_knowledge"),
+            ]
+        ),
+        policy_knowledge=NoMatchPolicyKnowledge(),
+    )
+
+    grounded = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my five most recent transactions.",
+        conversation=[],
+    )
+    followup = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="What are your ATM withdrawal limits?",
+        conversation=grounded.conversation,
+    )
+
+    assert followup.response_path == "policy_no_match"
+    assert "approved current policy" in followup.response
+    assert len(runtime.calls) == 2
+
+
+def test_policy_fallback_turn_rejects_fabricated_action_claims(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            '<tool_call>{"name":"list_transactions","arguments":{}}</tool_call>',
+            "Here are your five most recent transactions.",
+            "I've frozen your card ending in 4821. North Harbor Market is a grocer.",
+            "North Harbor Market is the grocery merchant from your July 25 purchase.",
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter(
+            [
+                routed("view_transactions"),
+                routed("policy_knowledge"),
+            ]
+        ),
+        policy_knowledge=NoMatchPolicyKnowledge(),
+    )
+
+    grounded = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my five most recent transactions.",
+        conversation=[],
+    )
+    followup = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="what is north harbor market ?",
+        conversation=grounded.conversation,
+    )
+
+    assert "frozen" not in followup.response.lower()
+    assert "North Harbor Market" in followup.response
+    assert followup.response_path.endswith("_customer_repaired")
+
+
+def test_policy_no_match_without_tool_evidence_keeps_stock_response(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime([])
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter([routed("policy_knowledge")]),
+        policy_knowledge=NoMatchPolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="What is the policy on gemstone loans?",
+        conversation=[],
+    )
+
+    assert result.response_path == "policy_no_match"
+    assert "approved current policy" in result.response
+    assert runtime.calls == []

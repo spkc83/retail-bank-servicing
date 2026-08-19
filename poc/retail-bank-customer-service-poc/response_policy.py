@@ -562,3 +562,141 @@ def _without_private_identifiers(
     if isinstance(value, list):
         return [_without_private_identifiers(item, public_id_keys=public_ids) for item in value]
     return value
+
+
+POLICY_FALLBACK_NOTE = "fallback:policy-no-match-grounded-converse"
+
+_QUESTION_STOPWORDS = frozenset(
+    {
+        "about",
+        "and",
+        "are",
+        "can",
+        "could",
+        "did",
+        "does",
+        "explain",
+        "for",
+        "from",
+        "have",
+        "how",
+        "into",
+        "our",
+        "please",
+        "she",
+        "tell",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "they",
+        "this",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
+
+_POLICY_QUESTION_DISQUALIFIERS = frozenset(
+    {
+        "charge",
+        "charges",
+        "fee",
+        "fees",
+        "limit",
+        "limits",
+        "policies",
+        "policy",
+        "rate",
+        "rates",
+        "rule",
+        "rules",
+        "terms",
+    }
+)
+
+
+def _tool_payload_value_tokens(content: str) -> set[str]:
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return set()
+    tokens: set[str] = set()
+    stack: list[Any] = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, Mapping):
+            stack.extend(value.values())
+        elif isinstance(value, list):
+            stack.extend(value)
+        elif isinstance(value, str):
+            tokens.update(re.findall(r"[a-z0-9]+", value.lower()))
+        elif isinstance(value, int | float) and not isinstance(value, bool):
+            tokens.update(re.findall(r"[a-z0-9]+", str(value).lower()))
+    return tokens
+
+
+def tool_evidence_answers_question(
+    question: str,
+    conversation: Sequence[Mapping[str, Any]],
+    *,
+    window: int = 8,
+) -> bool:
+    """Report whether recent tool results plausibly answer the question.
+
+    Every salient question token must appear among the tool-result VALUES within
+    the last ``window`` messages, so an entity follow-up such as a merchant
+    question after a transaction table qualifies. Questions asking for policy
+    terms (fees, limits, rates, rules) never qualify: an unmatched policy
+    question keeps the stock response instead of an ungrounded generation.
+    """
+
+    raw_tokens = re.findall(r"[a-z0-9]+", str(question).lower())
+    if any(token in _POLICY_QUESTION_DISQUALIFIERS for token in raw_tokens):
+        return False
+    tokens = [
+        token for token in raw_tokens if len(token) >= 3 and token not in _QUESTION_STOPWORDS
+    ]
+    if not tokens:
+        return False
+    recent = list(conversation)[-window:] if window > 0 else []
+    evidence_tokens: set[str] = set()
+    for message in recent:
+        if isinstance(message, Mapping) and str(message.get("role", "")) == "tool":
+            evidence_tokens.update(_tool_payload_value_tokens(str(message.get("content", ""))))
+    if not evidence_tokens:
+        return False
+    return all(token in evidence_tokens for token in tokens)
+
+
+def policy_context_fallback_route(route: Mapping[str, Any]) -> dict[str, Any]:
+    """Amend a policy route into a grounded converse turn over prior tool results.
+
+    The learned decision is preserved under ``learned_*`` keys so diagnostics keep
+    reporting what the router actually chose; only the effective action changes.
+    """
+
+    amended: dict[str, Any] = dict(route)
+    amended.setdefault("learned_action", str(route.get("action", "retrieve_policy")))
+    amended.setdefault(
+        "learned_entity_resolution", str(route.get("entity_resolution", "not_required"))
+    )
+    amended["action"] = "converse"
+    amended["entity_resolution"] = "not_required"
+    amended["constraint_diagnostics"] = (
+        *tuple(amended.get("constraint_diagnostics") or ()),
+        POLICY_FALLBACK_NOTE,
+    )
+    return amended
