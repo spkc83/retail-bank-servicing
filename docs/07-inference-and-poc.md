@@ -13,7 +13,7 @@ bank data.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
+| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
 | Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
@@ -131,7 +131,7 @@ bitsandbytes NF4 double quantization and attaches the immutable adapter. It
 prefers:
 
 ```text
-artifacts/banking-conversation-router-v6-hierarchical
+artifacts/banking-conversation-router-v8-first-turn-mutation
 ```
 
 Local-only default credentials are:
@@ -165,7 +165,7 @@ Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
 ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
-ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
+ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

@@ -9,10 +9,10 @@ contract, and run either interface.
 
 | Component | Identity/status |
 | --- | --- |
-| Hierarchical router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Router dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
-| Local router artifact | `artifacts/banking-conversation-router-v6-hierarchical`; release eligible |
-| Router dataset rows | train 16,720; validation 4,077; test 4,913 |
+| Hierarchical router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
+| Router dataset rows | train 20,439; validation 4,158; test 4,921 |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |
 | Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
@@ -39,9 +39,9 @@ the pages themselves describe V6 format 4 and its seven heads.
 | Path | Purpose |
 | --- | --- |
 | `data/banking-servicing-alignment-v5` | Governed Granite alignment source used to derive in-domain router examples. |
-| `data/banking-conversation-router-v6-hierarchical` | V6 train, validation, and test rows. |
-| `data/sources/banking-conversation-router-v6-hierarchical.lock.json` | Source and prepared-split digests. |
-| `artifacts/banking-conversation-router-v6-hierarchical` | Format-4 model, heads, tokenizer, configuration, metrics, and manifest. |
+| `data/banking-conversation-router-v8-first-turn-mutation` | V6 train, validation, and test rows. |
+| `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` | Source and prepared-split digests. |
+| `artifacts/banking-conversation-router-v8-first-turn-mutation` | Format-4 model, heads, tokenizer, configuration, metrics, and manifest. |
 | `src/hello_slm/banking_domain_taxonomy.py` | Canonical hierarchy and legal action/entity combinations. |
 | `poc/retail-bank-customer-service-poc` | Shared Gradio/ZeroGPU and Streamlit runtime. |
 | `scripts/retail_bank` | Data, training, evaluation, and deployment entry points. |
@@ -49,8 +49,8 @@ the pages themselves describe V6 format 4 and its seven heads.
 ## Safe Local Checks
 
 ```bash
-python -m json.tool data/banking-conversation-router-v6-hierarchical/manifest.json >/dev/null
-python -m json.tool artifacts/banking-conversation-router-v6-hierarchical/metrics.json >/dev/null
+python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
+python -m json.tool artifacts/banking-conversation-router-v8-first-turn-mutation/metrics.json >/dev/null
 
 PYTHONPATH=src uv run pytest -q \
   tests/test_banking_conversation_router.py \

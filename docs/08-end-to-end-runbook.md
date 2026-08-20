@@ -8,7 +8,7 @@ Stop at the first failed prerequisite or release gate.
 ```text
 Router data:
   spkc83/retail-bank-conversation-router-data
-  073e61156885a8a2074c7254d76f00634058429a
+  b33c27170e27cdb11783704ede14f7d25f70625e
 
 Router base:
   distilbert/distilbert-base-uncased
@@ -16,7 +16,7 @@ Router base:
 
 Router release:
   spkc83/retail-bank-conversation-router
-  c0d71b433fd1eef510fce36f6308eb36e423e329
+  dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 Granite PEFT:
   spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation
@@ -53,23 +53,23 @@ Stop if taxonomy, dataset, joint decoder, artifact, harness, or POC tests fail.
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v6-hierarchical \
-  --source-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json
+  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
 ```
 
 Validate the JSON and expected counts:
 
 ```bash
-python -m json.tool data/banking-conversation-router-v6-hierarchical/manifest.json >/dev/null
-python -m json.tool data/sources/banking-conversation-router-v6-hierarchical.lock.json >/dev/null
+python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
+python -m json.tool data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json >/dev/null
 
 python - <<'PY'
 import json
 from pathlib import Path
 
 manifest = json.loads(
-    Path("data/banking-conversation-router-v6-hierarchical/manifest.json").read_text()
+    Path("data/banking-conversation-router-v8-first-turn-mutation/manifest.json").read_text()
 )
 actual = manifest["report"]["split_counts"]
 expected = {"train": 16693, "validation": 4061, "test": 4895}
@@ -88,14 +88,14 @@ The training identity is already pinned:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-073e61156885a8a2074c7254d76f00634058429a
+b33c27170e27cdb11783704ede14f7d25f70625e
 ```
 
 For a future dataset, upload its directory and capture the returned commit:
 
 ```bash
 hf upload spkc83/retail-bank-conversation-router-data \
-  data/banking-conversation-router-v6-hierarchical . \
+  data/banking-conversation-router-v8-first-turn-mutation . \
   --type dataset \
   --commit-message "Publish V6 hierarchical router data"
 ```
@@ -106,8 +106,8 @@ Do not train against `main`; use the immutable commit.
 
 ```bash
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v6-hierarchical \
-  --output-dir artifacts/banking-conversation-router-v6-hierarchical
+  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
 ```
 
 Check the gate:
@@ -118,7 +118,7 @@ import json
 from pathlib import Path
 
 metrics = json.loads(
-    Path("artifacts/banking-conversation-router-v6-hierarchical/metrics.json").read_text()
+    Path("artifacts/banking-conversation-router-v8-first-turn-mutation/metrics.json").read_text()
 )
 assert metrics["release_eligible"] is True
 assert metrics["release_gate_failures"] == []
@@ -139,18 +139,18 @@ The release selected epoch 2 and passed every gate.
 Publication requires the exact dataset revision:
 
 ```bash
-ROUTER_DATA_REVISION=073e61156885a8a2074c7254d76f00634058429a
+ROUTER_DATA_REVISION=b33c27170e27cdb11783704ede14f7d25f70625e
 
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v6-hierarchical \
-  --output-dir artifacts/banking-conversation-router-v6-hierarchical \
+  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation \
   --publish \
   --data-revision "$ROUTER_DATA_REVISION" \
   --destination-id spkc83/retail-bank-conversation-router
 ```
 
 Capture the returned commit. For this release it is
-`c0d71b433fd1eef510fce36f6308eb36e423e329`. Re-read the published
+`dd5ea26674a0f9808d42110a9ee51a9af6762a76`. Re-read the published
 `router_config.json` and confirm `format_version: 4` plus the exact data
 revision.
 
@@ -158,7 +158,7 @@ revision.
 
 ```bash
 export RETAIL_BANK_ROUTER_ID=spkc83/retail-bank-conversation-router
-export RETAIL_BANK_ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
+export RETAIL_BANK_ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
@@ -178,7 +178,7 @@ exposed tool schema, model passes, and immutable revisions.
 
 ```bash
 ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
-ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
+ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

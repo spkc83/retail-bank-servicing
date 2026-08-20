@@ -5,11 +5,11 @@ from typing import Any
 
 MODEL_ID = os.environ.get(
     "RETAIL_BANK_MODEL_ID",
-    "spkc83/retail-bank-servicing-agent-9b-peft",
+    "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation",
 )
 MODEL_REVISION = os.environ.get(
     "RETAIL_BANK_MODEL_REVISION",
-    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+    "badbc05ad1f861818ea244b462eda49bca6c6fca",
 )
 BASE_MODEL_ID = os.environ.get(
     "RETAIL_BANK_BASE_MODEL_ID",
@@ -21,11 +21,11 @@ BASE_MODEL_REVISION = os.environ.get(
 ).strip()
 ADAPTER_ID = os.environ.get(
     "RETAIL_BANK_ADAPTER_ID",
-    "spkc83/retail-bank-servicing-agent-9b-peft",
+    "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation",
 ).strip()
 ADAPTER_REVISION = os.environ.get(
     "RETAIL_BANK_ADAPTER_REVISION",
-    "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+    "badbc05ad1f861818ea244b462eda49bca6c6fca",
 ).strip()
 MODEL_DTYPE = os.environ.get("RETAIL_BANK_MODEL_DTYPE", "bf16").strip().lower()
 SKIP_MODEL_LOAD = os.environ.get("POC_SKIP_MODEL_LOAD") == "1"

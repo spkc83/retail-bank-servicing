@@ -8,11 +8,11 @@ artifact.
 
 | Artifact | Identity |
 | --- | --- |
-| Hub model | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Hub dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
-| Local model | `artifacts/banking-conversation-router-v6-hierarchical` |
-| Local dataset | `data/banking-conversation-router-v6-hierarchical` |
-| Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
+| Hub model | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Hub dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Local model | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
+| Local dataset | `data/banking-conversation-router-v8-first-turn-mutation` |
+| Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@bab5b2237b22814ede6a76c6c5ac2a1354097d44` |
 | ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
@@ -21,9 +21,9 @@ artifact.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 16,720 | `a03a35a384a80d39c10455d32d28a20a902f5ac11da5d18a279c1604fe96e38f` |
-| `validation.jsonl` | 4,077 | `83ecf3f221ec03d858a99fbdb1f0cebd5172157444a296418529674b62f0a7b3` |
-| `test.jsonl` | 4,913 | `64a0e7e6c6c0016979116da7e08a75f01fafb603e70b39caa0c8467345df61d9` |
+| `train.jsonl` | 20,439 | `c838134cdecc22723fda887c1dd561329ab5cac2c72eabc2de484c54a4d4f733` |
+| `validation.jsonl` | 4,158 | `5491dcbe64ef5c4d7a15d440076ef9964a3767a0adb94d0c4edbb33ecc3c2168` |
+| `test.jsonl` | 4,921 | `135e2c16962a19c2752b85ca626e83e067eaa9222ff7e1b9029bbdbe681584e8` |
 
 The dataset manifest SHA-256 recorded in the model is
 `caae2209063beb9370d0f3a6fc166e4c35658fafdd2420b21e5920c6c9e90de5`.

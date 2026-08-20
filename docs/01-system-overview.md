@@ -179,8 +179,8 @@ service, response policy, Harborlight branding helpers, and fictional bank
 backend.
 
 The hierarchical state-conditioned router is published at
-`c0d71b433fd1eef510fce36f6308eb36e423e329` from dataset revision
-`073e61156885a8a2074c7254d76f00634058429a`. Granite inference composes base
+`dd5ea26674a0f9808d42110a9ee51a9af6762a76` from dataset revision
+`b33c27170e27cdb11783704ede14f7d25f70625e`. Granite inference composes base
 `spkc83/retail-bank-servicing-agent-9b@1d568249...` with PEFT adapter
 `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05...`.
 Merged candidates are not used because they failed the unchanged

@@ -10,21 +10,21 @@ examples.
 | Item | Value |
 | --- | --- |
 | Dataset | `spkc83/retail-bank-conversation-router-data` |
-| Immutable revision | `073e61156885a8a2074c7254d76f00634058429a` |
-| Local directory | `data/banking-conversation-router-v6-hierarchical` |
-| Source lock | `data/sources/banking-conversation-router-v6-hierarchical.lock.json` |
-| Train rows | 16,720 |
-| Validation rows | 4,077 |
-| Test rows | 4,913 |
+| Immutable revision | `b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Local directory | `data/banking-conversation-router-v8-first-turn-mutation` |
+| Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
+| Train rows | 20,439 |
+| Validation rows | 4,158 |
+| Test rows | 4,921 |
 | Manifest SHA-256 | `caae2209063beb9370d0f3a6fc166e4c35658fafdd2420b21e5920c6c9e90de5` |
 
 The split SHA-256 values are:
 
 | Split | SHA-256 |
 | --- | --- |
-| train | `a03a35a384a80d39c10455d32d28a20a902f5ac11da5d18a279c1604fe96e38f` |
-| validation | `83ecf3f221ec03d858a99fbdb1f0cebd5172157444a296418529674b62f0a7b3` |
-| test | `64a0e7e6c6c0016979116da7e08a75f01fafb603e70b39caa0c8467345df61d9` |
+| train | `c838134cdecc22723fda887c1dd561329ab5cac2c72eabc2de484c54a4d4f733` |
+| validation | `5491dcbe64ef5c4d7a15d440076ef9964a3767a0adb94d0c4edbb33ecc3c2168` |
+| test | `135e2c16962a19c2752b85ca626e83e067eaa9222ff7e1b9029bbdbe681584e8` |
 
 ## Inputs and Generator
 
@@ -42,9 +42,9 @@ Generate the exact release data with:
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v6-hierarchical \
-  --source-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json
+  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
 ```
 
 The expected lock makes regeneration fail if split digests drift. Use
@@ -205,8 +205,8 @@ to production traffic.
 ## Verify
 
 ```bash
-python -m json.tool data/banking-conversation-router-v6-hierarchical/manifest.json >/dev/null
-python -m json.tool data/sources/banking-conversation-router-v6-hierarchical.lock.json >/dev/null
+python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
+python -m json.tool data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json >/dev/null
 
 PYTHONPATH=src uv run pytest -q \
   tests/test_banking_conversation_router_data.py \

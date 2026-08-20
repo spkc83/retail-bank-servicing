@@ -16,10 +16,10 @@ fictional. The POC does not connect to a real bank.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Router data | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
-| Local artifact | `artifacts/banking-conversation-router-v6-hierarchical` |
-| Local data | `data/banking-conversation-router-v6-hierarchical` |
+| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Router data | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Local artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
+| Local data | `data/banking-conversation-router-v8-first-turn-mutation` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Artifact format | 4 |
 | Release gate | `release_eligible: true`; no failures |
@@ -96,16 +96,16 @@ uv sync --extra dev --extra scale
 
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v6-hierarchical \
-  --source-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v6-hierarchical.lock.json
+  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
 
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v6-hierarchical \
-  --output-dir artifacts/banking-conversation-router-v6-hierarchical
+  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
 ```
 
-Expected split counts are 16,720 training, 4,077 validation, and 4,913 test
+Expected split counts are 20,439 training, 4,158 validation, and 4,921 test
 rows. Training must produce `release_eligible: true` and an empty
 `release_gate_failures` list in `metrics.json`.
 

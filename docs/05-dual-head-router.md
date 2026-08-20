@@ -8,9 +8,9 @@ and a constrained joint decoder.
 
 | Item | Value |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Dataset | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
-| Local artifact | `artifacts/banking-conversation-router-v6-hierarchical` |
+| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Local artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
 | Base | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Format | 4 |
 | Maximum input | 256 tokens; at most 3 visible exchanges |
@@ -141,7 +141,7 @@ conversation and may ask for missing selectors rather than call the tool.
 
 ## Held-Out Results
 
-The release passed all gates on 4,913 test rows:
+The release passed all gates on 4,921 test rows:
 
 | Metric | Result |
 | --- | ---: |
@@ -169,8 +169,8 @@ production-traffic accuracy claim.
 
 ```bash
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v6-hierarchical \
-  --output-dir artifacts/banking-conversation-router-v6-hierarchical
+  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
+  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
 ```
 
 ```bash

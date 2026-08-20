@@ -39,9 +39,9 @@ bank or perform a real transaction.
 
 | Component | Revision/status |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@c0d71b433fd1eef510fce36f6308eb36e423e329` |
-| Router data | `spkc83/retail-bank-conversation-router-data@073e61156885a8a2074c7254d76f00634058429a` |
-| Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft@cc95e446af2b5e1d8d9df2751a8192613ad386e3` |
+| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Router data | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 | Space source/pins | The immutable deployed commit is exposed as `SPACE_COMMIT_SHA` in diagnostics |
@@ -157,7 +157,7 @@ The runtime loads the Granite base with bitsandbytes NF4 double quantization,
 attaches the adapter, and prefers the local router artifact:
 
 ```text
-artifacts/banking-conversation-router-v6-hierarchical
+artifacts/banking-conversation-router-v8-first-turn-mutation
 ```
 
 Useful overrides:
@@ -209,7 +209,7 @@ Plan deployment:
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=c0d71b433fd1eef510fce36f6308eb36e423e329
+ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

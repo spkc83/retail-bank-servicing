@@ -7,8 +7,8 @@ The project has three evaluation layers:
 3. frozen Granite generation plus end-to-end orchestration tests.
 
 The hierarchical router is published at
-`c0d71b433fd1eef510fce36f6308eb36e423e329` from data revision
-`073e61156885a8a2074c7254d76f00634058429a` and passed the router gates reported
+`dd5ea26674a0f9808d42110a9ee51a9af6762a76` from data revision
+`b33c27170e27cdb11783704ede14f7d25f70625e` and passed the router gates reported
 in [05-dual-head-router.md](05-dual-head-router.md#held-out-results). Granite
 PEFT evaluation job `6a7f89edc97db76cbdf31893` ran from source
 `42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five

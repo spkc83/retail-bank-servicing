@@ -29,7 +29,7 @@ from router import (
 
 def test_router_defaults_pin_the_published_hierarchical_artifact() -> None:
     assert ROUTER_REPO_ID == "spkc83/retail-bank-conversation-router"
-    assert ROUTER_REVISION == "25176d6b7f46d10812443cb0f8f043e3dbd36f48"
+    assert ROUTER_REVISION == "dd5ea26674a0f9808d42110a9ee51a9af6762a76"
 
 
 def test_explicit_topic_repair_relation_closure_matches_runtime_contract() -> None:
