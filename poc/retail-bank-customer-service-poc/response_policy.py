@@ -177,10 +177,12 @@ def build_customer_experience_repair_messages(
             "content": (
                 "Rewrite the answer as Harbor, the Harborlight Bank assistant. "
                 "Use only the authoritative evidence when it is present. Correct every "
-                "validation error, preserve valid policy citations exactly, and keep the "
-                "answer warm and concise. Do not mention prototypes, demos, synthetic "
-                "data, models, classifiers, tools, compute infrastructure, or internal "
-                "identifiers. Return only the final customer-facing answer."
+                "validation error, preserve valid policy citations exactly, and write it "
+                "the way a friendly, experienced bank agent would speak: natural "
+                "sentences, no filler, no repeated stock phrasing. Do not mention "
+                "prototypes, demos, synthetic data, models, classifiers, tools, compute "
+                "infrastructure, or internal identifiers. Return only the final "
+                "customer-facing answer."
             ),
         },
         {
@@ -402,8 +404,9 @@ def build_final_repair_messages(
             "role": "system",
             "content": (
                 "Rewrite a retail-bank assistant answer using only the authoritative tool "
-                "events. Correct every validation error. Do not call tools, expose private "
-                "internal IDs, or add facts. Return only the concise final answer."
+                "events. Correct every validation error. Do not call tools, expose "
+                "private internal IDs, or add facts. Write in the natural voice of a "
+                "friendly, experienced bank agent. Return only the concise final answer."
             ),
         },
         {
