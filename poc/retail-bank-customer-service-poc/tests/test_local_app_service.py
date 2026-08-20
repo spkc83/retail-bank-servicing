@@ -43,8 +43,8 @@ class FakeRuntime:
         self.outputs = iter(outputs)
         self.calls = []
 
-    def generate(self, messages, tools, _max_new_tokens):
-        self.calls.append({"messages": messages, "tools": tools})
+    def generate(self, messages, tools, _max_new_tokens, *, sample: bool = False):
+        self.calls.append({"messages": messages, "tools": tools, "sample": sample})
         return next(self.outputs)
 
     def count_tokens(self, messages, _tools):

@@ -108,6 +108,28 @@ else:
     model.eval()
 
 
+def build_generation_kwargs(
+    *,
+    max_new_tokens: int,
+    sample: bool,
+    pad_token_id: int | None,
+    eos_token_id: int | None,
+) -> dict[str, Any]:
+    """Best-of-N candidate 1 stays greedy (sample=False); candidates 2+ sample."""
+
+    kwargs: dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": sample,
+        "pad_token_id": pad_token_id,
+        "eos_token_id": eos_token_id,
+        "use_cache": True,
+    }
+    if sample:
+        # Chosen for Best-of-N candidates 2+ only; candidate 1 never sets this.
+        kwargs["temperature"] = 0.7
+    return kwargs
+
+
 def count_tokens(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
@@ -164,6 +186,8 @@ def generate_text(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     max_new_tokens: int,
+    *,
+    sample: bool = False,
 ) -> str:
     if tokenizer is None or model is None:
         raise RuntimeError("ZeroGPU model is unavailable")
@@ -180,14 +204,13 @@ def generate_text(
     )
     encoded = tokenizer(rendered, return_tensors="pt")
     inputs = {name: tensor.to(model.device) for name, tensor in encoded.items()}
+    generation_kwargs = build_generation_kwargs(
+        max_new_tokens=max_new_tokens,
+        sample=sample,
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+    )
     with torch.inference_mode():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            use_cache=True,
-        )
+        output_ids = model.generate(**inputs, **generation_kwargs)
     new_ids = output_ids[0, inputs["input_ids"].shape[-1] :]
     return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()

@@ -42,6 +42,53 @@ def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract
         )
 
 
+def test_generation_kwargs_default_to_greedy_decoding_with_no_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POC_SKIP_MODEL_LOAD", "1")
+    sys.modules.pop("zero_gpu_runtime", None)
+    runtime = importlib.import_module("zero_gpu_runtime")
+
+    kwargs = runtime.build_generation_kwargs(
+        max_new_tokens=64,
+        sample=False,
+        pad_token_id=0,
+        eos_token_id=2,
+    )
+
+    assert kwargs == {
+        "max_new_tokens": 64,
+        "do_sample": False,
+        "pad_token_id": 0,
+        "eos_token_id": 2,
+        "use_cache": True,
+    }
+
+
+def test_generation_kwargs_sampling_adds_do_sample_and_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POC_SKIP_MODEL_LOAD", "1")
+    sys.modules.pop("zero_gpu_runtime", None)
+    runtime = importlib.import_module("zero_gpu_runtime")
+
+    kwargs = runtime.build_generation_kwargs(
+        max_new_tokens=64,
+        sample=True,
+        pad_token_id=0,
+        eos_token_id=2,
+    )
+
+    assert kwargs == {
+        "max_new_tokens": 64,
+        "do_sample": True,
+        "pad_token_id": 0,
+        "eos_token_id": 2,
+        "use_cache": True,
+        "temperature": 0.7,
+    }
+
+
 def test_token_count_uses_input_ids_from_batch_encoding_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

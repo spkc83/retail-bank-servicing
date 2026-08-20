@@ -10,6 +10,7 @@ from local_gpu_runtime import (
     MODEL_ID,
     MODEL_REVISION,
     LocalGraniteRuntime,
+    build_generation_kwargs,
     build_model_load_kwargs,
     validate_cuda_runtime,
 )
@@ -68,6 +69,41 @@ def test_nf4_load_configuration_uses_fp16_double_quantization_on_cuda_zero() -> 
         "bnb_4bit_quant_type": "nf4",
         "bnb_4bit_use_double_quant": True,
         "bnb_4bit_compute_dtype": "fp16",
+    }
+
+
+def test_generation_kwargs_default_to_greedy_decoding_with_no_temperature() -> None:
+    kwargs = build_generation_kwargs(
+        max_new_tokens=64,
+        sample=False,
+        pad_token_id=0,
+        eos_token_id=2,
+    )
+
+    assert kwargs == {
+        "max_new_tokens": 64,
+        "do_sample": False,
+        "pad_token_id": 0,
+        "eos_token_id": 2,
+        "use_cache": True,
+    }
+
+
+def test_generation_kwargs_sampling_adds_do_sample_and_temperature() -> None:
+    kwargs = build_generation_kwargs(
+        max_new_tokens=64,
+        sample=True,
+        pad_token_id=0,
+        eos_token_id=2,
+    )
+
+    assert kwargs == {
+        "max_new_tokens": 64,
+        "do_sample": True,
+        "pad_token_id": 0,
+        "eos_token_id": 2,
+        "use_cache": True,
+        "temperature": 0.7,
     }
 
 

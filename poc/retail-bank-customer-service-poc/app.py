@@ -43,6 +43,7 @@ from branding import (
     response_provenance,
 )
 from model_service import (
+    BEST_OF_N,
     AgentExecutionError,
     AgentProtocolError,
     ConversationalBankingAgent,
@@ -80,6 +81,11 @@ SKIP_ROUTER_LOAD = os.environ.get("POC_SKIP_ROUTER_LOAD") == "1"
 router = None if SKIP_ROUTER_LOAD else LearnedBankingRouter.from_hub()
 POLICY_KNOWLEDGE = PolicyKnowledgeBase.from_json(DEFAULT_POLICY_PATH)
 
+# The @spaces.GPU(duration=90) wall below covers the whole turn; 3+ extra
+# 512-token Best-of-N candidates can blow it, so the Space surface caps the
+# effective N below the local surface's full RETAIL_BANK_BEST_OF_N cap of 4.
+SPACE_MAX_BEST_OF_N = 2
+
 CSS = GRADIO_CSS
 
 PRESETS = [
@@ -105,7 +111,13 @@ class _RuntimeModel(ModelRuntime):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
+        *,
+        sample: bool = False,
     ) -> str:
+        # Only pass `sample` when true, so tests that monkeypatch generate_text
+        # with the pre-Best-of-N signature keep working unmodified.
+        if sample:
+            return generate_text(messages, tools, max_new_tokens, sample=True)
         return generate_text(messages, tools, max_new_tokens)
 
     def count_tokens(
@@ -188,7 +200,11 @@ def run_model_turn(
             dialogue_state=transition.state.as_dict(),
         )
 
-    agent = ConversationalBankingAgent(bank=BANK, model=_RuntimeModel())
+    agent = ConversationalBankingAgent(
+        bank=BANK,
+        model=_RuntimeModel(),
+        best_of_n=min(BEST_OF_N, SPACE_MAX_BEST_OF_N),
+    )
     try:
         pinned_exchange = list(transition.anchor_exchange) or None
         if (route.get("lane") or transition.lane) == "policy":

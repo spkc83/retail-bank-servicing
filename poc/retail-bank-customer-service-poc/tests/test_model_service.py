@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+import model_service
 from mock_bank import SessionBankRegistry
 from model_service import (
     INPUT_TOKEN_BUDGET,
@@ -13,6 +14,7 @@ from model_service import (
     AgentExecutionError,
     AgentProtocolError,
     ConversationalBankingAgent,
+    _parse_best_of_n,
     parse_tool_calls,
     router_diagnostic_fields,
     select_token_budgeted_context,
@@ -35,12 +37,15 @@ class RecordingModel:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
+        *,
+        sample: bool = False,
     ) -> str:
         self.calls.append(
             {
                 "messages": messages,
                 "tools": tools,
                 "max_new_tokens": max_new_tokens,
+                "sample": sample,
             }
         )
         return self.outputs.pop(0)
@@ -1266,6 +1271,297 @@ def test_token_budget_pins_pending_servicing_exchange_across_long_detour() -> No
     assert anchor[0] in selected
     assert anchor[1] in selected
     assert selected[-1]["content"] == "Okay, continue."
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, 1),
+        ("", 1),
+        ("abc", 1),
+        ("0", 1),
+        ("-5", 1),
+        ("1", 1),
+        ("2", 2),
+        ("4", 4),
+        ("10", 4),
+        ("3.5", 1),
+    ],
+)
+def test_best_of_n_env_parsing_is_safe_and_capped(raw: str | None, expected: int) -> None:
+    assert _parse_best_of_n(raw) == expected
+
+
+def test_best_of_n_defaults_to_one_without_the_env_var() -> None:
+    assert model_service.BEST_OF_N == 1
+
+
+def test_best_of_n_one_leaves_grounded_final_repair_flow_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 1)
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "cancel_transfer", "arguments": '
+            '{"recipient": "River Consulting"}}</tool_call>',
+            "Done — I cancelled Jamie Lee's transfer.",
+            "Done — I cancelled the transfer to River Consulting.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="repair-session",
+        message="Cancel the River Consulting transfer.",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Done — I cancelled the transfer to River Consulting."
+    assert result.response_path == "base_tool_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "grounded_final",
+        "final_repair_1",
+    ]
+    assert len(model.calls) == 3
+    assert all(call["sample"] is False for call in model.calls)
+
+
+def test_best_of_n_selects_second_grounded_final_candidate_without_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "cancel_transfer", "arguments": '
+            '{"recipient": "River Consulting"}}</tool_call>',
+            "Done — I cancelled Jamie Lee's transfer.",
+            "Done — I cancelled the transfer to River Consulting.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    # Routed single-call flow: no tools are exposed on the grounded-final pass,
+    # so this is the case where Best-of-N candidate generation is not skipped.
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="bestofn-session",
+        message="Cancel the River Consulting transfer.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="cancel_transfer",
+            entity_resolution="resolved",
+        ),
+    )
+
+    assert result.response == "Done — I cancelled the transfer to River Consulting."
+    assert result.response_path == "base_tool_bestofn"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "grounded_final",
+        "grounded_final_candidate_2",
+    ]
+    assert len(model.calls) == 3
+    assert model.calls[1]["sample"] is False
+    assert model.calls[2]["sample"] is True
+    assert model.calls[2]["messages"] == model.calls[1]["messages"]
+    assert model.calls[2]["tools"] == model.calls[1]["tools"]
+
+
+def test_best_of_n_grounded_final_falls_back_to_repair_when_all_candidates_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "cancel_transfer", "arguments": '
+            '{"recipient": "River Consulting"}}</tool_call>',
+            "Done — I cancelled Jamie Lee's transfer.",
+            "Done — I cancelled someone else's transfer.",
+            "Done — I cancelled the transfer to River Consulting.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="bestofn-repair-session",
+        message="Cancel the River Consulting transfer.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="cancel_transfer",
+            entity_resolution="resolved",
+        ),
+    )
+
+    assert result.response == "Done — I cancelled the transfer to River Consulting."
+    assert result.response_path == "base_tool_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "grounded_final",
+        "grounded_final_candidate_2",
+        "final_repair_1",
+    ]
+    assert len(model.calls) == 4
+    assert model.calls[2]["sample"] is True
+    assert model.calls[3]["tools"] is None
+    repair_payload = json.loads(model.calls[3]["messages"][-1]["content"])
+    assert repair_payload["draft_answer"] == "Done — I cancelled Jamie Lee's transfer."
+
+
+def test_best_of_n_skips_generation_when_grounded_final_still_exposes_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "cancel_transfer", "arguments": '
+            '{"recipient": "River Consulting"}}</tool_call>',
+            "Done — I cancelled Jamie Lee's transfer.",
+            "Done — I cancelled the transfer to River Consulting.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    # router_guidance() is the non-routed (v3-compatibility) shape: the model still
+    # sees the full tool manifest on the grounded-final pass, so a sampled candidate
+    # would mostly just re-emit a tool call. Best-of-N must not waste a generation
+    # on it — behavior here must be identical to N=1 (no candidate pass, no
+    # "_bestofn" suffix), consuming the existing repair ladder exactly as before.
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="bestofn-tools-exposed-session",
+        message="Cancel the River Consulting transfer.",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Done — I cancelled the transfer to River Consulting."
+    assert result.response_path == "base_tool_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "grounded_final",
+        "final_repair_1",
+    ]
+    assert len(model.calls) == 3
+    assert all(call["sample"] is False for call in model.calls)
+
+
+def test_best_of_n_selects_second_direct_answer_candidate_without_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    model = RecordingModel(
+        [
+            "Hi! I’m ready to help with the synthetic accounts in this demo.",
+            "Hi, I’m Harbor. How can I help with your banking today?",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Hi, I’m Harbor. How can I help with your banking today?"
+    assert result.response_path == "direct_answer_bestofn"
+    assert [item.label for item in result.model_passes] == ["base", "base_candidate_2"]
+    assert len(model.calls) == 2
+    assert model.calls[0]["sample"] is False
+    assert model.calls[1]["sample"] is True
+
+
+def test_best_of_n_direct_answer_falls_back_to_repair_when_all_candidates_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    model = RecordingModel(
+        [
+            "Hi! I’m ready to help with the synthetic accounts in this demo.",
+            "Hi! This test data comes from our mock backend.",
+            "Hi, I’m Harbor. How can I help with your banking today?",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Hello",
+        conversation=[],
+        router_result=router_guidance(),
+    )
+
+    assert result.response == "Hi, I’m Harbor. How can I help with your banking today?"
+    assert result.response_path == "direct_answer_customer_repaired"
+    assert [item.label for item in result.model_passes] == [
+        "base",
+        "base_candidate_2",
+        "customer_experience_repair_1",
+    ]
+    repair_payload = json.loads(model.calls[-1]["messages"][-1]["content"])
+    assert repair_payload["draft_answer"] == (
+        "Hi! I’m ready to help with the synthetic accounts in this demo."
+    )
+
+
+def test_best_of_n_preserves_strict_action_claims_for_policy_fallback_direct_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_service, "BEST_OF_N", 2)
+    prior_conversation: list[dict[str, Any]] = [
+        {"role": "user", "content": "Freeze my card"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "index": 0,
+                    "type": "function",
+                    "function": {"name": "freeze_card", "arguments": {"last4": "1234"}},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "name": "freeze_card",
+            "tool_call_id": "call_1",
+            "content": json.dumps({"ok": True, "result": {"card": {"last4": "1234"}}}),
+        },
+        {"role": "assistant", "content": "Your card ending in 1234 is now frozen."},
+    ]
+    router_result = {
+        **router_guidance(),
+        "constraint_diagnostics": (model_service.POLICY_FALLBACK_NOTE,),
+    }
+    model = RecordingModel(
+        [
+            "I've frozen your card as requested.",
+            "Your available balance is USD 500.00.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="strict-session",
+        message="What's my balance now?",
+        conversation=prior_conversation,
+        router_result=router_result,
+    )
+
+    assert result.response == "Your available balance is USD 500.00."
+    assert result.response_path == "direct_answer_bestofn"
+    assert [item.label for item in result.model_passes] == ["base", "base_candidate_2"]
 
 
 def test_default_input_budget_is_8192_tokens() -> None:

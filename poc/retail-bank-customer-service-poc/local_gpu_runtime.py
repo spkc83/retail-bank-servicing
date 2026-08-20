@@ -165,6 +165,8 @@ class LocalGraniteRuntime:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
+        *,
+        sample: bool = False,
     ) -> str:
         tokenizer, model, torch = self._required_components()
         if not messages or messages[0].get("role") != "system":
@@ -184,15 +186,14 @@ class LocalGraniteRuntime:
         }
         if "attention_mask" not in inputs:
             inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+        generation_kwargs = build_generation_kwargs(
+            max_new_tokens=max_new_tokens,
+            sample=sample,
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
         with self._generation_lock, torch.inference_mode():
-            output_ids = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                use_cache=True,
-            )
+            output_ids = model.generate(**inputs, **generation_kwargs)
         prompt_width = int(inputs["input_ids"].shape[-1])
         new_ids = output_ids[0, prompt_width:]
         return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
@@ -227,6 +228,28 @@ class LocalGraniteRuntime:
         if self.tokenizer is None or self.model is None or self.torch is None:
             raise RuntimeError("Local Granite model is unavailable")
         return self.tokenizer, self.model, self.torch
+
+
+def build_generation_kwargs(
+    *,
+    max_new_tokens: int,
+    sample: bool,
+    pad_token_id: int | None,
+    eos_token_id: int | None,
+) -> dict[str, Any]:
+    """Best-of-N candidate 1 stays greedy (sample=False); candidates 2+ sample."""
+
+    kwargs: dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": sample,
+        "pad_token_id": pad_token_id,
+        "eos_token_id": eos_token_id,
+        "use_cache": True,
+    }
+    if sample:
+        # Chosen for Best-of-N candidates 2+ only; candidate 1 never sets this.
+        kwargs["temperature"] = 0.7
+    return kwargs
 
 
 def build_model_load_kwargs(

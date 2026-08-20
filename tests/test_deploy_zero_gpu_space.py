@@ -105,6 +105,7 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         "RETAIL_BANK_ADAPTER_REVISION": "badbc05ad1f861818ea244b462eda49bca6c6fca",
         "RETAIL_BANK_ROUTER_ID": "spkc83/router",
         "RETAIL_BANK_ROUTER_REVISION": ROUTER_REVISION,
+        "RETAIL_BANK_BEST_OF_N": "1",
         "SPACE_COMMIT_SHA": SPACE_COMMIT,
     }
     assert api.waited == "spkc83/test-space"

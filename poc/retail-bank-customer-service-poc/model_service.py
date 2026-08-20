@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -25,6 +26,22 @@ from response_policy import (
 INPUT_TOKEN_BUDGET = 8192
 MAX_NEW_TOKENS = 512
 MAX_TOOL_CALLS = 8
+MAX_BEST_OF_N = 4
+
+
+def _parse_best_of_n(raw: str | None) -> int:
+    """Parse RETAIL_BANK_BEST_OF_N once at import; any garbage safely means "off"."""
+
+    try:
+        value = int(raw) if raw is not None else 1
+    except (TypeError, ValueError):
+        return 1
+    if value < 1:
+        return 1
+    return min(value, MAX_BEST_OF_N)
+
+
+BEST_OF_N = _parse_best_of_n(os.environ.get("RETAIL_BANK_BEST_OF_N"))
 
 
 def _is_policy_fallback_turn(router_result: Mapping[str, Any]) -> bool:
@@ -191,6 +208,8 @@ class ModelRuntime(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         max_new_tokens: int,
+        *,
+        sample: bool = False,
     ) -> str: ...
 
     def count_tokens(
@@ -315,11 +334,15 @@ class ConversationalBankingAgent:
         model: ModelRuntime,
         tool_adapter: ToolSyntaxAdapter | None = None,
         input_budget: int = INPUT_TOKEN_BUDGET,
+        best_of_n: int | None = None,
     ) -> None:
         self.bank = bank
         self.model = model
         self.tool_adapter = tool_adapter or GraniteToolSyntaxAdapter()
         self.input_budget = input_budget
+        # Callers on a wall-clock-limited surface (the ZeroGPU Space) pass a lower
+        # override; the local surface omits it and gets the full module default.
+        self.best_of_n = BEST_OF_N if best_of_n is None else best_of_n
 
     def run_turn(
         self,
@@ -401,6 +424,8 @@ class ConversationalBankingAgent:
                     first_output=first_output,
                     response_path="direct_answer",
                     model_passes=model_passes,
+                    context=first_context,
+                    tools=serving_tools,
                     strict_action_claims=_is_policy_fallback_turn(router_result),
                 )
             response_path = "base_tool"
@@ -477,6 +502,45 @@ class ConversationalBankingAgent:
                 final_output = f"{prose}\n\n{rendered}" if grounded_lead_in else rendered
                 response_path = f"{response_path}_rendered"
             else:
+
+                def _grounded_candidate_valid(candidate: str) -> bool:
+                    # Mirror exactly what _ensure_customer_facing will apply to the
+                    # selected draft below, so a candidate that "passes" here can't
+                    # still blow up (or need a second, unrelated repair pass) once it
+                    # gets there.
+                    try:
+                        candidate_calls = self.tool_adapter.parse_assistant(
+                            candidate, turn_key=None
+                        )
+                    except AgentProtocolError:
+                        return False
+                    if candidate_calls:
+                        return False
+                    if not validate_grounded_answer(candidate, all_calls, results).valid:
+                        return False
+                    stripped = strip_realizer_filler(candidate) or candidate
+                    if not validate_customer_facing_answer(stripped).valid:
+                        return False
+                    return validate_no_unsupported_action_claims(
+                        stripped, tuple(results), conversation=()
+                    ).valid
+
+                # Sampled candidates with tools still exposed mostly re-emit a tool
+                # call, which the validator above always rejects — skip the wasted
+                # generations and keep today's single-pass behavior in that case.
+                if followup_tools is None:
+                    final_output, selected_non_first = self._select_best_of_n(
+                        base_label=pass_label,
+                        first_output=final_output,
+                        context=followup_context,
+                        tools=followup_tools,
+                        model_passes=model_passes,
+                        validator=_grounded_candidate_valid,
+                    )
+                else:
+                    selected_non_first = False
+                if selected_non_first:
+                    response_path = f"{response_path}_bestofn"
                 validation = validate_grounded_answer(final_output, all_calls, results)
                 if not validation.valid:
                     repair_messages = build_final_repair_messages(
@@ -600,14 +664,42 @@ class ConversationalBankingAgent:
         first_output: str,
         response_path: str,
         model_passes: list[ModelPassTrace],
+        context: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
         strict_action_claims: bool = False,
     ) -> AgentTurnResult:
+        conversation = () if strict_action_claims else current
+
+        def _direct_answer_valid(candidate: str) -> bool:
+            try:
+                candidate_calls = self.tool_adapter.parse_assistant(candidate, turn_key=None)
+            except AgentProtocolError:
+                return False
+            if candidate_calls:
+                return False
+            stripped = strip_realizer_filler(candidate) or candidate
+            facing = validate_customer_facing_answer(stripped)
+            action = validate_no_unsupported_action_claims(
+                stripped, (), conversation=conversation
+            )
+            return facing.valid and action.valid
+
+        selected, selected_non_first = self._select_best_of_n(
+            base_label="base",
+            first_output=first_output,
+            context=context,
+            tools=tools,
+            model_passes=model_passes,
+            validator=_direct_answer_valid,
+        )
+        if selected_non_first:
+            response_path = f"{response_path}_bestofn"
         final_output, final_path = self._ensure_customer_facing(
             user_message=str(current[-1]["content"]),
-            draft=first_output,
+            draft=selected,
             response_path=response_path,
             model_passes=model_passes,
-            conversation=() if strict_action_claims else current,
+            conversation=conversation,
         )
         completed = [*current, {"role": "assistant", "content": final_output}]
         return AgentTurnResult(
@@ -659,11 +751,49 @@ class ConversationalBankingAgent:
             )
         return repaired, f"{response_path}_customer_repaired"
 
+    def _select_best_of_n(
+        self,
+        *,
+        base_label: str,
+        first_output: str,
+        context: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model_passes: list[ModelPassTrace],
+        validator: Callable[[str], bool],
+    ) -> tuple[str, bool]:
+        """Pick the first of up to ``self.best_of_n`` candidates that satisfies
+        ``validator``.
+
+        ``first_output`` is candidate 1, already generated by the caller with the
+        exact settings used before Best-of-N existed (so best_of_n=1 stays
+        byte-identical). Additional candidates are generated here with sampled
+        decoding and traced under ``{base_label}_candidate_{n}``. Returns the
+        selected text and whether a non-first candidate was chosen; when none
+        pass, returns ``first_output`` unchanged so existing repair ladders see
+        exactly what they saw before this feature existed.
+        """
+
+        if validator(first_output):
+            return first_output, False
+        for candidate_index in range(2, self.best_of_n + 1):
+            candidate_output, candidate_trace = self._generate_pass(
+                f"{base_label}_candidate_{candidate_index}",
+                context,
+                tools,
+                sample=True,
+            )
+            model_passes.append(candidate_trace)
+            if validator(candidate_output):
+                return candidate_output, True
+        return first_output, False
+
     def _generate_pass(
         self,
         label: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        *,
+        sample: bool = False,
     ) -> tuple[str, ModelPassTrace]:
         input_tokens = self.model.count_tokens(messages, tools)
         prompt_payload = json.dumps(
@@ -672,10 +802,12 @@ class ConversationalBankingAgent:
             sort_keys=True,
             separators=(",", ":"),
         )
-        output = self.model.generate(
-            messages,
-            tools,
-            MAX_NEW_TOKENS,
+        # Only pass `sample` when true, so runtimes and test doubles that predate
+        # Best-of-N (and never opted into the keyword) keep working unmodified.
+        output = (
+            self.model.generate(messages, tools, MAX_NEW_TOKENS, sample=True)
+            if sample
+            else self.model.generate(messages, tools, MAX_NEW_TOKENS)
         ).strip()
         metadata_provider = getattr(self.model, "runtime_metadata", None)
         metadata = metadata_provider() if callable(metadata_provider) else {}

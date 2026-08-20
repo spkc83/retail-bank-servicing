@@ -46,6 +46,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--router-id", required=True)
     parser.add_argument("--router-revision", required=True)
+    parser.add_argument("--best-of-n", default="1")
     parser.add_argument("--wait-timeout", type=float, default=600.0)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--allow-publish", action="store_true")
@@ -57,6 +58,16 @@ def exact_revision(value: str, *, field: str) -> str:
     if len(value) != 40 or any(character not in "0123456789abcdef" for character in value):
         raise DeployError(f"{field} must be an exact 40-character lowercase revision")
     return value
+
+
+def _validated_best_of_n(value: str) -> str:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise DeployError("--best-of-n must be an integer") from error
+    if not 1 <= parsed <= 4:
+        raise DeployError("--best-of-n must be between 1 and 4")
+    return str(parsed)
 
 
 def runtime_pins(args: argparse.Namespace, *, space_commit: str | None = None) -> dict[str, str]:
@@ -99,6 +110,7 @@ def runtime_pins(args: argparse.Namespace, *, space_commit: str | None = None) -
             str(args.router_revision),
             field="router revision",
         ),
+        "RETAIL_BANK_BEST_OF_N": _validated_best_of_n(str(args.best_of_n)),
     }
     if space_commit is not None:
         pins["SPACE_COMMIT_SHA"] = exact_revision(space_commit, field="Space commit")

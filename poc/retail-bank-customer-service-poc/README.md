@@ -173,8 +173,24 @@ RETAIL_BANK_ADAPTER_ID
 RETAIL_BANK_ADAPTER_REVISION
 RETAIL_BANK_ROUTER_ID
 RETAIL_BANK_ROUTER_REVISION
+RETAIL_BANK_BEST_OF_N
 HF_TOKEN
 ```
+
+`RETAIL_BANK_BEST_OF_N` (default `1`, i.e. the feature is off) generates up to
+N candidates at the two customer-visible completion points — the grounded
+final answer after a tool call, and a no-tool direct answer — and selects the
+first candidate that passes the same validators the existing repair ladder
+already enforces; if none pass, generation falls back to today's
+single-candidate-then-repair behavior exactly. It is parsed once at process
+import, so changing the value after the process has started is a no-op until
+restart. Candidates after the first use sampled decoding and are therefore
+non-reproducible between runs. Every candidate, selected or not, is traced as
+its own pass in diagnostics (e.g. `grounded_final_candidate_2`), and a
+non-first selection adds a `_bestofn` suffix to the response path. The value
+is capped at `4` on the local Streamlit surface; the Hugging Face ZeroGPU
+Space surface (below) caps the effective value at `2` regardless of this
+variable, to stay inside the `@spaces.GPU(duration=90)` wall.
 
 ## Hugging Face Gradio/ZeroGPU
 
