@@ -63,7 +63,18 @@ def test_remote_smoke_uses_static_auth_and_all_nine_isolated_cases(
             self.calls.append((*args, kwargs))
             response = " ".join(self.case["expected"]["response_properties"]["must_include"])
             chat = [*self.case["history"], {"role": "assistant", "content": response}]
-            return "", chat, "snapshot", "activity", _diagnostics(self.case)
+            return (
+                "",
+                chat,
+                chat,
+                "snapshot",
+                "activity",
+                _diagnostics(self.case),
+                True,
+                True,
+                True,
+                {},
+            )
 
     def factory(src: str, *, auth: tuple[str, str], verbose: bool) -> FakeClient:
         assert src == "spkc83/test-space"
@@ -114,5 +125,16 @@ def test_remote_smoke_rejects_generic_hidden_error_diagnostics() -> None:
     with pytest.raises(module.SmokeError, match="hidden error"):
         module.validate_case(
             case,
-            ("", [{"role": "assistant", "content": response}], "", "", diagnostics),
+            (
+                "",
+                [{"role": "assistant", "content": response}],
+                [],
+                "",
+                "",
+                diagnostics,
+                True,
+                True,
+                True,
+                {},
+            ),
         )

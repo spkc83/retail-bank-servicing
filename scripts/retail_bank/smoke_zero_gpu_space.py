@@ -80,9 +80,9 @@ def run(
 
 
 def validate_case(case: Mapping[str, Any], output: Any) -> dict[str, Any]:
-    if not isinstance(output, list | tuple) or len(output) != 5:
+    if not isinstance(output, list | tuple) or len(output) != 10:
         raise SmokeError(f"{case['record_id']}: /chat returned an unexpected output shape")
-    chat, diagnostics = output[1], output[4]
+    chat, diagnostics = output[1], output[5]
     if not isinstance(diagnostics, str):
         raise SmokeError(f"{case['record_id']}: diagnostics were not text")
     lowered = diagnostics.casefold()
