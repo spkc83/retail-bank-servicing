@@ -427,7 +427,7 @@ def test_state_conditioned_negatives_cover_switch_ood_policy_social_and_orphan()
             row["example_kind"] == "state_ood_detour" and row["domain_label"] == 0
             for row in selected
         )
-    assert sum(row["example_kind"] == "state_orphan_resume" for row in splits["train"]) == 18
+    assert sum(row["example_kind"] == "state_orphan_resume" for row in splits["train"]) == 23
     assert sum(row["example_kind"] == "state_orphan_resume" for row in splits["validation"]) == 6
 
 
@@ -819,3 +819,83 @@ def _record(
             "template_id": "template",
         },
     }
+
+
+def test_first_turn_mutation_openers_supervise_execute_without_touching_test() -> None:
+    from hello_slm.banking_conversation_router_data import _first_turn_mutation_opener_rows
+
+    assert _first_turn_mutation_opener_rows("test") == []
+
+    train_rows = _first_turn_mutation_opener_rows("train")
+    validation_rows = _first_turn_mutation_opener_rows("validation")
+    assert train_rows and validation_rows
+
+    probe = normalize_router_text("My card was stolen. Freeze it.")
+    paraphrase_probe = normalize_router_text(
+        "My debit card just got stolen, please freeze it right away."
+    )
+    for rows in (train_rows, validation_rows):
+        for row in rows:
+            assert row["history"] == []
+            assert row["prior_dialogue_state"] == {}
+            assert row["example_kind"] == "first_turn_mutation_opener"
+            assert row["source"] == "self-authored-router-v8-first-turn-mutation-openers"
+            validate_hierarchical_labels(row, intent=row["intent"])
+            normalized = normalize_router_text(row["current_text"])
+            assert normalized != probe
+            assert normalized != paraphrase_probe
+            assert "i want to replace" not in normalized
+
+    by_intent = {
+        intent: [row for row in train_rows if row["intent"] == intent]
+        for intent in (
+            "freeze_card",
+            "replace_card",
+            "dispute_transaction",
+            "cancel_transfer",
+            "policy_knowledge",
+        )
+    }
+    assert all(by_intent.values())
+
+    assert {
+        (row["action_name"], row["entity_resolution_name"]) for row in by_intent["freeze_card"]
+    } == {("execute_tool", "resolved")}
+    assert {
+        (row["action_name"], row["entity_resolution_name"]) for row in by_intent["replace_card"]
+    } == {("clarify", "missing")}
+    assert {
+        (row["action_name"], row["entity_resolution_name"])
+        for row in by_intent["dispute_transaction"]
+    } == {("execute_tool", "resolved")}
+    assert {
+        (row["action_name"], row["entity_resolution_name"]) for row in by_intent["cancel_transfer"]
+    } == {("execute_tool", "resolved")}
+    assert {
+        (row["action_name"], row["entity_resolution_name"]) for row in by_intent["policy_knowledge"]
+    } == {("retrieve_policy", "not_required")}
+
+    stolen_freeze = [
+        row
+        for row in by_intent["freeze_card"]
+        if "stolen" in normalize_router_text(row["current_text"])
+    ]
+    assert len(stolen_freeze) >= 8
+
+    train_texts = {normalize_router_text(row["current_text"]) for row in train_rows}
+    validation_texts = {normalize_router_text(row["current_text"]) for row in validation_rows}
+    assert train_texts.isdisjoint(validation_texts)
+
+
+def test_first_turn_mutation_openers_are_wired_into_train_and_validation_only() -> None:
+    splits, _report = build_conversation_router_splits(
+        sft_records_by_split(),
+        clinc_payload(),
+        seed=7404,
+    )
+    kinds = {
+        split: [row for row in rows if row["example_kind"] == "first_turn_mutation_opener"]
+        for split, rows in splits.items()
+    }
+    assert kinds["train"] and kinds["validation"]
+    assert kinds["test"] == []

@@ -84,6 +84,7 @@ TARGETED_SOURCES = frozenset(
         "self-authored-router-v6-hierarchical-entity-state",
         "self-authored-router-v6-transfer-transaction-contrast",
         "self-authored-router-v7-servicing-policy-shift",
+        "self-authored-router-v8-first-turn-mutation-openers",
     }
 )
 RELATION_F1_CALIBRATION_TOLERANCE = 0.005

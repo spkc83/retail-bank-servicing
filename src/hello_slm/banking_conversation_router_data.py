@@ -202,6 +202,8 @@ def build_conversation_router_splits(
         splits[split].extend(_resume_trajectory_rows(split))
         splits[split].extend(_state_conditioned_negative_rows(split))
         splits[split].extend(_ineligible_entity_rows(split))
+    for split in ROUTER_SPLITS:
+        splits[split].extend(_first_turn_mutation_opener_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
@@ -313,8 +315,16 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
         actionable_entity_count=_optional_int(metadata.get("actionable_card_count")),
         explicit_entity_resolution=str(metadata.get("entity_resolution", "")),
         counterfactual_pair_id=_optional_text(metadata.get("coreference_pair_id")),
-        counterfactual_target=_optional_text(metadata.get("coreference_target")),
-        counterfactual_phrase_family=_optional_text(metadata.get("coreference_phrase_family")),
+        counterfactual_target=(
+            _optional_text(metadata.get("coreference_target"))
+            if _optional_text(metadata.get("coreference_pair_id"))
+            else None
+        ),
+        counterfactual_phrase_family=(
+            _optional_text(metadata.get("coreference_phrase_family"))
+            if _optional_text(metadata.get("coreference_pair_id"))
+            else None
+        ),
     )
 
 
@@ -1176,6 +1186,12 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
             "Play some jazz music.",
             "Set a timer for ten minutes.",
             "Translate hello into Japanese.",
+            "Translate thank you very much into French.",
+            "How do you say good morning in Spanish?",
+            "How would I say please and thank you in German?",
+            "What is the Italian word for thanks?",
+            "Write a thank you note for my neighbor.",
+            "Draft a thank you email to my landlord.",
         ),
         "validation": (
             "Will it rain near me this weekend?",
@@ -1258,6 +1274,11 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
                     "This really helps.",
                     "That was useful.",
                     "This is helpful.",
+                    "This helps.",
+                    "It helps.",
+                    "That helps a lot.",
+                    "That helped.",
+                    "Very helpful.",
                 ),
             ),
             ("greeting_train", ("Good morning.", "Hi there.")),
@@ -1375,6 +1396,11 @@ def _state_conditioned_negative_rows(split: str) -> list[dict[str, Any]]:
             "Start again with the prior matter.",
             "Can we continue the thing from earlier?",
             "Return to whatever was underway.",
+            "Take me back to what we discussed.",
+            "Get back to what we were handling.",
+            "Take us back to the earlier item.",
+            "Go back to what was in progress.",
+            "Take me back to the earlier conversation.",
         ),
         "validation": (
             "Pick up where we stopped earlier.",
@@ -1722,6 +1748,11 @@ def _targeted_prompts(split: str) -> dict[str, tuple[str, ...]]:
                 "Use the first card you listed and replace it.",
                 "That is the right card; order its replacement.",
                 "Please replace the one from your previous answer.",
+                "ok use that one",
+                "yep thats the card",
+                "yes that one please",
+                "thats the right one, go ahead",
+                "ok go with that card",
             ),
             "repetition_repair": (
                 "You repeated an unrelated answer; return to my service case.",
@@ -1851,6 +1882,139 @@ def _targeted_modifiers(split: str) -> tuple[str, ...]:
             " Treat this as the same customer-service conversation.",
         ),
     }[split]
+
+
+_FIRST_TURN_INCIDENT_PREAMBLES = (
+    "My card was stolen.",
+    "My debit card was stolen last night.",
+    "Someone stole my card.",
+    "I lost my card this morning.",
+    "My wallet was stolen with my card inside.",
+    "I think my card got skimmed.",
+)
+
+_FIRST_TURN_FREEZE_IMPERATIVES = (
+    "Please freeze it.",
+    "Freeze it right away.",
+    "Lock it now.",
+    "I need it frozen immediately.",
+    "Freeze my card please.",
+    "Please lock the card.",
+    "Block it.",
+)
+
+_FIRST_TURN_REPLACE_IMPERATIVES = (
+    "I need a replacement card.",
+    "Send me a new card.",
+    "Order a new card for me.",
+)
+
+_FIRST_TURN_DISPUTE_MERCHANTS = (
+    "Maple Street Electronics",
+    "Harbor Grocery",
+    "City Parking",
+    "Blue Cafe",
+)
+
+_FIRST_TURN_DISPUTE_TEMPLATES = (
+    "There is a charge from {merchant} I never made. Dispute it.",
+    "I see a charge from {merchant} that I do not recognize. Dispute it please.",
+    "A charge from {merchant} showed up that is not mine. Please dispute it.",
+    "The {merchant} charge on my account is fraudulent. Dispute it.",
+)
+
+_FIRST_TURN_CANCEL_PAYEES = (
+    "Bright Repair",
+    "Oak Design",
+    "Prairie Tuition",
+    "River Consulting",
+)
+
+_FIRST_TURN_CANCEL_TEMPLATES = (
+    "The transfer to {payee} is fraudulent. Cancel it.",
+    "I did not authorize the transfer to {payee}. Cancel it please.",
+    "That scheduled transfer to {payee} is a mistake. Please cancel it.",
+)
+
+_FIRST_TURN_STOLEN_POLICY_QUESTIONS = (
+    "What is the bank policy when a card is stolen?",
+    "What should I do according to policy if my card is stolen?",
+    "What are the rules for reporting a stolen card?",
+    "Does the bank cover charges made on a stolen card?",
+    "How does the stolen card process work at the bank?",
+    "What is the procedure after a card theft?",
+    "What happens to pending charges when a card is reported stolen?",
+    "Is there a deadline to report a stolen card?",
+    "What protections apply if my card was stolen?",
+    "Can you explain the stolen card reporting policy?",
+    "What does the policy say about lost or stolen cards?",
+    "Are stolen card transactions refunded under bank policy?",
+)
+
+_FIRST_TURN_OPENER_EVAL_PROBES = frozenset(
+    {
+        "my card was stolen freeze it",
+        "my debit card just got stolen please freeze it right away",
+    }
+)
+
+
+def _first_turn_mutation_opener_rows(split: str) -> list[dict[str, Any]]:
+    if split == "test":
+        return []
+
+    def wants(index: int) -> bool:
+        return (index % 6 == 5) == (split == "validation")
+
+    candidates: list[tuple[str, str, str | None, str | None]] = []
+    for preamble in _FIRST_TURN_INCIDENT_PREAMBLES:
+        for imperative in _FIRST_TURN_FREEZE_IMPERATIVES:
+            candidates.append(
+                (f"{preamble} {imperative}", "freeze_card", "execute_tool", "resolved")
+            )
+    for preamble in _FIRST_TURN_INCIDENT_PREAMBLES:
+        for imperative in _FIRST_TURN_REPLACE_IMPERATIVES:
+            candidates.append((f"{preamble} {imperative}", "replace_card", "clarify", "missing"))
+    for merchant in _FIRST_TURN_DISPUTE_MERCHANTS:
+        for template in _FIRST_TURN_DISPUTE_TEMPLATES:
+            candidates.append(
+                (
+                    template.format(merchant=merchant),
+                    "dispute_transaction",
+                    "execute_tool",
+                    "resolved",
+                )
+            )
+    for payee in _FIRST_TURN_CANCEL_PAYEES:
+        for template in _FIRST_TURN_CANCEL_TEMPLATES:
+            candidates.append(
+                (template.format(payee=payee), "cancel_transfer", "execute_tool", "resolved")
+            )
+    for question in _FIRST_TURN_STOLEN_POLICY_QUESTIONS:
+        candidates.append((question, "policy_knowledge", "retrieve_policy", "not_required"))
+
+    rows: list[dict[str, Any]] = []
+    for index, (current, intent, action, entity_resolution) in enumerate(candidates):
+        if normalize_router_text(current) in _FIRST_TURN_OPENER_EVAL_PROBES:
+            continue
+        if not wants(index):
+            continue
+        rows.append(
+            _make_row(
+                current=current,
+                history=[],
+                domain_label=1,
+                intent=intent,
+                relation_names=[],
+                example_kind="first_turn_mutation_opener",
+                source="self-authored-router-v8-first-turn-mutation-openers",
+                source_split=split,
+                group_id=f"ft-mutation|{split}|{intent}|{index}",
+                action=action,
+                entity_resolution=entity_resolution,
+            )
+        )
+    return rows
 
 
 def _held_out_regression_rows() -> list[dict[str, Any]]:

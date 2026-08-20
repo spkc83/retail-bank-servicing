@@ -1,0 +1,82 @@
+{
+  "clinc_member_sha256": "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f",
+  "contract": "banking-conversation-router-v6-source-lock",
+  "created_at": "2026-08-15T17:01:06.180388+00:00",
+  "format_version": 3,
+  "prepared_split_sha256": {
+    "test": "135e2c16962a19c2752b85ca626e83e067eaa9222ff7e1b9029bbdbe681584e8",
+    "train": "6539a9396d9e0848ca728d55b28eff088bc48f4e202d84aba8a0c682af4be290",
+    "validation": "3886e8f7f4b2cd1b6095ce18408a5a3881d0fbbe0dbc625356bcbd8b2e17e73f"
+  },
+  "sources": {
+    "UCI/clinc150": {
+      "allowed_use": [
+        "conversation-router-external-ood-training"
+      ],
+      "archive_sha256": "0d8ecc3e1edd7b25cabde0177544ce536ddf773844bc80ef1a75f36e7f030ea2",
+      "member": "clinc150_uci/data_oos_plus.json",
+      "member_sha256": "bfcca9ae515623541dc1983c94c4ed7cae9d26b42ae47d74b972e51bb6f7a21f",
+      "url": "https://archive.ics.uci.edu/static/public/570/clinc150.zip",
+      "used_labels": [
+        "alarm",
+        "calendar",
+        "calendar_update",
+        "cook_time",
+        "date",
+        "definition",
+        "directions",
+        "distance",
+        "email",
+        "email_query",
+        "events",
+        "find_phone",
+        "flight_status",
+        "ingredient_substitution",
+        "ingredients_list",
+        "lost_luggage",
+        "measurement_conversion",
+        "meeting_schedule",
+        "next_song",
+        "nutrition_info",
+        "oos",
+        "play_music",
+        "plug_type",
+        "pto_request",
+        "recipe",
+        "reminder",
+        "reminder_update",
+        "shopping_list",
+        "shopping_list_update",
+        "spelling",
+        "tell_joke",
+        "text",
+        "timer",
+        "timezone",
+        "todo_list",
+        "todo_list_update",
+        "traffic",
+        "translate",
+        "travel_alert",
+        "travel_notification",
+        "weather",
+        "what_song"
+      ]
+    },
+    "sft": {
+      "allowed_use": [
+        "conversation-router-domain-intent-training"
+      ],
+      "behavioral_gate_sha256": {
+        "coreference-shadow": "c1697c762bcaf09eaf14416bc8920f04aff5eb23fa4d541186a46698359bc944",
+        "granite-v7-shadow": "ec90d2f05c1e4493d9cb34af5930ea5efbb80eb9ca9c1756693e0abcc66dd067"
+      },
+      "manifest_sha256": "9029dae9b6e87f7959ea123b51f2e313a63743efc302043720fbf9f7fb3e8c86",
+      "path": "data/banking-servicing-alignment-v5",
+      "split_sha256": {
+        "test": "36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811",
+        "train": "a9c65d84c15de4556d1cc9272951d8c63df9e3b38387701874dd3eadec152546",
+        "validation": "c8b5cc6f9f7f352ba8b9045db87644547b3306a8a0d47c40bedab8fc8bf4af23"
+      }
+    }
+  }
+}
