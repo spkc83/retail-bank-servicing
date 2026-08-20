@@ -651,13 +651,68 @@ def test_policy_detour_uses_grounded_granite_and_resumes_pending_service(
         request(),
     )
 
-    assert detour[1][-1]["content"].endswith("[Policy: card.dispute.us.v1]")
+    visible_answer = detour[1][-1]["content"]
+    assert visible_answer.startswith(
+        "Card disputes are reviewed after submission and may require additional information. [1]"
+    )
+    assert "[Policy: card.dispute.us.v1]" not in visible_answer
+    assert "<details><summary>Policy references</summary>" in visible_answer
+    assert "Disputing a card purchase" in visible_answer
+    assert "2026-01-01" in visible_answer
+    # The canonical conversation (validators/history) keeps the raw citation tag.
+    assert detour[2][-1]["content"].endswith("[Policy: card.dispute.us.v1]")
     assert "card.dispute.us.v1" in detour[5]
     assert generated[1][1] is None
     assert detour[-1]["knowledge_detour_active"] is True
     assert resumed[-1]["knowledge_detour_active"] is False
     assert resumed[-1]["pending_servicing"]["intent"] == "dispute_transaction"
     assert "I need to dispute a purchase." in str(generated[2][0])
+
+
+def test_policy_citation_falls_back_to_chunk_id_when_metadata_is_unavailable(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "POLICY_CHUNK_LOOKUP", {})
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(
+        app_module,
+        "generate_text",
+        lambda *_args: (
+            "Card disputes are reviewed after submission. [Policy: card.dispute.us.v1]"
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "route_query",
+        lambda *_args: route(intent="policy_knowledge"),
+    )
+
+    result = app_module.run_model_turn("What is the card dispute policy?", [], [], {}, request())
+
+    visible_answer = result[1][-1]["content"]
+    assert "[1]" in visible_answer
+    assert "card.dispute.us.v1" in visible_answer
+    assert "<details><summary>Policy references</summary>" in visible_answer
+    # The canonical conversation is unaffected by the missing metadata.
+    assert result[2][-1]["content"].endswith("[Policy: card.dispute.us.v1]")
+
+
+def test_non_policy_turn_visible_content_is_unaffected_by_citation_rendering(
+    app_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "count_tokens", lambda *_args: 100)
+    monkeypatch.setattr(
+        app_module,
+        "generate_text",
+        lambda *_args: "Your available balance is USD 4,218.75.",
+    )
+    monkeypatch.setattr(app_module, "route_query", lambda *_args: route())
+
+    result = app_module.run_model_turn("Show my account balances.", [], [], {}, request())
+
+    assert result[1][-1]["content"] == "Your available balance is USD 4,218.75."
 
 
 def test_policy_no_match_with_relevant_tool_evidence_uses_grounded_fallback(

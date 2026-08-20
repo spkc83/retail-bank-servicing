@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from local_app_service import (
     visible_conversation,
 )
 from local_gpu_runtime import MODEL_ID, MODEL_REVISION, LocalGraniteRuntime
+from responses import render_policy_citations
 from router import ROUTER_REVISION, LearnedBankingRouter
 from state import BANK
 
@@ -111,9 +113,12 @@ def main() -> None:
     _initialize_chat_state()
     _render_sidebar(controller, username, session_hash)
     st.caption("Ask a question in your own words, or start with one of the ideas below.")
-    for item in visible_conversation(st.session_state["conversation"]):
+    for item in visible_conversation(
+        st.session_state["conversation"], controller.policy_chunk_lookup
+    ):
         with st.chat_message(item["role"]):
             st.markdown(item["content"])
+            _render_policy_references(item.get("policy_references", []))
 
     left, right = st.columns([5, 1])
     with left:
@@ -247,11 +252,39 @@ def _execute_turn(
         )
     st.session_state["conversation"] = result.conversation
     st.session_state["diagnostics"] = result.diagnostics
+    display_text, references = render_policy_citations(
+        result.response, controller.policy_chunk_lookup
+    )
     with st.chat_message("assistant"):
-        st.markdown(result.response)
+        st.markdown(display_text)
+        _render_policy_references(references)
     st.caption(response_provenance(result.response_path, result.model_passes))
     # Rerun so the sidebar snapshot and diagnostics reflect this turn's tool effects.
     st.rerun()
+
+
+_MARKDOWN_ESCAPE_PATTERN = re.compile(r"([\\`*_{}\[\]()#+\-.!<>|~])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Escape Markdown metacharacters so corpus text can't alter the rendered layout."""
+    return _MARKDOWN_ESCAPE_PATTERN.sub(r"\\\1", text)
+
+
+def _render_policy_references(references: list[dict[str, str]]) -> None:
+    if not references:
+        return
+    with st.expander("Policy references"):
+        for reference in references:
+            st.markdown(_policy_reference_heading(reference))
+            st.caption(_escape_markdown(reference.get("excerpt") or "No excerpt available."))
+
+
+def _policy_reference_heading(reference: dict[str, str]) -> str:
+    marker = _escape_markdown(str(reference["marker"]))
+    title = _escape_markdown(str(reference["title"]))
+    effective_from = _escape_markdown(str(reference["effective_from"]))
+    return f"**[{marker}] {title}** — effective {effective_from}"
 
 
 def render_snapshot(snapshot: dict[str, Any]) -> str:

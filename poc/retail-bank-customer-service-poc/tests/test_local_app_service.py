@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from local_app_service import LocalBankingController
+from local_app_service import LocalBankingController, visible_conversation
 from mock_bank import SessionBankRegistry
 from responses import MODEL_FAILURE_RESPONSE
 
@@ -384,6 +384,141 @@ def test_policy_detour_is_granite_grounded_and_resumes_pending_dispute(
     } in resume_prompt
     assert resumed.tool_calls[0].name == "dispute_transaction"
     assert resumed.dialogue_state["pending_servicing"] is None
+
+
+def test_visible_conversation_replaces_policy_citation_with_numbered_reference(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            "A submitted dispute is reviewed and status updates are provided. "
+            "[Policy: disputes.timeline.us.v1]"
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter([routed("policy_knowledge")]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="How long does a dispute review take?",
+        conversation=[],
+    )
+    rendered = visible_conversation(result.conversation, controller.policy_chunk_lookup)
+
+    assistant_message = rendered[-1]
+    assert assistant_message["content"] == (
+        "A submitted dispute is reviewed and status updates are provided. [1]"
+    )
+    assert assistant_message["policy_references"] == [
+        {
+            "marker": "1",
+            "chunk_id": "disputes.timeline.us.v1",
+            "title": "Transaction dispute review",
+            "effective_from": "2026-01-01",
+            "excerpt": "A submitted dispute is reviewed and status updates are provided.",
+        }
+    ]
+    # The canonical conversation (validators/history) keeps the raw citation tag.
+    assert result.conversation[-1]["content"].endswith("[Policy: disputes.timeline.us.v1]")
+
+
+def test_visible_conversation_falls_back_to_chunk_id_when_lookup_is_empty(
+    tmp_path: Path,
+) -> None:
+    runtime = FakeRuntime(
+        [
+            "A submitted dispute is reviewed and status updates are provided. "
+            "[Policy: disputes.timeline.us.v1]"
+        ]
+    )
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=runtime,
+        router=SequenceRouter([routed("policy_knowledge")]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="How long does a dispute review take?",
+        conversation=[],
+    )
+    rendered = visible_conversation(result.conversation, {})
+
+    assistant_message = rendered[-1]
+    assert assistant_message["content"].endswith("[1]")
+    assert assistant_message["policy_references"] == [
+        {
+            "marker": "1",
+            "chunk_id": "disputes.timeline.us.v1",
+            "title": "disputes.timeline.us.v1",
+            "effective_from": "unknown",
+            "excerpt": "",
+        }
+    ]
+
+
+def test_visible_conversation_leaves_non_policy_turn_unchanged(tmp_path: Path) -> None:
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(
+            [
+                '<tool_call>{"name":"list_accounts","arguments":{}}</tool_call>',
+                "Your available balance is USD 4,218.75.",
+            ]
+        ),
+        router=StaticRouter(),
+    )
+
+    result = controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="Show my account balances.",
+        conversation=[],
+    )
+    rendered = visible_conversation(result.conversation, controller.policy_chunk_lookup)
+
+    assistant_message = rendered[-1]
+    # No [Policy: id] tag is present, so display content is byte-for-byte the
+    # canonical answer and no reference block is attached.
+    assert assistant_message["content"] == result.conversation[-1]["content"]
+    assert "[Policy:" not in assistant_message["content"]
+    assert assistant_message["policy_references"] == []
+
+
+def test_controller_learns_policy_chunk_metadata_from_retrieved_matches(
+    tmp_path: Path,
+) -> None:
+    controller = LocalBankingController(
+        bank=bank(tmp_path),
+        runtime=FakeRuntime(
+            [
+                "A submitted dispute is reviewed and status updates are provided. "
+                "[Policy: disputes.timeline.us.v1]"
+            ]
+        ),
+        router=SequenceRouter([routed("policy_knowledge")]),
+        policy_knowledge=FakePolicyKnowledge(),
+    )
+
+    assert "disputes.timeline.us.v1" not in controller.policy_chunk_lookup
+
+    controller.run_turn(
+        username="alex.demo",
+        session_hash="local-browser",
+        message="How long does a dispute review take?",
+        conversation=[],
+    )
+
+    assert controller.policy_chunk_lookup["disputes.timeline.us.v1"]["title"] == (
+        "Transaction dispute review"
+    )
 
 
 def test_effective_policy_lane_dispatches_independently_of_legacy_intent_threshold(

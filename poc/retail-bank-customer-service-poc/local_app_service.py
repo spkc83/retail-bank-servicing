@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,7 +24,13 @@ from model_service import (
 )
 from policy_retrieval import DEFAULT_POLICY_PATH, PolicyKnowledgeBase
 from response_policy import policy_context_fallback_route, tool_evidence_answers_question
-from responses import MODEL_FAILURE_RESPONSE, OOD_RESPONSE, POLICY_NOT_FOUND_RESPONSE
+from responses import (
+    MODEL_FAILURE_RESPONSE,
+    OOD_RESPONSE,
+    POLICY_NOT_FOUND_RESPONSE,
+    render_policy_citations,
+)
+from responses import policy_chunk_lookup as build_policy_chunk_lookup
 from router import ROUTER_REVISION
 
 
@@ -66,6 +73,16 @@ class LocalBankingController:
             DEFAULT_POLICY_PATH
         )
         self.dialogue_states = dialogue_states or DialogueStateRegistry()
+        # Seeded from the full corpus when available; each policy turn also learns
+        # its retrieved matches so citation rendering works even against a policy
+        # knowledge stand-in that only implements ``lookup`` (as tests do).
+        self._policy_chunk_lookup: dict[str, dict[str, Any]] = build_policy_chunk_lookup(
+            getattr(self.policy_knowledge, "chunks", ())
+        )
+
+    @property
+    def policy_chunk_lookup(self) -> dict[str, dict[str, Any]]:
+        return dict(self._policy_chunk_lookup)
 
     def run_turn(
         self,
@@ -143,6 +160,7 @@ class LocalBankingController:
                     )
                 else:
                     policy_matches = tuple(match.as_dict() for match in lookup.matches)
+                    self._policy_chunk_lookup.update(build_policy_chunk_lookup(policy_matches))
                     turn = agent.run_policy_turn(
                         username=username,
                         session_hash=session_hash,
@@ -365,16 +383,33 @@ class LocalBankingController:
 
 def visible_conversation(
     conversation: list[dict[str, Any]] | None,
-) -> list[dict[str, str]]:
-    return [
-        {"role": str(item["role"]), "content": str(item["content"])}
-        for item in (conversation or [])
-        if isinstance(item, dict)
-        and item.get("role") in {"user", "assistant"}
-        and isinstance(item.get("content"), str)
-        and str(item["content"]).strip()
-        and not item.get("tool_calls")
-    ]
+    policy_chunk_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Render displayable turns, replacing policy citation tags with numbered markers.
+
+    Each entry carries ``policy_references`` (empty unless the message cited a
+    policy chunk) alongside ``role``/``content``; ``content`` is display text
+    only — the canonical conversation passed in keeps its raw ``[Policy: id]``
+    tags untouched.
+    """
+    visible: list[dict[str, Any]] = []
+    for item in conversation or []:
+        if not (
+            isinstance(item, dict)
+            and item.get("role") in {"user", "assistant"}
+            and isinstance(item.get("content"), str)
+            and str(item["content"]).strip()
+            and not item.get("tool_calls")
+        ):
+            continue
+        role = str(item["role"])
+        content = str(item["content"])
+        if role == "assistant":
+            display_text, references = render_policy_citations(content, policy_chunk_lookup)
+            visible.append({"role": role, "content": display_text, "policy_references": references})
+        else:
+            visible.append({"role": role, "content": content, "policy_references": []})
+    return visible
 
 
 def render_local_diagnostics(
@@ -474,7 +509,7 @@ def render_local_diagnostics(
         f"- CUDA memory allocated GiB: "
         f"`{runtime_metadata.get('cuda_memory_allocated_gib', 'unavailable')}`\n"
         "- Registered execution boundary: `Local CUDA / NF4`\n"
-        f"- Visible response SHA-256: `{visible_hash}`"
+        f"- Canonical response SHA-256: `{visible_hash}`"
     )
 
 

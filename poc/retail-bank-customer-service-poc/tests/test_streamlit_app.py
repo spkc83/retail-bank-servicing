@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from branding import STREAMLIT_CSS
-from streamlit_app import render_snapshot, resolve_local_router_artifact
+from streamlit_app import (
+    _escape_markdown,
+    _policy_reference_heading,
+    _render_policy_references,
+    render_snapshot,
+    resolve_local_router_artifact,
+)
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 
@@ -138,3 +144,75 @@ def test_execute_turn_reruns_so_sidebar_snapshot_is_fresh() -> None:
     stores = body.index('st.session_state["diagnostics"] = result.diagnostics')
     rerun = body.index("st.rerun()")
     assert stores < rerun, "turn results must be stored before the rerun"
+
+
+def test_policy_reference_heading_formats_marker_title_and_effective_date() -> None:
+    heading = _policy_reference_heading(
+        {
+            "marker": "1",
+            "chunk_id": "disputes.timeline.us.v1",
+            "title": "Transaction dispute review",
+            "effective_from": "2026-01-01",
+            "excerpt": "A submitted dispute is reviewed.",
+        }
+    )
+
+    assert heading == r"**[1] Transaction dispute review** — effective 2026\-01\-01"
+
+
+def test_policy_reference_heading_escapes_markdown_metacharacters_in_corpus_fields() -> None:
+    # A future corpus edit that adds emphasis/link/code syntax to a title must not
+    # be able to break the bold "[marker] title" heading we intentionally render.
+    heading = _policy_reference_heading(
+        {
+            "marker": "1",
+            "chunk_id": "a.v1",
+            "title": "*Fake* [link](javascript:x) __bold__ `code` title",
+            "effective_from": "2026-01-01",
+        }
+    )
+
+    assert "*Fake*" not in heading
+    assert "[link](javascript:x)" not in heading
+    assert "__bold__" not in heading
+    assert "`code`" not in heading
+    # Our own intentional bold wrapper survives untouched.
+    assert heading.startswith("**[1] ")
+    assert heading.endswith(r"2026\-01\-01")
+
+
+def test_render_policy_references_is_a_no_op_for_a_turn_without_citations() -> None:
+    # No Streamlit script-run context is active in this unit test, so any call
+    # into st.expander would raise; the empty-list early return must be taken.
+    _render_policy_references([])
+
+
+def test_streamlit_history_loop_renders_policy_references_expander() -> None:
+    source = (APP_ROOT / "streamlit_app.py").read_text(encoding="utf-8")
+
+    assert 'st.expander("Policy references")' in source
+    assert "for item in visible_conversation(" in source
+    assert 'st.session_state["conversation"], controller.policy_chunk_lookup' in source
+    assert 'item.get("policy_references", [])' in source
+
+
+def test_execute_turn_renders_display_text_with_citation_markers() -> None:
+    source = (APP_ROOT / "streamlit_app.py").read_text(encoding="utf-8")
+    body = source.split("def _execute_turn", 1)[1].split("\ndef ", 1)[0]
+
+    assert "render_policy_citations(" in body
+    assert "st.markdown(display_text)" in body
+    assert "_render_policy_references(references)" in body
+
+
+def test_render_policy_references_escapes_the_excerpt_before_display() -> None:
+    source = (APP_ROOT / "streamlit_app.py").read_text(encoding="utf-8")
+    body = source.split("def _render_policy_references", 1)[1].split("\ndef ", 1)[0]
+
+    assert '_escape_markdown(reference.get("excerpt")' in body
+
+
+def test_escape_markdown_neutralizes_common_markdown_metacharacters() -> None:
+    assert _escape_markdown("a-b.c!d") == r"a\-b\.c\!d"
+    assert _escape_markdown("*_[]()#+~<>|`\\") == (r"\*\_\[\]\(\)\#\+\~\<\>\|\`\\")
+    assert _escape_markdown("plain text") == "plain text"

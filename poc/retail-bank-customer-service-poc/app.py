@@ -62,6 +62,8 @@ from responses import (
     MODEL_FAILURE_RESPONSE,
     OOD_RESPONSE,
     POLICY_NOT_FOUND_RESPONSE,
+    policy_chunk_lookup,
+    render_gradio_assistant_message,
 )
 from router import ROUTER_REVISION, LearnedBankingRouter
 from state import BANK
@@ -80,6 +82,7 @@ AUTH_MESSAGE = (
 SKIP_ROUTER_LOAD = os.environ.get("POC_SKIP_ROUTER_LOAD") == "1"
 router = None if SKIP_ROUTER_LOAD else LearnedBankingRouter.from_hub()
 POLICY_KNOWLEDGE = PolicyKnowledgeBase.from_json(DEFAULT_POLICY_PATH)
+POLICY_CHUNK_LOOKUP = policy_chunk_lookup(chunk.as_dict() for chunk in POLICY_KNOWLEDGE.chunks)
 
 # The @spaces.GPU(duration=90) wall below covers the whole turn; 3+ extra
 # 512-token Best-of-N candidates can blow it, so the Space surface caps the
@@ -572,7 +575,15 @@ def _visible_history(history: list[dict[str, Any]] | None) -> list[dict[str, str
 def _visible_from_conversation(
     conversation: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    return _visible_history(conversation)
+    return [
+        {
+            **item,
+            "content": render_gradio_assistant_message(item["content"], POLICY_CHUNK_LOOKUP),
+        }
+        if item["role"] == "assistant"
+        else item
+        for item in _visible_history(conversation)
+    ]
 
 
 def _with_text_turn(
@@ -724,7 +735,7 @@ def _render_diagnostics(
         f"- Exact router revision: `{ROUTER_REVISION}`\n"
         f"- Space commit: `{space_commit}`\n"
         f"- Registered execution boundary: `ZeroGPU large`\n"
-        f"- Visible response SHA-256: `{visible_hash}`"
+        f"- Canonical response SHA-256: `{visible_hash}`"
     )
 
 
