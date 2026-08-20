@@ -204,6 +204,7 @@ def build_conversation_router_splits(
         splits[split].extend(_ineligible_entity_rows(split))
     for split in ROUTER_SPLITS:
         splits[split].extend(_first_turn_mutation_opener_rows(split))
+        splits[split].extend(_retrospective_status_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
@@ -1957,6 +1958,103 @@ _FIRST_TURN_OPENER_EVAL_PROBES = frozenset(
         "my debit card just got stolen please freeze it right away",
     }
 )
+
+
+_RETROSPECTIVE_STATUS_CASES: tuple[tuple[str, tuple[dict[str, str], ...], tuple[str, ...]], ...] = (
+    (
+        "freeze_card",
+        (
+            {"role": "user", "content": "Please freeze my debit card ending in 4821"},
+            {"role": "assistant", "content": "Your card ending in 4821 is now frozen."},
+        ),
+        (
+            "did you actually freeze it?",
+            "was the card really frozen?",
+            "did the freeze go through?",
+            "is the card frozen now?",
+            "so it's frozen, right?",
+        ),
+    ),
+    (
+        "freeze_card",
+        (
+            {"role": "user", "content": "My card was stolen, please freeze it."},
+            {"role": "assistant", "content": "I froze your Everyday Visa Debit ending in 4821."},
+        ),
+        (
+            "can you confirm the card is frozen?",
+            "just checking that the freeze worked.",
+        ),
+    ),
+    (
+        "replace_card",
+        (
+            {"role": "user", "content": "Please replace my damaged card ending 4821"},
+            {"role": "assistant", "content": "A replacement for card 4821 is on the way."},
+        ),
+        (
+            "did you order the replacement already?",
+            "is the new card on its way?",
+            "was the replacement actually requested?",
+        ),
+    ),
+    (
+        "dispute_transaction",
+        (
+            {"role": "user", "content": "Dispute the Maple Street Electronics charge"},
+            {
+                "role": "assistant",
+                "content": "I filed a dispute for the Maple Street Electronics charge.",
+            },
+        ),
+        (
+            "did the dispute actually get filed?",
+            "is the dispute in progress now?",
+        ),
+    ),
+    (
+        "cancel_transfer",
+        (
+            {"role": "user", "content": "Cancel the transfer to Oak Design"},
+            {"role": "assistant", "content": "The transfer to Oak Design is cancelled."},
+        ),
+        (
+            "was the transfer really cancelled?",
+            "did the cancellation go through?",
+        ),
+    ),
+)
+
+
+def _retrospective_status_rows(split: str) -> list[dict[str, Any]]:
+    if split == "test":
+        return []
+
+    def wants(index: int) -> bool:
+        return (index % 6 == 5) == (split == "validation")
+
+    rows: list[dict[str, Any]] = []
+    index = 0
+    for intent, history, currents in _RETROSPECTIVE_STATUS_CASES:
+        for current in currents:
+            if wants(index):
+                rows.append(
+                    _make_row(
+                        current=current,
+                        history=list(history),
+                        domain_label=1,
+                        intent=intent,
+                        relation_names=["context_dependent"],
+                        example_kind="retrospective_mutation_status",
+                        source="self-authored-router-v8-first-turn-mutation-openers",
+                        source_split=split,
+                        group_id=f"retro-status|{split}|{intent}|{index}",
+                        action="converse",
+                        entity_resolution="not_required",
+                    )
+                )
+            index += 1
+    return rows
 
 
 def _first_turn_mutation_opener_rows(split: str) -> list[dict[str, Any]]:

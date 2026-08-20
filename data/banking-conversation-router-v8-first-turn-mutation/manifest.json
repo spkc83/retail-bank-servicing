@@ -72,14 +72,14 @@
       },
       "train": {
         "clarify": 1791,
-        "converse": 2238,
+        "converse": 2250,
         "execute_tool": 7201,
         "refuse_ood": 8045,
         "retrieve_policy": 1152
       },
       "validation": {
         "clarify": 59,
-        "converse": 602,
+        "converse": 604,
         "execute_tool": 1431,
         "refuse_ood": 1669,
         "retrieve_policy": 395
@@ -101,11 +101,11 @@
       },
       "train": {
         "0": 8045,
-        "1": 12382
+        "1": 12394
       },
       "validation": {
         "0": 1669,
-        "1": 2487
+        "1": 2489
       }
     },
     "domain_labels": [
@@ -138,12 +138,12 @@
         "social": 539
       },
       "train": {
-        "banking": 10396,
+        "banking": 10408,
         "out_of_domain": 8045,
         "social": 1986
       },
       "validation": {
-        "banking": 1941,
+        "banking": 1943,
         "out_of_domain": 1669,
         "social": 546
       }
@@ -166,13 +166,13 @@
       },
       "train": {
         "None": 8045,
-        "cancel_transfer": 556,
+        "cancel_transfer": 558,
         "conversation": 1986,
-        "dispute_transaction": 622,
-        "freeze_card": 691,
+        "dispute_transaction": 623,
+        "freeze_card": 697,
         "other_banking": 182,
         "policy_knowledge": 1152,
-        "replace_card": 3891,
+        "replace_card": 3894,
         "view_accounts": 280,
         "view_cards": 430,
         "view_service_cases": 1858,
@@ -183,8 +183,8 @@
         "None": 1669,
         "cancel_transfer": 161,
         "conversation": 546,
-        "dispute_transaction": 171,
-        "freeze_card": 156,
+        "dispute_transaction": 172,
+        "freeze_card": 157,
         "other_banking": 42,
         "policy_knowledge": 395,
         "replace_card": 300,
@@ -254,6 +254,7 @@
         "ood": 26,
         "resume_previous_service": 360,
         "retrieval_grounded_policy": 215,
+        "retrospective_mutation_status": 12,
         "servicing_policy_topic_shift": 16,
         "state_ineligible_entity": 32,
         "state_intent_switch": 1728,
@@ -287,6 +288,7 @@
         "ood": 9,
         "resume_previous_service": 126,
         "retrieval_grounded_policy": 26,
+        "retrospective_mutation_status": 2,
         "servicing_policy_topic_shift": 8,
         "state_ineligible_entity": 4,
         "state_intent_switch": 576,
@@ -335,8 +337,8 @@
     "seed": 7404,
     "split_counts": {
       "test": 4921,
-      "train": 20427,
-      "validation": 4156
+      "train": 20439,
+      "validation": 4158
     }
   },
   "review_status": "automated-policy-pass",
@@ -440,21 +442,21 @@
       "allowed_use": [
         "conversation-router-training"
       ],
-      "bytes": 30335107,
+      "bytes": 30348469,
       "name": "train",
       "path": "train.jsonl",
-      "rows": 20427,
-      "sha256": "6539a9396d9e0848ca728d55b28eff088bc48f4e202d84aba8a0c682af4be290"
+      "rows": 20439,
+      "sha256": "c838134cdecc22723fda887c1dd561329ab5cac2c72eabc2de484c54a4d4f733"
     },
     {
       "allowed_use": [
         "conversation-router-evaluation"
       ],
-      "bytes": 6684086,
+      "bytes": 6686415,
       "name": "validation",
       "path": "validation.jsonl",
-      "rows": 4156,
-      "sha256": "3886e8f7f4b2cd1b6095ce18408a5a3881d0fbbe0dbc625356bcbd8b2e17e73f"
+      "rows": 4158,
+      "sha256": "5491dcbe64ef5c4d7a15d440076ef9964a3767a0adb94d0c4edbb33ecc3c2168"
     },
     {
       "allowed_use": [

@@ -899,3 +899,25 @@ def test_first_turn_mutation_openers_are_wired_into_train_and_validation_only() 
     }
     assert kinds["train"] and kinds["validation"]
     assert kinds["test"] == []
+
+
+def test_retrospective_status_questions_stay_converse_and_never_touch_test() -> None:
+    from hello_slm.banking_conversation_router_data import _retrospective_status_rows
+
+    assert _retrospective_status_rows("test") == []
+    train_rows = _retrospective_status_rows("train")
+    validation_rows = _retrospective_status_rows("validation")
+    assert train_rows and validation_rows
+    for rows in (train_rows, validation_rows):
+        for row in rows:
+            assert row["history"]
+            assert row["example_kind"] == "retrospective_mutation_status"
+            assert row["action_name"] == "converse"
+            assert row["entity_resolution_name"] == "not_required"
+            validate_hierarchical_labels(row, intent=row["intent"])
+    assert {row["intent"] for row in train_rows} == {
+        "freeze_card",
+        "replace_card",
+        "dispute_transaction",
+        "cancel_transfer",
+    }
