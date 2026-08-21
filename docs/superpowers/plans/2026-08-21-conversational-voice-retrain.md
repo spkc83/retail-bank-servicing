@@ -442,3 +442,17 @@ git diff --stat data/                            # no frozen file listed
 | Minor 3: ambiguity pool trigram counts ~23 per opener (32 templates × 21 states) | Accepted: 32× better than the single template; gate-neutral |
 | Minor 4: em-dash density 16.6% of rows | Disclosed as a taste item; not worth a billed run |
 | Minor 5: corpus tests narrower than described (carve-outs currently vacuous — critic re-ran stricter variants: 0 violations) | Disclosed |
+
+## Run-1 outcome and the one permitted fix (2026-08-21)
+
+- Job `6a87cc5b9cd058584adc4f00`: 964 steps, 28.0 min, **$1.29** actual. Dev gate never reached two consecutive passes; final
+  `positive_tool_argument_accuracy=0.875, ambiguity_accuracy=0.4375, pair_flip_accuracy=0.375` (v8: 1.0/1.0/1.0).
+- Evidence (20 per-checkpoint reports, `scratchpad/chatty/gate-v9/`): 0 of the ambiguity failures were tool calls; the model
+  emitted parent-adapter filler recitals ("I checked the available information. … is active and available for use.",
+  "… I can help with the next banking step.") that do not occur in the v9 data. Ambiguity accuracy rose 0.06 → ~0.44 and
+  plateaued from step ~350; v8 reached 1.0 by step 350 at the same LR.
+- Ruling: the 32-phrasing ambiguity pool (Appendix B) diluted per-phrasing repetition 32× below what the continuation LR
+  (2e-6, ~0.5 epoch) needs to overwrite the parent prior on the gate prompts. Reverted `deictic_replace_ambiguity` to the
+  v8 template in all splits; all 1,839 teacher rewrites kept (not implicated). Appendix B is retained for the record only.
+- Run 2 plan: v8's exact recipe `MAX_STEPS=550` (v8 passed at 350/400), `MAX_TRAIN_SECONDS=1200`, `JOB_TIMEOUT=37m`
+  ⇒ hard ceiling $1.70 ≤ remaining $1.71. If run 2 fails the gate, the budget is exhausted and the iteration stops.

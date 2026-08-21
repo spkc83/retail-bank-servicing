@@ -1201,172 +1201,6 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
     raise ValueError(f"unsupported coreference curriculum split: {split}")
 
 
-# Conversational clarification pool for the ambiguous "replace that card" turns.
-# The 672 train rows rotate through these so no single template dominates; the
-# "shadow" split keeps the legacy sentence because coreference-shadow.jsonl is a
-# frozen gate fixture.
-_CONVERSATIONAL_AMBIGUITY_FINALS = (
-    (
-        "I can see two cards here: {card_name} ending in {card_last4} and {other_card_name} ending "
-        "in {other_card_last4}. Which card would you like me to replace? Share the last four "
-        "digits and I'll get it started."
-    ),
-    (
-        "Happy to do that — there are two cards on file, {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}. Which card should I replace? Just tell me "
-        "the last four digits."
-    ),
-    (
-        "Quick check before I go ahead: this profile has {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}. Which card do you mean? The last four "
-        "digits will do."
-    ),
-    (
-        "There are two cards I could replace: {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}. Which card is it? Send me the last four "
-        "digits and I'll take care of it."
-    ),
-    (
-        "Sure thing. I just want to make sure I replace the right card — {card_name} ending in "
-        "{card_last4} or {other_card_name} ending in {other_card_last4}? Let me know which one by "
-        "its last four digits."
-    ),
-    (
-        "Okay, two cards match that: {card_name} ending in {card_last4} and {other_card_name} "
-        "ending in {other_card_last4}. Which card should I put the replacement through for? The "
-        "last four digits are all I need."
-    ),
-    (
-        "Before I order a replacement, which card did you have in mind? You have {card_name} "
-        "ending in {card_last4} and {other_card_name} ending in {other_card_last4} — the last four "
-        "digits will point me to the right one."
-    ),
-    (
-        "I want to get this right for you. Which card needs replacing — {card_name} ending in "
-        "{card_last4} or {other_card_name} ending in {other_card_last4}? Reply with the last four "
-        "digits and I'll start it."
-    ),
-    (
-        "No problem. Two cards are on this profile, {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}, so which card should I replace? The last "
-        "four digits will confirm it."
-    ),
-    (
-        "Let's sort that out. Which card are we replacing: {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}? Give me the last four digits and I'll get "
-        "moving."
-    ),
-    (
-        "Got it — one detail first. I see {card_name} ending in {card_last4} and {other_card_name} "
-        "ending in {other_card_last4}; which card would you like replaced? Just the last four "
-        "digits, please."
-    ),
-    (
-        "Of course. Since you have both {card_name} ending in {card_last4} and {other_card_name} "
-        "ending in {other_card_last4}, which card should I replace? The last four digits will "
-        "settle it."
-    ),
-    (
-        "Absolutely, I can help with that. Which card do you want replaced — {card_name} ending in "
-        "{card_last4} or {other_card_name} ending in {other_card_last4}? Share the last four "
-        "digits and it's done."
-    ),
-    (
-        "Two cards could match here: {card_name} ending in {card_last4} and {other_card_name} "
-        "ending in {other_card_last4}. Tell me which card you mean by its last four digits and "
-        "I'll order the replacement."
-    ),
-    (
-        "Happy to help replace it. I found {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}, so which card is the one? The last four "
-        "digits are enough."
-    ),
-    (
-        "Just to be safe, which card should I replace? Your profile shows {card_name} ending in "
-        "{card_last4} and {other_card_name} ending in {other_card_last4} — the last four digits "
-        "will tell me which one."
-    ),
-    (
-        "I can do that right away once I know which card you mean. Is it {card_name} ending in "
-        "{card_last4} or {other_card_name} ending in {other_card_last4}? The last four digits are "
-        "all I need."
-    ),
-    (
-        "Sure — you have two cards with me, {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}. Which card should get the replacement? "
-        "Just send the last four digits."
-    ),
-    (
-        "Good news: a replacement is easy to arrange. Which card is it, though — {card_name} "
-        "ending in {card_last4} or {other_card_name} ending in {other_card_last4}? Reply with the "
-        "last four digits."
-    ),
-    (
-        "Let me make sure I pick the right one. Between {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}, which card should I replace? The last "
-        "four digits will confirm it for me."
-    ),
-    (
-        "On it — I just need to know which card. There's {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}; tell me the last four digits of the one "
-        "to replace."
-    ),
-    (
-        "That's doable. Your cards are {card_name} ending in {card_last4} and {other_card_name} "
-        "ending in {other_card_last4}, so which card would you like me to replace? Share its last "
-        "four digits and I'll begin."
-    ),
-    (
-        "Right, let's get you a new card. Which card are we talking about — {card_name} ending in "
-        "{card_last4} or {other_card_name} ending in {other_card_last4}? The last four digits will "
-        "point me to it."
-    ),
-    (
-        "You've got two cards on this profile: {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}. Which card should I replace? Pop the last "
-        "four digits in and I'll handle the rest."
-    ),
-    (
-        "Can do. To avoid replacing the wrong card, is it {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}? Let me know which by the last four "
-        "digits."
-    ),
-    (
-        "One quick question so I replace the right card: {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}? Which one is it — the last four digits "
-        "will do."
-    ),
-    (
-        "I'd be glad to. There are two candidates, {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}; which card do you need replaced? Send the "
-        "last four digits and I'll set it up."
-    ),
-    (
-        "Understood. Which card should I replace — {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}? Once I have the last four digits I'll get "
-        "the replacement started."
-    ),
-    (
-        "Sure, I'll arrange a replacement. Because I see {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}, which card did you mean? The last four "
-        "digits will clear it up."
-    ),
-    (
-        "Almost there — I just need to know which card. Your options are {card_name} ending in "
-        "{card_last4} and {other_card_name} ending in {other_card_last4}; share the last four "
-        "digits of the one you want replaced."
-    ),
-    (
-        "Thanks for flagging it. I'm seeing {card_name} ending in {card_last4} and "
-        "{other_card_name} ending in {other_card_last4}, so which card should I replace? Give me "
-        "the last four digits and I'll take it from there."
-    ),
-    (
-        "Let's do it. Which card needs the replacement: {card_name} ending in {card_last4} or "
-        "{other_card_name} ending in {other_card_last4}? The last four digits are all I need from "
-        "you."
-    ),
-)
 
 
 def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
@@ -1481,17 +1315,15 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                     )
                 ],
             )
-            legacy_ambiguity_final = (
+            # Single template on purpose: the 2026-08-21 v9 run replaced it with a
+            # 32-phrasing conversational pool and the coreference dev gate fell to
+            # ambiguity_accuracy 0.44 (the continuation LR could not overwrite the
+            # parent adapter's prior on the gate prompts). The template is the only
+            # configuration proven to pass; coreference-shadow.jsonl also pins it.
+            ambiguity_final = (
                 f"I found {card_name} ending in {card_last4} and {other_card_name} "
                 f"ending in {other_card_last4}. Which card should I replace? Please "
                 "share the last four digits shown in the app."
-            )
-            ambiguity_final = (
-                legacy_ambiguity_final
-                if split == "shadow"
-                else _CONVERSATIONAL_AMBIGUITY_FINALS[
-                    (pair_index + 7 * family_index) % len(_CONVERSATIONAL_AMBIGUITY_FINALS)
-                ].format(**history_values)
             )
             ambiguity = _record(
                 record_id=f"deictic_ambiguous_{family}_{split}_{realization_key}",

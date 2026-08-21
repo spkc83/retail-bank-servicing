@@ -228,21 +228,21 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 9355837,
+      "bytes": 9341755,
       "name": "train",
       "path": "train.jsonl",
       "record_count": 3043,
-      "sha256": "153fb80d5ad59494fefeb46d388f73868a876d41d8be424ce42ad045b014b65b"
+      "sha256": "68f3f859d624ac62e56597c32c962d7eea47e4c81113eb781de20475bbf7c432"
     },
     {
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1248765,
+      "bytes": 1248452,
       "name": "validation",
       "path": "validation.jsonl",
       "record_count": 397,
-      "sha256": "b9faae7657913568dca7c8d1db5f4bebe6509988e516c01e7265119771500c28"
+      "sha256": "7b61f14bcafcafe79499b46ced27e51ddec5a4b11957f63722be36a544265a0d"
     },
     {
       "allowed_use": [

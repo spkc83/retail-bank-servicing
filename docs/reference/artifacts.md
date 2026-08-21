@@ -74,8 +74,8 @@ and it remains what the v8 adapter cites.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 3,043 | `153fb80d5ad59494fefeb46d388f73868a876d41d8be424ce42ad045b014b65b` |
-| `validation.jsonl` | 397 | `b9faae7657913568dca7c8d1db5f4bebe6509988e516c01e7265119771500c28` |
+| `train.jsonl` | 3,043 | `68f3f859d624ac62e56597c32c962d7eea47e4c81113eb781de20475bbf7c432` |
+| `validation.jsonl` | 397 | `7b61f14bcafcafe79499b46ced27e51ddec5a4b11957f63722be36a544265a0d` |
 | `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 
 The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,

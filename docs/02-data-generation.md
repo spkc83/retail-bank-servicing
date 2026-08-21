@@ -282,15 +282,15 @@ Regeneration must leave these files byte-identical:
 `coreference-shadow.jsonl`, `granite-v7-shadow.jsonl`, and
 `screenshot-regression.jsonl`.
 
-### Conversational ambiguity pool
+### Ambiguity clarification template
 
-`_deictic_replace_curriculum` previously emitted a single inline clarification
-template for every `deictic_replace_ambiguity` row. The `train` and `validation`
-branches now draw from `_CONVERSATIONAL_AMBIGUITY_FINALS`, 32 distinct phrasings
-selected deterministically by pair and family index. The `shadow` branch still
-emits the original string verbatim so the frozen shadow split does not move.
-Every phrasing names both candidate cards and keeps `which` and `card` early,
-which is what the coreference dev gate matches on.
+`_deictic_replace_curriculum` emits one clarification template for every
+`deictic_replace_ambiguity` row in all splits. A 32-phrasing conversational pool
+was tried for train/validation in the v9 iteration and regressed the coreference
+dev gate (ambiguity accuracy 0.44 after 964 continuation steps: the parent
+adapter's prior was not overwritten at the continuation learning rate), so the
+single template was restored. It names both candidate cards and keeps `which`
+and `card` early, which is what the gate matches on.
 
 ### Documented limitations
 

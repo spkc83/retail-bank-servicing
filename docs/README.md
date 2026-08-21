@@ -58,8 +58,8 @@ regeneration, not yet published; the Hub SFT dataset revision stays
 | --- | ---: | --- |
 | `data/banking-v5-tool-sft/train.jsonl` | 841 | `d31a45ea3896158043e0838211d989573efaccbc6fd4b3b03e052bc7775999a1` |
 | `data/banking-v5-tool-sft/validation.jsonl` | 179 | `f83810e5b51670bdff6f6ccbded37bae8eced2a065ee5db61ce64848012492aa` |
-| `data/banking-servicing-alignment-v5/train.jsonl` | 3,043 | `153fb80d5ad59494fefeb46d388f73868a876d41d8be424ce42ad045b014b65b` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `b9faae7657913568dca7c8d1db5f4bebe6509988e516c01e7265119771500c28` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,043 | `68f3f859d624ac62e56597c32c962d7eea47e4c81113eb781de20475bbf7c432` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `7b61f14bcafcafe79499b46ced27e51ddec5a4b11957f63722be36a544265a0d` |
 
 ## Safe Local Checks
 
