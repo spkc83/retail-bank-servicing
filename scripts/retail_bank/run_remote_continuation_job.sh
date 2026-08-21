@@ -3,6 +3,7 @@ set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 5 ]]; then
   echo "usage: $0 SOURCE_COMMIT DATASET_REVISION [SOURCE_ADAPTER_REVISION] [DESTINATION_REPO] [MAX_STEPS]" >&2
+  echo "env: MAX_TRAIN_SECONDS caps wall-clock training time (default 3600)" >&2
   exit 2
 fi
 
@@ -12,6 +13,7 @@ source_adapter_revision="${3:-d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2}"
 destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract}"
 max_steps="${5:-964}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
+max_train_seconds="${MAX_TRAIN_SECONDS:-3600}"
 probe_only="${PROBE_ONLY:-0}"
 publish_only="${PUBLISH_ONLY:-0}"
 probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600}"
@@ -23,6 +25,11 @@ output_dir="/data/retail-bank-agent-9b-peft-v6-generation-contract-${source_comm
 if [[ "$probe_only" == "1" ]]; then
   probe_name="${probe_checkpoint_dir##*/}"
   output_dir="/data/retail-bank-agent-9b-probe-${probe_name}-${source_commit:0:8}-${dataset_revision:0:8}"
+fi
+
+if [[ ! "$max_train_seconds" =~ ^[0-9]+$ ]]; then
+  echo "MAX_TRAIN_SECONDS must be a whole number of seconds." >&2
+  exit 2
 fi
 
 if [[ "$probe_only" == "1" && "$publish_only" == "1" ]]; then
@@ -109,6 +116,7 @@ job_args=(
   --destination-repo "$destination_repo"
   --output-dir "$output_dir"
   --max-steps "$max_steps"
+  --max-train-seconds "$max_train_seconds"
 )
 
 if [[ "$probe_only" == "1" ]]; then

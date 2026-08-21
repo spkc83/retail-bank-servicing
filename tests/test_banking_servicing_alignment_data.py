@@ -861,3 +861,59 @@ def test_alignment_teacher_hook_requires_model_and_prompt_hash(tmp_path: Path) -
         write_servicing_alignment_dataset(
             tmp_path / "out", base_sft_dir=base_dir, teacher_responses=responses
         )
+
+
+def _ambiguity_finals(split: str) -> list[str]:
+    return [
+        record["messages"][-1]["content"]
+        for record in alignment_data._deictic_replace_curriculum(split)
+        if record["metadata"]["scenario_family"] == "deictic_replace_ambiguity"
+    ]
+
+
+def test_ambiguity_finals_are_conversational_in_train_and_verbatim_in_shadow() -> None:
+    finals = _ambiguity_finals("train")
+    assert len(finals) == 672
+    assert len(set(finals)) == 672
+    assert not any(
+        final.startswith("I found ") and final.endswith("shown in the app.") for final in finals
+    )
+    for final in finals:
+        head = " ".join(final.lower().split()[:45])
+        assert "which" in head
+        assert "card" in head
+        assert "last four digits" in final
+    openings = Counter(" ".join(final.lower().split()[:3]) for final in finals)
+    assert max(openings.values()) <= 672 // 32 + 1
+
+    shadow_finals = _ambiguity_finals("shadow")
+    assert shadow_finals
+    assert all(
+        final.startswith("I found ") and final.endswith("shown in the app.")
+        for final in shadow_finals
+    )
+
+
+def test_validation_ambiguity_finals_use_the_conversational_pool() -> None:
+    finals = _ambiguity_finals("validation")
+    assert len(finals) == 16
+    assert len(set(finals)) == 16
+    assert not any(
+        final.startswith("I found ") and final.endswith("shown in the app.") for final in finals
+    )
+    patterns = [
+        re.compile(
+            "".join(
+                re.escape(part) if index % 2 == 0 else ".+?"
+                for index, part in enumerate(re.split(r"\{[a-z0-9_]+\}", template))
+            )
+            + "$"
+        )
+        for template in alignment_data._CONVERSATIONAL_AMBIGUITY_FINALS
+    ]
+    for final in finals:
+        assert any(pattern.match(final) for pattern in patterns)
+        head = " ".join(final.lower().split()[:45])
+        assert "which" in head
+        assert "card" in head
+        assert "last four digits" in final

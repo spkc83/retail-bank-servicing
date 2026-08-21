@@ -260,6 +260,95 @@ def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: 
     assert "--publish-only" in submitted
 
 
+@pytest.mark.parametrize(
+    ("environment", "expected_seconds"),
+    [({"MAX_TRAIN_SECONDS": "1800"}, "1800"), ({}, "3600")],
+)
+def test_continuation_launcher_forwards_max_train_seconds(
+    tmp_path: Path,
+    environment: dict[str, str],
+    expected_seconds: str,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "
+        '"retail-bank-peft-v6-generation-contract/v1"\'\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n', encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+    }
+    env.pop("MAX_TRAIN_SECONDS", None)
+    env.update(environment)
+
+    subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=True,
+        env=env,
+    )
+
+    submitted = hf_log.read_text(encoding="utf-8").splitlines()
+    assert "--max-train-seconds" in submitted
+    assert submitted[submitted.index("--max-train-seconds") + 1] == expected_seconds
+
+
+def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "
+        '"retail-bank-peft-v6-generation-contract/v1"\'\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text('#!/usr/bin/env bash\nprintf \'called\\n\' > "$HF_LOG"\n', encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+        "MAX_TRAIN_SECONDS": "30m",
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "MAX_TRAIN_SECONDS" in completed.stderr
+    assert not hf_log.exists()
+
+
 def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
