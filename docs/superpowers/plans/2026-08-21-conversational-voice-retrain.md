@@ -456,3 +456,17 @@ git diff --stat data/                            # no frozen file listed
   v8 template in all splits; all 1,839 teacher rewrites kept (not implicated). Appendix B is retained for the record only.
 - Run 2 plan: v8's exact recipe `MAX_STEPS=550` (v8 passed at 350/400), `MAX_TRAIN_SECONDS=1200`, `JOB_TIMEOUT=37m`
   ⇒ hard ceiling $1.70 ≤ remaining $1.71. If run 2 fails the gate, the budget is exhausted and the iteration stops.
+
+## Run-2 outcome (2026-08-21) — iteration closed
+
+- Job `6a87e26c9cd058584adc5190`: 550 steps, 18.1 min, **$0.83** actual (total spend $2.12 of $3.00). Failed only the
+  *two-consecutive-passes* rule: `ambiguity_accuracy = 1.0` from step 200 on; all three metrics ≥0.95 at steps 250, 400
+  and 550 (final checkpoint 1.0/1.0/1.0), but one positive record — `deictic_replace_list-reference_validation_2`
+  (single-card history form 1) — flickered to a clarify ("I found Aspen Cashback Debit ending in 2107. What card should I
+  replace it with?") at steps 300/350/450/500, so no two evaluations in a row passed and the worker did not upload.
+- The template revert fixed the run-1 failure mode completely; the v9 rewrites are gate-compatible up to one borderline
+  validation prompt. Reports: `scratchpad/chatty/gate-v9r2/step-*.json`.
+- No supported cheap path ships checkpoint-550: `--publish-only` needs the post-gate bundle that was never written and
+  `--probe-only` cannot publish. Shipping it would require a new worker mode and a relaxation of the consecutive-gate
+  contract — a user decision, outside this iteration.
+- Remaining $0.88 is below any run's hard ceiling; per the anti-loop directive the iteration stops here. v8 remains live.
