@@ -56,10 +56,10 @@ regeneration, not yet published; the Hub SFT dataset revision stays
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `data/banking-v5-tool-sft/train.jsonl` | 841 | `d31a45ea3896158043e0838211d989573efaccbc6fd4b3b03e052bc7775999a1` |
-| `data/banking-v5-tool-sft/validation.jsonl` | 179 | `f83810e5b51670bdff6f6ccbded37bae8eced2a065ee5db61ce64848012492aa` |
-| `data/banking-servicing-alignment-v5/train.jsonl` | 3,043 | `68f3f859d624ac62e56597c32c962d7eea47e4c81113eb781de20475bbf7c432` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `7b61f14bcafcafe79499b46ced27e51ddec5a4b11957f63722be36a544265a0d` |
+| `data/banking-v5-tool-sft/train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
+| `data/banking-v5-tool-sft/validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,139 | `a350a23f7421eb66d31735f8444c299911a996722e2a7160c96f91bdf3adc6ab` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `3cf683aed3432a2632187cbc71079cf61b5092687b421cee6dacc0f54818dbda` |
 
 ## Safe Local Checks
 
