@@ -492,3 +492,10 @@ git diff --stat data/                            # no frozen file listed
   steps 300 and 350 (two consecutive), shadow gate 1.0/1.0/1.0; adapter published
   `spkc83/retail-bank-servicing-agent-9b-peft-v9-conversational-voice@0a9fe83fce3408e6be9a467e85b4e3398f780f05`.
   Cumulative spend $4.09 of $6. Local probe + tone read-out next; repin/redeploy only on approval.
+- Local probe on v9 @0a9fe83f (router dd5ea266, BEST_OF_N=2): **8/8 PASS** (first-turn freeze, card status, cancel, policy
+  no-match stock, mailing address after detour, policy citation [1], weather OOD, fresh-session control). Tone read-out on the
+  model-authored replies: **mean 1.17 sentences** (S1/S2/S3/S5/S7 one sentence; S6b two), 0 filler phrases, 0 internal-language
+  hits; S7 still says "confirmed in this session" (parent prior). **Success criterion (mean ≥ 2.0, ≥5/7 two-sentence) NOT met.**
+  Cause: the gate-driven early stop selected step 350 (≈1,400 weighted examples, a fraction of an epoch) — the act/ask behaviour
+  stabilises long before the conversational finals are absorbed. Lever: a `--min-steps` floor in the worker so training continues
+  past the first consecutive gate pass and the last passing checkpoint ≥ min-steps is selected.
