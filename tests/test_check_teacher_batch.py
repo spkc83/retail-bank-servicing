@@ -35,6 +35,10 @@ FREEZE_REWRITE = (
     "I've frozen your Everyday Visa Debit card ending in 9609, so nobody can spend on it. "
     "If you see a charge you don't recognise, say the word and I can open a dispute."
 )
+FREEZE_REWRITE_ALT = (
+    "I've frozen your Everyday Visa Debit card ending in 9609 right away, so nobody can spend "
+    "on it further. Let me know if you would like a replacement ordered."
+)
 TABLE_ORIGINAL = (
     "| Account | Ending | Available | Current |\n"
     "|---|---:|---:|---:|\n"
@@ -911,6 +915,84 @@ def test_rule_a_waives_a_credential_warning_the_released_final_already_carries(
             "reason": "fraud_row final_response requests private credentials",
         }
     ]
+
+
+def test_rule_n_flags_duplicate_user_text_across_response_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    policy = _policy_record()
+    shared_user = "Can you help me sort out my card right now"
+    code, out = _run(
+        tmp_path,
+        [freeze, policy],
+        [
+            _response(freeze, final=FREEZE_REWRITE, user=shared_user),
+            _response(policy, final=POLICY_REWRITE, user=f"{shared_user}."),
+        ],
+        capsys=capsys,
+    )
+
+    assert code == 2
+    assert "n" in _rules(out)
+    assert "user text duplicates freeze_row" in out
+
+
+def test_rule_n_flags_a_response_user_text_colliding_with_an_untouched_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    shared_user = "Can you help me sort out my card right now"
+    untouched = _record(
+        "untouched_user_row",
+        user=shared_user,
+        final="Your accounts look fine to me right now.",
+        family="read_cards",
+        split="test",
+    )
+    module = _load_module()
+    requests_path, responses_path, records_dir = _write_case(
+        tmp_path,
+        [freeze, untouched],
+        [_response(freeze, final=FREEZE_REWRITE, user=f"{shared_user}.")],
+    )
+    code = module.main(
+        [
+            "--requests",
+            str(requests_path),
+            "--responses",
+            str(responses_path),
+            "--records-dir",
+            str(records_dir),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "n" in _rules(out)
+    assert "user text duplicates untouched_user_row" in out
+
+
+def test_rule_n_exempts_a_governed_counterfactual_pair_sharing_user_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = _freeze_record("freeze_pair_a")
+    second = _freeze_record("freeze_pair_b")
+    first["metadata"]["coreference_pair_id"] = "pair-9001"
+    second["metadata"]["coreference_pair_id"] = "pair-9001"
+    shared_user = "My debit card is missing, could you please freeze it right now"
+    code, out = _run(
+        tmp_path,
+        [first, second],
+        [
+            _response(first, final=FREEZE_REWRITE, user=shared_user),
+            _response(second, final=FREEZE_REWRITE_ALT, user=f"{shared_user}."),
+        ],
+        capsys=capsys,
+    )
+
+    assert code == 0, out
+    assert "n" not in _rules(out)
 
 
 def test_rule_a_still_flags_a_rewrite_that_asks_for_a_credential(

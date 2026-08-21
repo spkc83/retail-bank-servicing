@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Hard-rule checker for banking teacher realization batches.
 
-Every rule (a-m) mirrors a validator the rewritten rows will meet later: the
+Every rule (a-n) mirrors a validator the rewritten rows will meet later: the
 teacher realizer contract, ``validate_records``, the runtime response policy of
 the POC, or the voice specification in the retrain plan (Appendix A). A batch is
 acceptable only when every rule holds for every row, so the checker prints one
@@ -167,6 +167,7 @@ class RecordContext:
     has_tool_message: bool
     original_final: str
     original_user: str
+    coreference_pair_id: str
 
     @property
     def is_policy(self) -> bool:
@@ -261,6 +262,7 @@ def build_record_context(record: Mapping[str, Any]) -> RecordContext:
         has_tool_message=any(message.get("role") == "tool" for message in messages),
         original_final=_final_text(messages),
         original_user=_last_user_text(messages),
+        coreference_pair_id=str(metadata.get("coreference_pair_id", "")),
     )
 
 
@@ -565,6 +567,21 @@ def check_rule_m(
     return violations
 
 
+def _shares_governed_pair(first: RecordContext | None, second: RecordContext | None) -> bool:
+    """Simplified mirror of ``banking_tool_sft_data._is_governed_counterfactual_group``.
+
+    That validator's full shape (paired targets, matching card counts, tool-call
+    argument checks, history-form signatures) is too involved to replicate here, so
+    this only mirrors its practical effect: records that share a non-empty governed
+    counterfactual pair id are allowed to share normalized user text.
+    """
+    if first is None or second is None:
+        return False
+    return bool(first.coreference_pair_id) and (
+        first.coreference_pair_id == second.coreference_pair_id
+    )
+
+
 @dataclass(frozen=True)
 class CheckerConfig:
     requests: tuple[Path, ...]
@@ -601,6 +618,7 @@ def check(config: CheckerConfig) -> tuple[list[Violation], dict[str, Any]]:
     sentence_counts: Counter[int] = Counter()
     families: set[str] = set()
     seen_finals: dict[str, str] = {}
+    seen_users: dict[str, str] = {}
     trigram_uses: Counter[tuple[str, tuple[str, ...]]] = Counter()
     trigram_records: dict[tuple[str, tuple[str, ...]], list[str]] = {}
     responded: set[str] = set()
@@ -667,6 +685,15 @@ def check(config: CheckerConfig) -> tuple[list[Violation], dict[str, Any]]:
                 )
             else:
                 seen_finals[normalized_final] = record_id
+            normalized_user = normalized_user_text(str(row.get("user_content", "")))
+            if normalized_user in seen_users:
+                other_id = seen_users[normalized_user]
+                if not _shares_governed_pair(context, contexts.get(other_id)):
+                    violations.append(
+                        Violation(record_id, "n", f"user text duplicates {other_id}")
+                    )
+            else:
+                seen_users[normalized_user] = record_id
             prose = leading_prose_of(final) if table_block(final) else prose_of(final)
             trigram = opening_trigram(prose)
             if trigram:
@@ -682,6 +709,14 @@ def check(config: CheckerConfig) -> tuple[list[Violation], dict[str, Any]]:
         if owner is not None:
             violations.append(
                 Violation(owner, "j", f"final duplicates untouched record {record_id}")
+            )
+        normalized_untouched_user = normalized_user_text(context.original_user)
+        user_owner = seen_users.get(normalized_untouched_user)
+        if user_owner is not None and not _shares_governed_pair(
+            contexts.get(user_owner), context
+        ):
+            violations.append(
+                Violation(user_owner, "n", f"user text duplicates {record_id}")
             )
 
     for (family, trigram), count in sorted(trigram_uses.items()):
