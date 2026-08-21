@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Hard-rule checker for banking teacher realization batches.
 
-Every rule (a-n) mirrors a validator the rewritten rows will meet later: the
+Every rule (a-o) mirrors a validator the rewritten rows will meet later: the
 teacher realizer contract, ``validate_records``, the runtime response policy of
 the POC, or the voice specification in the retrain plan (Appendix A). A batch is
 acceptable only when every rule holds for every row, so the checker prints one
@@ -120,6 +120,15 @@ CREDENTIAL_VERB_RE = re.compile(
 )
 CREDENTIAL_SECRET_RE = re.compile(
     r"\b(?:password|pin|account number|customer id|private id)\b", re.IGNORECASE
+)
+# The fine-tuning data describes a bank, not the surface the customer happens to be
+# using and not the fact that this corpus was built for a demo. Rule o keeps both out
+# of the authored text: "the app" invents a product the assistant cannot see, and the
+# demo vocabulary leaks the provenance of the corpus into the model's voice.
+BANNED_PRODUCT_WORDING = re.compile(
+    r"\b(?:apps?|mobile app|demo|demos|synthetic|mock|sandbox|fictional|prototype|poc|"
+    r"placeholder|dummy|sample|test|testing)\b",
+    re.IGNORECASE,
 )
 ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
@@ -567,6 +576,30 @@ def check_rule_m(
     return violations
 
 
+def check_rule_o(
+    record_id: str, response: Mapping[str, Any], *, finals_only: bool
+) -> list[Violation]:
+    """Reject app and demo product wording in the text this batch authors.
+
+    ``final_response`` is always authored, so it is always checked. ``user_content``
+    is only the batch's to rewrite when ``--finals-only`` is off, so it is checked
+    exactly when rule m rather than rule i governs the user turn.
+    """
+
+    fields = ["final_response"] if finals_only else ["final_response", "user_content"]
+    violations: list[Violation] = []
+    for field in fields:
+        terms = dict.fromkeys(
+            match.group(0).lower()
+            for match in BANNED_PRODUCT_WORDING.finditer(str(response.get(field, "")))
+        )
+        violations.extend(
+            Violation(record_id, "o", f"{field} contains banned product wording {term!r}")
+            for term in terms
+        )
+    return violations
+
+
 def _shares_governed_pair(first: RecordContext | None, second: RecordContext | None) -> bool:
     """Simplified mirror of ``banking_tool_sft_data._is_governed_counterfactual_group``.
 
@@ -674,6 +707,7 @@ def check(config: CheckerConfig) -> tuple[list[Violation], dict[str, Any]]:
                 violations.extend(check_rule_m(record_id, context, row))
             violations.extend(check_rule_k(record_id, context, final, record))
             violations.extend(check_rule_l(record_id, context, final, normalized_final))
+            violations.extend(check_rule_o(record_id, row, finals_only=config.finals_only))
 
             if normalized_final in seen_finals:
                 violations.append(

@@ -50,7 +50,7 @@ ERROR_ORIGINAL = (
     "Maple Street Electronics was found."
 )
 CLARIFY_ORIGINAL = (
-    "Which card should I replace? Please share the last four digits shown in the app."
+    "Which card should I replace? Please share the last four digits on the card."
 )
 
 
@@ -462,7 +462,7 @@ def test_rule_e_flags_a_dropped_load_bearing_literal(
                 error,
                 final=(
                     "I wasn't able to open that dispute, so the Maple Street Electronics "
-                    "transaction is unchanged. Check the date in the app and I'll try again."
+                    "transaction is unchanged. Check the date on your statement and I'll try again."
                 ),
             )
         ],
@@ -519,7 +519,7 @@ def test_rule_g_flags_a_clarify_question_that_arrives_too_late(
                 final=(
                     f"{lead} before I order anything, because more than one is open on your "
                     "profile here. So which card should I replace? Please share the last "
-                    "four digits shown in the app."
+                    "four digits on the card."
                 ),
             )
         ],
@@ -1013,3 +1013,84 @@ def test_rule_a_still_flags_a_rewrite_that_asks_for_a_credential(
 
     assert code == 2
     assert "a" in _rules(out)
+
+
+APP_FINAL = FREEZE_REWRITE.replace("If you see a charge", "If you see a charge in the app")
+APP_USER = "I'm checking the mobile app, please freeze my missing debit card"
+
+
+def test_rule_o_flags_app_wording_in_a_final(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    code, out = _run(tmp_path, [freeze], [_response(freeze, final=APP_FINAL)], capsys=capsys)
+
+    assert code == 2
+    assert _rules(out) == {"o"}
+    assert "final_response contains banned product wording 'app'" in out
+
+
+def test_rule_o_flags_demo_vocabulary_in_a_final(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    demo_final = FREEZE_REWRITE.replace("say the word", "this is a sample account, so say the word")
+    code, out = _run(tmp_path, [freeze], [_response(freeze, final=demo_final)], capsys=capsys)
+
+    assert code == 2
+    assert "o" in _rules(out)
+    assert "final_response contains banned product wording 'sample'" in out
+
+
+def test_rule_o_flags_app_wording_in_a_rewritten_user_turn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    code, out = _run(
+        tmp_path,
+        [freeze],
+        [_response(freeze, final=FREEZE_REWRITE, user=APP_USER)],
+        capsys=capsys,
+    )
+
+    assert code == 2
+    assert _rules(out) == {"o"}
+    assert "user_content contains banned product wording 'mobile app'" in out
+
+
+def test_rule_o_leaves_the_user_turn_to_rule_i_under_finals_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    freeze["messages"][1]["content"] = APP_USER
+    responses = [_response(freeze, final=FREEZE_REWRITE)]
+
+    code, out = _run(
+        tmp_path, [freeze], responses, extra_args=["--finals-only"], capsys=capsys
+    )
+    assert code == 0, out
+
+    code, out = _run(tmp_path, [freeze], responses, capsys=capsys)
+    assert code == 2
+    assert _rules(out) == {"o"}
+    assert "user_content contains banned product wording 'mobile app'" in out
+
+
+def test_rule_o_passes_an_app_free_rewrite(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    freeze = _freeze_record()
+    code, out = _run(
+        tmp_path,
+        [freeze],
+        [
+            _response(
+                freeze,
+                final=FREEZE_REWRITE,
+                user="I'm checking my card list, please freeze my missing debit card",
+            )
+        ],
+        capsys=capsys,
+    )
+
+    assert code == 0, out
