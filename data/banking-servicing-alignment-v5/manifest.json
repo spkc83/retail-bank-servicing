@@ -52,9 +52,9 @@
     "alignment_generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 900,
+        "clarify": 964,
         "converse": 13,
-        "execute_tool": 1320,
+        "execute_tool": 1384,
         "refuse_ood": 32,
         "retrieve_policy": 33
       },
@@ -68,7 +68,7 @@
     },
     "alignment_split_counts": {
       "test": 35,
-      "train": 2298,
+      "train": 2426,
       "validation": 218
     },
     "alignment_teacher_realization": {
@@ -88,7 +88,7 @@
     "contract": "banking-servicing-alignment-sft-report",
     "coreference_pair_counts": {
       "test": 0,
-      "train": 720,
+      "train": 784,
       "validation": 16
     },
     "created_at": "2026-07-31T00:00:00Z",
@@ -96,9 +96,9 @@
     "generation_contract_counts": {
       "test": {},
       "train": {
-        "clarify": 936,
+        "clarify": 1000,
         "converse": 178,
-        "execute_tool": 1719,
+        "execute_tool": 1783,
         "refuse_ood": 58,
         "retrieve_policy": 248
       },
@@ -120,9 +120,9 @@
         "retrieval_grounded_policy": 4
       },
       "train": {
-        "clarification": 900,
+        "clarification": 964,
         "conversation": 13,
-        "multi_turn": 1168,
+        "multi_turn": 1232,
         "ood": 32,
         "retrieval_grounded_policy": 33,
         "tool_error": 65,
@@ -156,8 +156,8 @@
         "clarification_answer": 64,
         "deictic_ineligible_clarification": 72,
         "deictic_missing_clarification": 72,
-        "deictic_replace_action": 720,
-        "deictic_replace_ambiguity": 720,
+        "deictic_replace_action": 784,
+        "deictic_replace_ambiguity": 784,
         "external_topic_shift": 32,
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
@@ -202,7 +202,7 @@
     },
     "split_counts": {
       "test": 215,
-      "train": 3139,
+      "train": 3267,
       "validation": 397
     }
   },
@@ -228,11 +228,11 @@
       "allowed_use": [
         "granite-continuation-sft"
       ],
-      "bytes": 9621735,
+      "bytes": 10003031,
       "name": "train",
       "path": "train.jsonl",
-      "record_count": 3139,
-      "sha256": "a350a23f7421eb66d31735f8444c299911a996722e2a7160c96f91bdf3adc6ab"
+      "record_count": 3267,
+      "sha256": "9ec916e0dfc1fbd52d7f091a9ca7cb82f1b5038566bd649e9b9d92a6809e7c34"
     },
     {
       "allowed_use": [

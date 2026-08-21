@@ -228,7 +228,7 @@ gate multipliers are unchanged; only customer-visible text moved.
 | Dataset | Train | Validation | Test |
 | --- | ---: | ---: | ---: |
 | `data/banking-v5-tool-sft` | 841 | 179 | 180 |
-| `data/banking-servicing-alignment-v5` | 3,139 | 397 | 215 |
+| `data/banking-servicing-alignment-v5` | 3,267 | 397 | 215 |
 
 ### Voice contract
 
