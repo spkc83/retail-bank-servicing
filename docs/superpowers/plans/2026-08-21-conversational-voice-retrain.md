@@ -509,3 +509,7 @@ git diff --stat data/                            # no frozen file listed
   issue. Recovery plan: relax the check to ≥ 2, add a publish-only recovery path keyed by the training commit (bundle identity
   records a3acfad), publish from the bucket on cpu-basic (pennies), then probe locally. Estimated run-6 cost ≈ $1.0 (job timing
   not reported by the API); cumulative ≈ $5.1 of $6.
+- Recovery (618bb73: streak check ≥ 2; `RECOVERY_SOURCE_COMMIT` publish-only path keyed by the training commit): cpu-basic job
+  `6a88b92c7c5c7dd379233a53` published the run-6 bundle as
+  `spkc83/retail-bank-servicing-agent-9b-peft-v9b-conversational-voice@15abf8f898f97c607641534bef86610648cab6cb`
+  (trained at a3acfad, dataset @0f99604a, multipliers 3/6, min-steps 550, selected step 550). Local probe + tone read-out next.
