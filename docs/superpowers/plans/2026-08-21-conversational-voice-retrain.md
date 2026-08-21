@@ -499,3 +499,7 @@ git diff --stat data/                            # no frozen file listed
   Cause: the gate-driven early stop selected step 350 (≈1,400 weighted examples, a fraction of an epoch) — the act/ask behaviour
   stabilises long before the conversational finals are absorbed. Lever: a `--min-steps` floor in the worker so training continues
   past the first consecutive gate pass and the last passing checkpoint ≥ min-steps is selected.
+- Run 6 (user choice: min-steps floor, a3acfad): first launch `6a88a527` aborted at start — the worker refuses a non-empty
+  destination repo (run 5's adapter lives there), negligible cost. Relaunched as `6a88a58873304676c8ec5dfa` into
+  `spkc83/retail-bank-servicing-agent-9b-peft-v9b-conversational-voice` with `MIN_STEPS=550 MAX_STEPS=700 MAX_TRAIN_SECONDS=1500
+  JOB_TIMEOUT=40m`, multipliers 3/6, dataset @0f99604a.
