@@ -470,3 +470,15 @@ git diff --stat data/                            # no frozen file listed
   `--probe-only` cannot publish. Shipping it would require a new worker mode and a relaxation of the consecutive-gate
   contract — a user decision, outside this iteration.
 - Remaining $0.88 is below any run's hard ceiling; per the anti-loop directive the iteration stops here. v8 remains live.
+
+## Extension (2026-08-21, user: "go ahead with the targeted examples and rerun, budget +$3"; also "remove any references to the app")
+
+- App/demo wording removed from all trainable text: templates (0362239), teacher rows (aed8e8e, 754c78b), permanent
+  `TRAINABLE_TEXT_BANNED_WORDS` gate in `validate_records` (train/validation only; frozen fixtures keep their wording).
+- Targeted train phrase families `listed-card`, `from-your-list`, `card-you-showed` (b21589e): alignment train 2202 → 2298.
+- Run 3 `6a884d337c5c7dd379233346` (data 5192e39 / dataset @3fe2bd61, 550-step recipe, caps 1200 s / 37 m): 13.5 min, **$0.62**.
+  Dev gate PASSED at steps 350 and 400 (1.0/1.0/1.0; early stop at 400). Post-training shadow gate 15/16 ambiguity:
+  `deictic_ambiguous_results-reference-shadow_shadow_3` ("yes the card displayed above is the replacement target") began
+  the clarification correctly then emitted the parent's filler closer. Total spend $2.74 of $6.
+- Run 4 plan: +4 train families in the shown-above/results neighbourhood (`shown-above`, `above-card`, `from-results`,
+  `target-card`), same recipe and caps (≈$0.62–0.83, ceiling $1.70).
