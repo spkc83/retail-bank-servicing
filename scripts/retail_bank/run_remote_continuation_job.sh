@@ -4,6 +4,7 @@ set -euo pipefail
 if [[ $# -lt 2 || $# -gt 5 ]]; then
   echo "usage: $0 SOURCE_COMMIT DATASET_REVISION [SOURCE_ADAPTER_REVISION] [DESTINATION_REPO] [MAX_STEPS]" >&2
   echo "env: MAX_TRAIN_SECONDS caps wall-clock training time (default 3600)" >&2
+  echo "env: JOB_TIMEOUT caps the whole HF job including setup and upload (default 5h)" >&2
   exit 2
 fi
 
@@ -14,6 +15,7 @@ destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-
 max_steps="${5:-964}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
 max_train_seconds="${MAX_TRAIN_SECONDS:-3600}"
+job_timeout_override="${JOB_TIMEOUT:-5h}"
 probe_only="${PROBE_ONLY:-0}"
 publish_only="${PUBLISH_ONLY:-0}"
 probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600}"
@@ -25,6 +27,11 @@ output_dir="/data/retail-bank-agent-9b-peft-v6-generation-contract-${source_comm
 if [[ "$probe_only" == "1" ]]; then
   probe_name="${probe_checkpoint_dir##*/}"
   output_dir="/data/retail-bank-agent-9b-probe-${probe_name}-${source_commit:0:8}-${dataset_revision:0:8}"
+fi
+
+if [[ ! "$job_timeout_override" =~ ^[0-9]+[smh]$ ]]; then
+  echo "JOB_TIMEOUT must be a whole number followed by s, m, or h." >&2
+  exit 2
 fi
 
 if [[ ! "$max_train_seconds" =~ ^[0-9]+$ ]]; then
@@ -94,7 +101,7 @@ if [[ "$bootstrap_source" != *"$protocol_marker"* || "$worker_source" != *"$prot
 fi
 
 job_flavor="rtx-pro-6000"
-job_timeout="5h"
+job_timeout="$job_timeout_override"
 if [[ "$publish_only" == "1" ]]; then
   job_flavor="cpu-basic"
   job_timeout="30m"

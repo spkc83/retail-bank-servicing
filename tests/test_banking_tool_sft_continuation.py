@@ -444,7 +444,8 @@ def test_worker_probe_requires_exact_source_and_candidate3_dataset_revisions() -
 def test_remote_continuation_launcher_mounts_durable_bucket_and_uses_five_hour_cap() -> None:
     launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
 
-    assert 'job_timeout="5h"' in launcher
+    assert 'job_timeout_override="${JOB_TIMEOUT:-5h}"' in launcher
+    assert 'job_timeout="$job_timeout_override"' in launcher
     assert 'job_timeout="30m"' in launcher
     assert 'job_flavor="cpu-basic"' in launcher
     assert "--volume hf://buckets/spkc83/jobs-artifacts:/data" in launcher

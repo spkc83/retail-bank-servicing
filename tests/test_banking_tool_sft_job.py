@@ -264,10 +264,16 @@ def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: 
     ("environment", "expected_seconds"),
     [({"MAX_TRAIN_SECONDS": "1800"}, "1800"), ({}, "3600")],
 )
+@pytest.mark.parametrize(
+    ("timeout_environment", "expected_timeout"),
+    [({"JOB_TIMEOUT": "45m"}, "45m"), ({}, "5h")],
+)
 def test_continuation_launcher_forwards_max_train_seconds(
     tmp_path: Path,
     environment: dict[str, str],
     expected_seconds: str,
+    timeout_environment: dict[str, str],
+    expected_timeout: str,
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -289,7 +295,9 @@ def test_continuation_launcher_forwards_max_train_seconds(
         "HF_LOG": str(hf_log),
     }
     env.pop("MAX_TRAIN_SECONDS", None)
+    env.pop("JOB_TIMEOUT", None)
     env.update(environment)
+    env.update(timeout_environment)
 
     subprocess.run(
         [
@@ -306,6 +314,7 @@ def test_continuation_launcher_forwards_max_train_seconds(
     submitted = hf_log.read_text(encoding="utf-8").splitlines()
     assert "--max-train-seconds" in submitted
     assert submitted[submitted.index("--max-train-seconds") + 1] == expected_seconds
+    assert submitted[submitted.index("--timeout") + 1] == expected_timeout
 
 
 def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: Path) -> None:
