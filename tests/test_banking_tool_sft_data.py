@@ -9,6 +9,7 @@ import pytest
 import hello_slm.banking_tool_sft_data as banking_tool_sft_data
 from hello_slm.banking_tool_sft_data import (
     BANKING_TOOL_SFT_CONTRACT,
+    TRAINABLE_TEXT_BANNED_WORDS,
     BankingToolSftDataError,
     export_teacher_realization_requests,
     generate_records,
@@ -781,6 +782,40 @@ def test_validator_rejects_internal_language_in_customer_facing_messages() -> No
     )
     with pytest.raises(BankingToolSftDataError, match="final assistant response leaks"):
         validate_records([record])
+
+
+def test_validator_rejects_product_wording_only_in_trainable_splits() -> None:
+    def _train_record() -> dict:
+        return next(
+            record
+            for record in generate_records(pilot_count=30)
+            if record["metadata"]["split"] == "train"
+        )
+
+    record = _train_record()
+    record["messages"][-1]["content"] += " Please share the last four digits shown in the app."
+    with pytest.raises(BankingToolSftDataError, match="banned product wording"):
+        validate_records([record])
+
+    # The frozen evaluation splits keep their legacy wording, so they stay exempt.
+    exempt = _train_record()
+    exempt["messages"][-1]["content"] += " Please share the last four digits shown in the app."
+    exempt["metadata"]["split"] = "test"
+    validate_records([exempt])
+
+
+def test_trainable_generated_records_carry_no_product_or_demo_wording() -> None:
+    for record in generate_records(pilot_count=120):
+        if record["metadata"]["split"] not in {"train", "validation"}:
+            continue
+        for message in record["messages"]:
+            if message["role"] not in {"user", "assistant"}:
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                continue
+            banned = TRAINABLE_TEXT_BANNED_WORDS.findall(content)
+            assert not banned, f"{record['record_id']} leaks {banned}: {content}"
 
 
 def test_training_finals_carry_no_realizer_scaffolding_after_teacher_pass() -> None:

@@ -282,6 +282,35 @@ Regeneration must leave these files byte-identical:
 `coreference-shadow.jsonl`, `granite-v7-shadow.jsonl`, and
 `screenshot-regression.jsonl`.
 
+### Trainable-text word ban
+
+Training must not teach the model to talk about a product surface it cannot see
+or to describe itself as a demo. `validate_records` therefore rejects any `user`
+or `assistant` message whose text matches `TRAINABLE_TEXT_BANNED_WORDS`
+(`app`/`apps`, `mobile app`, `demo`/`demos`, `synthetic`, `mock`, `sandbox`,
+`fictional`, `prototype`, `poc`, `placeholder`, `dummy`, `sample`,
+`test`/`testing`, word-boundary matched, case-insensitive) when the record's
+`metadata.split` is `train` or `validation`. The frozen evaluation splits
+(`test`, the two shadow gates, and the held-out screenshot rows) are exempt by
+split so their fixtures stay byte-identical; the pre-existing
+`FINAL_RESPONSE_FORBIDDEN` and system-prompt checks are unchanged.
+
+Two consequences for the generators:
+
+- The alignment templates were rewritten for `train`/`validation` only. The
+  clarification finals now end `Please share the last four digits.` and the
+  `deictic_replace_ambiguity` final ends `Please share its last four digits.`,
+  while the shadow branches keep the legacy `... shown in the app.` string that
+  `coreference-shadow.jsonl` and `granite-v7-shadow.jsonl` pin.
+- Base tool-SFT scenario templates are shared by every split and the base test
+  split is byte-frozen, so they cannot be edited in place. Instead
+  `_scrub_trainable_product_wording` rewrites `TRAINABLE_TEXT_SUBSTITUTIONS`
+  (`while I am checking the mobile app`, ` shown in the app`, and the two
+  `can this demo ...` stems) out of the dialogue text *after* split assignment,
+  on trainable records only. Teacher-realization files must be app-free on their
+  own: the teacher pass overwrites `user_content` and `final_response` after the
+  scrub, and its `validate_records` call then enforces the ban.
+
 ### Ambiguity clarification template
 
 `_deictic_replace_curriculum` emits one clarification template for every
@@ -290,15 +319,18 @@ was tried for train/validation in the v9 iteration and regressed the coreference
 dev gate (ambiguity accuracy 0.44 after 964 continuation steps: the parent
 adapter's prior was not overwritten at the continuation learning rate), so the
 single template was restored. It names both candidate cards and keeps `which`
-and `card` early, which is what the gate matches on.
+and `card` early, which is what the gate matches on. Train and validation close
+with `Please share its last four digits.`; the shadow split keeps the frozen
+`Please share the last four digits shown in the app.`
 
 ### Documented limitations
 
 - The `_suffix` concatenation defect is retained. The split suffix is appended
-  without a separating space, so alignment user turns read `get createdin the
-  app?` in train and `get createdfrom my profile?` in test. The same defect is
+  without a separating space, so alignment user turns read `get createdon my
+  account?` in train and `get createdfrom my profile?` in test. The same defect is
   present in the frozen `test.jsonl`, so correcting it would change a
   byte-identical split; it is deferred to the next frozen-split rotation.
-- Alignment user turns remain scaffolded ("... I am checking this in the mobile
-  app. Please keep the answer concise."). Only assistant finals were rewritten
-  in this pass, for the leakage-gate reason above.
+- Alignment user turns remain scaffolded ("... I am going through my accounts.
+  Please keep the answer concise."). Only assistant finals were rewritten in
+  this pass, for the leakage-gate reason above; the scaffolding itself is now
+  app-free but still reads as a template.

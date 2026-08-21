@@ -59,7 +59,7 @@ REALIZATION_COUNTS = {
 }
 REALIZATION_CONTEXTS = {
     "train": (
-        "I am checking this in the mobile app",
+        "I am going through my accounts",
         "I am reviewing my recent banking activity",
         "I want to finish this task in chat",
         "I am looking at the result you just showed",
@@ -735,8 +735,7 @@ def _clarifications(split: str) -> list[dict[str, Any]]:
             pre_messages=[
                 _user(f"Replace my debit card{suffix}."),
                 _assistant(
-                    "Which card should I replace? Please share the last four "
-                    "digits shown in the app.",
+                    "Which card should I replace? Please share the last four digits.",
                     loss=False,
                 ),
             ],
@@ -1320,10 +1319,15 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
             # ambiguity_accuracy 0.44 (the continuation LR could not overwrite the
             # parent adapter's prior on the gate prompts). The template is the only
             # configuration proven to pass; coreference-shadow.jsonl also pins it.
+            ambiguity_closer = (
+                "share the last four digits shown in the app."
+                if split == "shadow"
+                else "share its last four digits."
+            )
             ambiguity_final = (
                 f"I found {card_name} ending in {card_last4} and {other_card_name} "
                 f"ending in {other_card_last4}. Which card should I replace? Please "
-                "share the last four digits shown in the app."
+                f"{ambiguity_closer}"
             )
             ambiguity = _record(
                 record_id=f"deictic_ambiguous_{family}_{split}_{realization_key}",
@@ -1731,7 +1735,7 @@ def _history_entity_ambiguity(split: str) -> list[dict[str, Any]]:
             current=f"Replace the card we were discussing {suffix}.",
             final=(
                 "I found two cards in our conversation. Which should I replace? Please share "
-                "the last four digits shown in the app."
+                "the last four digits."
             ),
             tool_plan=[],
             grounding_facts=[],
@@ -1970,6 +1974,11 @@ def _granite_v7_examples(split: str) -> list[dict[str, Any]]:
         "validation": "Juniper Internet",
         "shadow": "Prairie Electric",
     }[split]
+    # The Granite V7 shadow gate is frozen in granite-v7-shadow.jsonl, so it keeps the
+    # legacy wording; trainable splits must not name a product surface.
+    selector_missing_closer = (
+        "four digits shown in the app." if split == "shadow" else "four digits."
+    )
     records = [
         _record(
             record_id=f"v7_greeting_{split}",
@@ -2048,7 +2057,7 @@ def _granite_v7_examples(split: str) -> list[dict[str, Any]]:
             current=f"Replace my debit card during this {tag.lower()} review.",
             final=(
                 f"For the {tag} review, which card should I replace? Please share the last "
-                "four digits shown in the app."
+                f"{selector_missing_closer}"
             ),
             tool_plan=[],
             grounding_facts=["missing_field=last4"],
@@ -2550,7 +2559,7 @@ def _sha256_text(text: str) -> str:
 
 def _suffix(split: str) -> str:
     return {
-        "train": "in the app",
+        "train": "on my account",
         "validation": "from this chat",
         "test": "from my profile",
         "heldout": "",

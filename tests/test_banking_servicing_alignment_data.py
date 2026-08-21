@@ -28,6 +28,7 @@ from hello_slm.banking_servicing_alignment_data import (
 from hello_slm.banking_tool_sft_data import (
     REALIZER_FINAL_CLOSERS,
     REALIZER_FINAL_PREFIXES,
+    TRAINABLE_TEXT_BANNED_WORDS,
     BankingToolSftDataError,
     prepare,
     validate_banking_tool_sft_manifest,
@@ -878,14 +879,54 @@ def _ambiguity_finals(split: str) -> list[str]:
 def test_ambiguity_finals_keep_the_gate_proven_template_in_every_split() -> None:
     # The v9 conversational pool regressed the coreference dev gate (ambiguity
     # accuracy 0.44 after 964 steps); the single template is the proven target.
-    for split, expected_count in (("train", 672), ("validation", 16), ("shadow", 16)):
+    expectations = (
+        ("train", 672, "Please share its last four digits."),
+        ("validation", 16, "Please share its last four digits."),
+        # coreference-shadow.jsonl is a frozen fixture: it keeps the legacy closer.
+        ("shadow", 16, "Please share the last four digits shown in the app."),
+    )
+    for split, expected_count, expected_closer in expectations:
         finals = _ambiguity_finals(split)
         assert len(finals) == expected_count
         assert len(set(finals)) == expected_count
         for final in finals:
-            assert final.startswith("I found ") and final.endswith("shown in the app.")
+            assert final.startswith("I found ") and final.endswith(expected_closer)
             head = " ".join(final.lower().split()[:45])
             assert "which" in head and "card" in head and "last four digits" in final
+
+
+def test_trainable_splits_never_mention_product_surfaces_or_demo_wording() -> None:
+    splits, _ = build_servicing_alignment_splits()
+    for split in ("train", "validation"):
+        for record in splits[split]:
+            for message in record["messages"]:
+                if message["role"] not in {"user", "assistant"}:
+                    continue
+                content = message.get("content")
+                if not isinstance(content, str):
+                    continue
+                banned = TRAINABLE_TEXT_BANNED_WORDS.findall(content)
+                assert not banned, f"{record['record_id']} ({split}) leaks {banned}: {content}"
+
+
+def test_frozen_shadow_gates_keep_the_legacy_app_wording() -> None:
+    shadow_ambiguity_finals = [
+        record["messages"][-1]["content"]
+        for record in build_coreference_shadow_gate()
+        if record["metadata"]["scenario_family"] == "deictic_replace_ambiguity"
+    ]
+    assert shadow_ambiguity_finals
+    assert all(
+        final.endswith("Please share the last four digits shown in the app.")
+        for final in shadow_ambiguity_finals
+    )
+    granite_finals = [
+        message["content"]
+        for record in alignment_data.build_granite_v7_shadow_gate()
+        for message in record["messages"]
+        if message["role"] == "assistant" and isinstance(message.get("content"), str)
+    ]
+    assert any("four digits shown in the app." in final for final in granite_finals)
 
 
 _SPLIT_LEADS = ("For this request,", "In this session,")

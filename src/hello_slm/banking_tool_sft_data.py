@@ -305,6 +305,25 @@ POC_PRESET_KEYS = frozenset(
     )
 )
 TRAINING_CONTRACT_FORBIDDEN = ("demo", "synthetic", "mock", "test")
+# Trainable text (train + validation) must read like a real retail-banking transcript:
+# no product-surface names and no wording that betrays a demo corpus. Frozen evaluation
+# splits (test, shadow, heldout) are exempt so their fixtures stay byte-identical.
+TRAINABLE_TEXT_BANNED_WORDS = re.compile(
+    r"\b(?:apps?|mobile app|demo|demos|synthetic|mock|sandbox|fictional|prototype"
+    r"|poc|placeholder|dummy|sample|test|testing)\b",
+    re.I,
+)
+TRAINABLE_TEXT_SPLITS = frozenset({"train", "validation"})
+# Base scenario templates are shared by every split and the test split is byte-frozen,
+# so product-surface wording is rewritten after split assignment, on trainable records
+# only. Replacements are distinct phrases so they cannot collide with an existing
+# realizer context and trip the normalized-duplicate check.
+TRAINABLE_TEXT_SUBSTITUTIONS = (
+    ("while I am checking the mobile app", "while I am going through my accounts"),
+    (" shown in the app", ""),
+    ("can this demo approve a home loan", "can this bank approve a home loan"),
+    ("can this demo create a new deposit account", "can this bank create a new deposit account"),
+)
 FINAL_RESPONSE_FORBIDDEN = (
     *TRAINING_CONTRACT_FORBIDDEN,
     "backend",
@@ -435,6 +454,7 @@ def generate_records(
             _align_multistage_training_record(record)
             _attach_generation_contract(record)
             _align_social_training_target(record)
+            _scrub_trainable_product_wording(record)
     validate_records(records, synthetic_bank_path=bank_path)
     return records
 
@@ -552,7 +572,11 @@ def import_teacher_realizations(
         if row is None:
             continue
         before_hash = _immutable_record_hash(record)
-        if row.get("immutable_hash") != before_hash:
+        accepted_hashes = {before_hash}
+        pre_scrub_hash = record.get("provenance", {}).get("pre_scrub_immutable_hash")
+        if isinstance(pre_scrub_hash, str):
+            accepted_hashes.add(pre_scrub_hash)
+        if row.get("immutable_hash") not in accepted_hashes:
             raise BankingToolSftDataError(f"{record_id} teacher request hash mismatch")
         user_content = row.get("user_content")
         final_response = row.get("final_response")
@@ -630,6 +654,29 @@ def generation_contract_for_record(record: Mapping[str, Any]) -> dict[str, Any] 
         "tool_names": [],
         "argument_constraints": {},
     }
+
+
+def _scrub_trainable_product_wording(record: dict[str, Any]) -> None:
+    """Rewrite product-surface wording out of a trainable record's dialogue text.
+
+    The scrub can touch context turns, which are covered by the immutable-record hash
+    that teacher-realization rows pin. When that happens the pre-scrub hash is recorded
+    on the record's provenance (provenance is outside the hashed payload) so an existing
+    teacher file still proves that calls, results, and facts were unchanged.
+    """
+
+    before_hash = _immutable_record_hash(record)
+    for message in record.get("messages", []):
+        if message.get("role") not in {"user", "assistant"}:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        for source, replacement in TRAINABLE_TEXT_SUBSTITUTIONS:
+            content = content.replace(source, replacement)
+        message["content"] = content
+    if _immutable_record_hash(record) != before_hash:
+        record.setdefault("provenance", {})["pre_scrub_immutable_hash"] = before_hash
 
 
 def _attach_generation_contract(record: dict[str, Any]) -> None:
@@ -817,6 +864,19 @@ def validate_records(
         if normalized_final in normalized_finals:
             raise BankingToolSftDataError(f"{record_id} duplicates a final answer")
         normalized_finals.add(normalized_final)
+        if str(record.get("metadata", {}).get("split", "")) in TRAINABLE_TEXT_SPLITS:
+            for message in record.get("messages", []):
+                if message.get("role") not in {"user", "assistant"}:
+                    continue
+                content = message.get("content")
+                if not isinstance(content, str):
+                    continue
+                banned = TRAINABLE_TEXT_BANNED_WORDS.search(content)
+                if banned is not None:
+                    raise BankingToolSftDataError(
+                        f"{record_id} trainable text mentions banned product wording: "
+                        f"{banned.group(0)}"
+                    )
         leaked = [term for term in FINAL_RESPONSE_FORBIDDEN if term in normalized_final]
         if leaked:
             raise BankingToolSftDataError(
