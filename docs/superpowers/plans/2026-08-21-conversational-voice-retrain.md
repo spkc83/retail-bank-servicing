@@ -482,3 +482,9 @@ git diff --stat data/                            # no frozen file listed
   the clarification correctly then emitted the parent's filler closer. Total spend $2.74 of $6.
 - Run 4 plan: +4 train families in the shown-above/results neighbourhood (`shown-above`, `above-card`, `from-results`,
   `target-card`), same recipe and caps (≈$0.62–0.83, ceiling $1.70).
+- Run 4 `6a8860587c5c7dd37923344b` (data b4dc127 / dataset @0f99604a, +4 families, alignment train 2426): 17.3 min, **$0.79**.
+  Dev gate 1.0/1.0/1.0 at steps 450 and 550 but 0.938 at 500 (`deictic_replace_list-reference_validation_2` flickered back to a
+  clarify) → no two consecutive passes, no upload. Cumulative spend $3.53 of $6. Runs 2–4 each sit within one held-out record of
+  the rule; the flips are parent-prior leaks on unseen phrasings (outputs still carry the parent's "shown in the app").
+- Run 5 (user choice): strengthen gate-family weighting via launcher env `POSITIVE_MULTIPLIER=3 AMBIGUITY_MULTIPLIER=6`
+  (defaults 2/4 unchanged), same data/dataset revision, same 550-step recipe and caps.

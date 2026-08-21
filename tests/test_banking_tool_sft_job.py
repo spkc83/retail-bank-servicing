@@ -296,8 +296,12 @@ def test_continuation_launcher_forwards_max_train_seconds(
     }
     env.pop("MAX_TRAIN_SECONDS", None)
     env.pop("JOB_TIMEOUT", None)
+    env.pop("POSITIVE_MULTIPLIER", None)
+    env.pop("AMBIGUITY_MULTIPLIER", None)
     env.update(environment)
     env.update(timeout_environment)
+    if expected_seconds == "1800":
+        env.update({"POSITIVE_MULTIPLIER": "3", "AMBIGUITY_MULTIPLIER": "6"})
 
     subprocess.run(
         [
@@ -315,6 +319,9 @@ def test_continuation_launcher_forwards_max_train_seconds(
     assert "--max-train-seconds" in submitted
     assert submitted[submitted.index("--max-train-seconds") + 1] == expected_seconds
     assert submitted[submitted.index("--timeout") + 1] == expected_timeout
+    expected_positive, expected_ambiguity = ("3", "6") if expected_seconds == "1800" else ("2", "4")
+    assert submitted[submitted.index("--positive-multiplier") + 1] == expected_positive
+    assert submitted[submitted.index("--ambiguity-multiplier") + 1] == expected_ambiguity
 
 
 def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ set -euo pipefail
 if [[ $# -lt 2 || $# -gt 5 ]]; then
   echo "usage: $0 SOURCE_COMMIT DATASET_REVISION [SOURCE_ADAPTER_REVISION] [DESTINATION_REPO] [MAX_STEPS]" >&2
   echo "env: MAX_TRAIN_SECONDS caps wall-clock training time (default 3600)" >&2
+  echo "env: POSITIVE_MULTIPLIER / AMBIGUITY_MULTIPLIER weight the coreference mix (defaults 2 / 4)" >&2
   echo "env: JOB_TIMEOUT caps the whole HF job including setup and upload (default 5h)" >&2
   exit 2
 fi
@@ -15,6 +16,8 @@ destination_repo="${4:-spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-
 max_steps="${5:-964}"
 source_adapter_repo="${SOURCE_ADAPTER_REPO:-spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation}"
 max_train_seconds="${MAX_TRAIN_SECONDS:-3600}"
+positive_multiplier="${POSITIVE_MULTIPLIER:-2}"
+ambiguity_multiplier="${AMBIGUITY_MULTIPLIER:-4}"
 job_timeout_override="${JOB_TIMEOUT:-5h}"
 probe_only="${PROBE_ONLY:-0}"
 publish_only="${PUBLISH_ONLY:-0}"
@@ -31,6 +34,11 @@ fi
 
 if [[ ! "$job_timeout_override" =~ ^[0-9]+[smh]$ ]]; then
   echo "JOB_TIMEOUT must be a whole number followed by s, m, or h." >&2
+  exit 2
+fi
+
+if [[ ! "$positive_multiplier" =~ ^[1-9][0-9]?$ || ! "$ambiguity_multiplier" =~ ^[1-9][0-9]?$ ]]; then
+  echo "POSITIVE_MULTIPLIER and AMBIGUITY_MULTIPLIER must be whole numbers from 1 to 99." >&2
   exit 2
 fi
 
@@ -124,6 +132,8 @@ job_args=(
   --output-dir "$output_dir"
   --max-steps "$max_steps"
   --max-train-seconds "$max_train_seconds"
+  --positive-multiplier "$positive_multiplier"
+  --ambiguity-multiplier "$ambiguity_multiplier"
 )
 
 if [[ "$probe_only" == "1" ]]; then
