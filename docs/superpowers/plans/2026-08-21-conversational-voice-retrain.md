@@ -513,3 +513,11 @@ git diff --stat data/                            # no frozen file listed
   `6a88b92c7c5c7dd379233a53` published the run-6 bundle as
   `spkc83/retail-bank-servicing-agent-9b-peft-v9b-conversational-voice@15abf8f898f97c607641534bef86610648cab6cb`
   (trained at a3acfad, dataset @0f99604a, multipliers 3/6, min-steps 550, selected step 550). Local probe + tone read-out next.
+- v9b local probe: **8/8 PASS**, replies byte-identical to v9's (one visible sentence each). Diagnostics show why: the raw
+  `grounded_final` output is "I found your Everyday Visa Debit ending in 4821 and froze it. I can help with the next banking
+  step." — the second sentence is the v5-remediation parent's filler closer, stripped at runtime. The adapters learned to add a
+  second sentence but not the conversational one: at lr 2e-6 over ≤550 steps with loss on every chat token, the new finals do
+  not displace the parent's closer habit. **Iteration closed at ≈$5.2 of $6 (run-6 timing not reported by the API; estimate).**
+  Levers that would change the outcome (each needs new budget): final-token-weighted loss in the continuation worker (cheap code,
+  ≈$1.1/run); higher continuation LR (≈$1.1/run, behaviour risk gated); or a from-scratch Stage-2 LoRA on the v9 data (no gate in
+  that lane, ≈$4–5 incl. a gating continuation). v8 remains the live default; v9b is gate-passing and app-free if a repin is wanted.
