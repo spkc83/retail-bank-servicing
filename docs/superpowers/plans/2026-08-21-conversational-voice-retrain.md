@@ -488,3 +488,7 @@ git diff --stat data/                            # no frozen file listed
   the rule; the flips are parent-prior leaks on unseen phrasings (outputs still carry the parent's "shown in the app").
 - Run 5 (user choice): strengthen gate-family weighting via launcher env `POSITIVE_MULTIPLIER=3 AMBIGUITY_MULTIPLIER=6`
   (defaults 2/4 unchanged), same data/dataset revision, same 550-step recipe and caps.
+- Run 5 `6a88846e7c5c7dd379233767` (code 9463293, dataset @0f99604a, multipliers 3/6): 12.1 min, **$0.56**. Dev gate 1.0/1.0/1.0 at
+  steps 300 and 350 (two consecutive), shadow gate 1.0/1.0/1.0; adapter published
+  `spkc83/retail-bank-servicing-agent-9b-peft-v9-conversational-voice@0a9fe83fce3408e6be9a467e85b4e3398f780f05`.
+  Cumulative spend $4.09 of $6. Local probe + tone read-out next; repin/redeploy only on approval.
