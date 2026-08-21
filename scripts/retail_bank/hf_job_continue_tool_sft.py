@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
         default="/data/retail-bank-agent-9b-peft-v6-generation-contract",
     )
     parser.add_argument("--max-steps", type=int, default=964)
+    parser.add_argument("--min-steps", type=int, default=0)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
     parser.add_argument("--checkpoint-every", type=int, default=50)
@@ -185,6 +186,8 @@ def main() -> int:
             "granite",
             "--max-steps",
             str(args.max_steps),
+            "--min-steps",
+            str(args.min_steps),
             "--max-train-seconds",
             str(args.max_train_seconds),
             "--batch-size",

@@ -132,6 +132,7 @@ class ContinuationConfig:
     probe_checkpoint_dir: Path
     probe_checkpoint_step: int
     max_steps: int
+    min_steps: int
     max_train_seconds: int
     batch_size: int
     gradient_accumulation_steps: int
@@ -155,6 +156,7 @@ class ContinuationConfig:
 @dataclass
 class ConsecutiveGateTracker:
     required_passes: int = 2
+    min_steps: int = 0
     last_step: int | None = None
     consecutive_passes: int = 0
     first_passing_step: int | None = None
@@ -171,6 +173,9 @@ class ConsecutiveGateTracker:
             self.first_passing_step = step
         self.consecutive_passes += 1
         if self.consecutive_passes < self.required_passes:
+            return False
+        if step < self.min_steps:
+            # The streak keeps accumulating below the floor; only selection waits.
             return False
         if self.selected_step is None:
             self.selected_step = step
@@ -189,6 +194,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--family", choices=("granite",), default="granite")
     parser.add_argument("--hub-dest", default=DEFAULT_HUB_DEST)
     parser.add_argument("--max-steps", type=int, default=964)
+    parser.add_argument("--min-steps", type=int, default=0)
     parser.add_argument("--max-train-seconds", type=int, default=3_600)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
@@ -230,6 +236,7 @@ def config_from_args(args: argparse.Namespace) -> ContinuationConfig:
         probe_checkpoint_dir=Path(args.probe_checkpoint_dir),
         probe_checkpoint_step=int(args.probe_checkpoint_step),
         max_steps=int(args.max_steps),
+        min_steps=int(args.min_steps),
         max_train_seconds=int(args.max_train_seconds),
         batch_size=int(args.batch_size),
         gradient_accumulation_steps=int(args.gradient_accumulation_steps),
@@ -741,6 +748,7 @@ def build_dry_run_plan(config: ContinuationConfig) -> dict[str, Any]:
         },
         "training": {
             "max_steps": config.max_steps,
+            "min_steps": config.min_steps,
             "max_train_seconds": config.max_train_seconds,
             "batch_size": config.batch_size,
             "gradient_accumulation_steps": config.gradient_accumulation_steps,
@@ -1685,7 +1693,7 @@ def run_remote_continuation(config: ContinuationConfig) -> dict[str, Any]:
             self.output_dir = output_dir
             self.last_report: dict[str, Any] | None = None
             self.last_report_path: Path | None = None
-            self.gate_tracker = ConsecutiveGateTracker()
+            self.gate_tracker = ConsecutiveGateTracker(min_steps=config.min_steps)
 
         def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
             del args, kwargs
@@ -1867,6 +1875,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--probe-only and --publish-only are mutually exclusive")
     if config.max_steps < 1 or config.max_train_seconds < 60:
         raise ValueError("continuation caps must allow at least one step and 60 seconds")
+    if config.min_steps < 0 or config.min_steps > config.max_steps:
+        raise ValueError("--min-steps must be between 0 and --max-steps")
     if config.learning_rate <= 0:
         raise ValueError("--learning-rate must be positive")
     if config.dry_run:

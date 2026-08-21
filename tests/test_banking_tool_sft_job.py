@@ -268,12 +268,18 @@ def test_continuation_publish_recovery_uses_cpu_and_publish_only_mode(tmp_path: 
     ("timeout_environment", "expected_timeout"),
     [({"JOB_TIMEOUT": "45m"}, "45m"), ({}, "5h")],
 )
+@pytest.mark.parametrize(
+    ("min_steps_environment", "expected_min_steps"),
+    [({"MIN_STEPS": "550"}, "550"), ({}, "0")],
+)
 def test_continuation_launcher_forwards_max_train_seconds(
     tmp_path: Path,
     environment: dict[str, str],
     expected_seconds: str,
     timeout_environment: dict[str, str],
     expected_timeout: str,
+    min_steps_environment: dict[str, str],
+    expected_min_steps: str,
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -298,8 +304,10 @@ def test_continuation_launcher_forwards_max_train_seconds(
     env.pop("JOB_TIMEOUT", None)
     env.pop("POSITIVE_MULTIPLIER", None)
     env.pop("AMBIGUITY_MULTIPLIER", None)
+    env.pop("MIN_STEPS", None)
     env.update(environment)
     env.update(timeout_environment)
+    env.update(min_steps_environment)
     if expected_seconds == "1800":
         env.update({"POSITIVE_MULTIPLIER": "3", "AMBIGUITY_MULTIPLIER": "6"})
 
@@ -322,6 +330,7 @@ def test_continuation_launcher_forwards_max_train_seconds(
     expected_positive, expected_ambiguity = ("3", "6") if expected_seconds == "1800" else ("2", "4")
     assert submitted[submitted.index("--positive-multiplier") + 1] == expected_positive
     assert submitted[submitted.index("--ambiguity-multiplier") + 1] == expected_ambiguity
+    assert submitted[submitted.index("--min-steps") + 1] == expected_min_steps
 
 
 def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: Path) -> None:

@@ -321,6 +321,7 @@ def test_worker_dry_run_exposes_capped_continuation_plan() -> None:
     assert plan["base_revision"] == "1d56824995aa1adecfe20f62ca42fb1c0c443817"
     assert plan["hub_dest"] == ("spkc83/retail-bank-servicing-agent-9b-peft-v6-generation-contract")
     assert plan["training"]["max_steps"] == 964
+    assert plan["training"]["min_steps"] == 0
     assert plan["training"]["max_train_seconds"] == 3_600
     assert plan["training"]["learning_rate"] == 2e-6
     assert plan["training"]["positive_multiplier"] == 2
@@ -359,6 +360,71 @@ def test_consecutive_gate_resets_after_a_failed_checkpoint() -> None:
     assert tracker.observe(step=964, passed=True) is True
     assert tracker.first_passing_step == 850
     assert tracker.selected_step == 964
+
+
+def test_min_steps_floor_holds_training_through_early_consecutive_passes() -> None:
+    tracker = WORKER.ConsecutiveGateTracker(min_steps=550)
+
+    assert tracker.observe(step=300, passed=True) is False
+    assert tracker.observe(step=350, passed=True) is False
+    assert tracker.consecutive_passes == 2
+    assert tracker.first_passing_step == 300
+    assert tracker.selected_step is None
+
+
+def test_min_steps_floor_selects_the_first_qualifying_step() -> None:
+    tracker = WORKER.ConsecutiveGateTracker(min_steps=550)
+
+    assert tracker.observe(step=500, passed=True) is False
+    assert tracker.observe(step=550, passed=True) is True
+    assert tracker.first_passing_step == 500
+    assert tracker.selected_step == 550
+
+
+def test_min_steps_floor_keeps_pre_floor_passes_in_the_streak() -> None:
+    tracker = WORKER.ConsecutiveGateTracker(min_steps=550)
+
+    assert tracker.observe(step=300, passed=True) is False
+    assert tracker.observe(step=350, passed=True) is False
+    assert tracker.observe(step=400, passed=False) is False
+    assert tracker.observe(step=500, passed=True) is False
+    assert tracker.observe(step=550, passed=True) is True
+    assert tracker.first_passing_step == 300
+    assert tracker.selected_step == 550
+
+
+def test_min_steps_default_preserves_the_two_consecutive_pass_behaviour() -> None:
+    tracker = WORKER.ConsecutiveGateTracker()
+
+    assert tracker.min_steps == 0
+    assert tracker.observe(step=300, passed=True) is False
+    assert tracker.observe(step=350, passed=True) is True
+    assert tracker.selected_step == 350
+
+
+def test_worker_rejects_a_min_steps_floor_outside_the_step_budget() -> None:
+    with pytest.raises(ValueError, match="--min-steps"):
+        WORKER.main(["--min-steps", "1000", "--max-steps", "964"])
+    with pytest.raises(ValueError, match="--min-steps"):
+        WORKER.main(["--min-steps", "-1"])
+
+
+def test_worker_dry_run_plan_reports_the_requested_min_steps_floor() -> None:
+    config = WORKER.config_from_args(WORKER.parse_args(["--min-steps", "550"]))
+    plan = WORKER.build_dry_run_plan(config)
+
+    assert plan["training"]["min_steps"] == 550
+    assert plan["training"]["max_steps"] == 964
+
+
+def test_continuation_bootstrap_forwards_the_min_steps_floor() -> None:
+    source = JOB_PATH.read_text(encoding="utf-8")
+
+    assert 'parser.add_argument("--min-steps", type=int, default=0)' in source
+    command = source.split("command = [", 1)[1]
+    forwarded = command.index('"--min-steps",')
+    assert command.index("str(args.min_steps),", forwarded) - forwarded < 40
+    assert command.index('"--max-steps",') < forwarded
 
 
 def test_continuation_job_bootstrap_is_pinned_to_worker_and_dependencies() -> None:
@@ -486,7 +552,7 @@ def test_worker_evaluates_before_atomic_adapter_upload_without_merging() -> None
         "snapshot_source_adapter(config)"
     )
     assert 'self.output_dir / "behavioral-evaluations"' in remote_body
-    assert "ConsecutiveGateTracker()" in remote_body
+    assert "ConsecutiveGateTracker(min_steps=config.min_steps)" in remote_body
     assert "trainer.remove_callback(BehavioralGateCallback)" in remote_body
     assert remote_body.index("eval_metrics = validate_eval_metrics(trainer.evaluate())") < (
         remote_body.index("trainer.remove_callback(BehavioralGateCallback)")
