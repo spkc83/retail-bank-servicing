@@ -1167,6 +1167,28 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "prompt": "replace the card you just showed me",
                 "product": "Brook",
             },
+            # Targeted margin for the held-out "results-reference-shadow" pair:
+            # nearby shown-above / results phrasings that never reuse its wording.
+            {
+                "phrase_family": "shown-above",
+                "prompt": "replace the card shown above",
+                "product": "Cove",
+            },
+            {
+                "phrase_family": "above-card",
+                "prompt": "the card above is the one to replace",
+                "product": "Ridge",
+            },
+            {
+                "phrase_family": "from-results",
+                "prompt": "the card from those results needs a replacement",
+                "product": "Basin",
+            },
+            {
+                "phrase_family": "target-card",
+                "prompt": "that card is my replacement target",
+                "product": "Larch",
+            },
         )
     if split == "validation":
         return (

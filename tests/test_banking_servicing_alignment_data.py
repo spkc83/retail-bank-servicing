@@ -66,12 +66,12 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 2298,
+        "train": 2426,
         "validation": 218,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
-        "train": 720,
+        "train": 784,
         "validation": 16,
         "test": 0,
     }
@@ -92,8 +92,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "history_entity_action": 128,
         "history_entity_ambiguity": 32,
         "tool_outcome_consistency": 128,
-        "deictic_replace_action": 720,
-        "deictic_replace_ambiguity": 720,
+        "deictic_replace_action": 784,
+        "deictic_replace_ambiguity": 784,
         "deictic_ineligible_clarification": 72,
         "deictic_missing_clarification": 72,
         "natural_social_style": 12,
@@ -402,7 +402,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         for split in ("train", "validation")
     }
 
-    assert len(curricula["train"]) == 1440
+    assert len(curricula["train"]) == 1568
     assert len(curricula["validation"]) == 32
     for split, rows in curricula.items():
         action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
@@ -442,7 +442,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         pairs: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             pairs.setdefault(row["metadata"]["coreference_pair_id"], []).append(row)
-        assert len(pairs) == (720 if split == "train" else 16)
+        assert len(pairs) == (784 if split == "train" else 16)
         for pair_rows in pairs.values():
             assert len(pair_rows) == 2
             assert {_last_user(row) for row in pair_rows} == {_last_user(pair_rows[0])}
@@ -671,7 +671,7 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 2298,
+        "train": 2426,
         "validation": 218,
         "test": 35,
     }
@@ -768,7 +768,7 @@ def _export_alignment_requests(tmp_path: Path, base_dir: Path) -> list[dict[str,
     rows = [
         json.loads(line) for line in requests.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert len(rows) == 2298 + 218
+    assert len(rows) == 2426 + 218
     return rows
 
 
@@ -880,7 +880,7 @@ def test_ambiguity_finals_keep_the_gate_proven_template_in_every_split() -> None
     # The v9 conversational pool regressed the coreference dev gate (ambiguity
     # accuracy 0.44 after 964 steps); the single template is the proven target.
     expectations = (
-        ("train", 720, "Please share its last four digits."),
+        ("train", 784, "Please share its last four digits."),
         ("validation", 16, "Please share its last four digits."),
         # coreference-shadow.jsonl is a frozen fixture: it keeps the legacy closer.
         ("shadow", 16, "Please share the last four digits shown in the app."),
@@ -1021,14 +1021,19 @@ def test_clarify_finals_keep_dev_gate_markers_early() -> None:
     assert bad == []
 
 
-def test_targeted_list_reference_families_widen_the_train_margin() -> None:
-    # The validation "list-reference" pair flickered on a single-card history, so
-    # train carries three nearby-but-distinct list/showed phrasings. The validation
-    # and shadow wordings stay held out.
+def test_targeted_reference_families_widen_the_train_margin() -> None:
+    # The validation "list-reference" pair flickered on a single-card history and the
+    # "results-reference-shadow" pair broke mid-clarification, so train carries seven
+    # nearby-but-distinct list / shown-above / results phrasings. The validation and
+    # shadow wordings stay held out, including under the four prompt wrappers.
     targeted = {
         "listed-card": "replace the card you listed",
         "from-your-list": "the card in your list needs replacing",
         "card-you-showed": "replace the card you just showed me",
+        "shown-above": "replace the card shown above",
+        "above-card": "the card above is the one to replace",
+        "from-results": "the card from those results needs a replacement",
+        "target-card": "that card is my replacement target",
     }
     train_specs = alignment_data._coreference_curriculum_specs("train")
     train_by_family = {spec["phrase_family"]: spec for spec in train_specs}
@@ -1052,8 +1057,17 @@ def test_targeted_list_reference_families_widen_the_train_margin() -> None:
     held_out_families = {spec["phrase_family"] for spec in held_out_specs}
     assert held_out_prompts.isdisjoint(set(targeted.values()))
     assert held_out_families.isdisjoint(set(targeted))
+    # The curriculum realizes every prompt under four wrappers, so compare the
+    # wrapped surfaces rather than the bare spec text.
+    wrappers = ("{prompt}", "okay {prompt}", "{prompt} please", "yes {prompt}")
     held_out_ngrams: set[tuple[str, ...]] = set().union(
-        *(alignment_data._word_ngrams(spec["prompt"], size=4) for spec in held_out_specs)
+        *(
+            alignment_data._word_ngrams(wrapper.format(prompt=spec["prompt"]), size=4)
+            for spec in held_out_specs
+            for wrapper in wrappers
+        )
     )
     for prompt in targeted.values():
-        assert not alignment_data._word_ngrams(prompt, size=4) & held_out_ngrams
+        for wrapper in wrappers:
+            wrapped = wrapper.format(prompt=prompt)
+            assert not alignment_data._word_ngrams(wrapped, size=4) & held_out_ngrams
