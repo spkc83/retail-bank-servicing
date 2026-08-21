@@ -833,6 +833,74 @@ def test_policy_turn_repairs_an_invented_citation_once() -> None:
     assert all(call["tools"] is None for call in model.calls)
 
 
+def test_policy_turn_strips_realizer_filler_from_first_pass_output() -> None:
+    model = RecordingModel(
+        [
+            "I found the following details: Applications are reviewed before "
+            "approval. [Policy: mortgage.application.overview.us.v1]"
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+    matches = (
+        {
+            "chunk_id": "mortgage.application.overview.us.v1",
+            "title": "Mortgage application overview",
+            "text": "Applications are reviewed before approval.",
+            "effective_from": "2026-01-01",
+        },
+    )
+
+    result = agent.run_policy_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="How do I start a mortgage application?",
+        conversation=[],
+        policy_matches=matches,
+        corpus_revision="sha256:policy-v1",
+    )
+
+    assert result.response_path == "policy_grounded"
+    assert not result.response.startswith("I found the following details:")
+    assert result.response == (
+        "Applications are reviewed before approval. "
+        "[Policy: mortgage.application.overview.us.v1]"
+    )
+
+
+def test_policy_turn_strips_realizer_filler_from_repair_pass_output() -> None:
+    model = RecordingModel(
+        [
+            "Apply online. [Policy: invented.policy]",
+            "I found the following details: Applications are reviewed before "
+            "approval. [Policy: mortgage.application.overview.us.v1]",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+    matches = (
+        {
+            "chunk_id": "mortgage.application.overview.us.v1",
+            "title": "Mortgage application overview",
+            "text": "Applications are reviewed before approval.",
+        },
+    )
+
+    result = agent.run_policy_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Can I get a mortgage?",
+        conversation=[],
+        policy_matches=matches,
+        corpus_revision="sha256:policy-v1",
+    )
+
+    assert result.response_path == "policy_grounded_repaired"
+    assert not result.response.startswith("I found the following details:")
+    assert result.response == (
+        "Applications are reviewed before approval. "
+        "[Policy: mortgage.application.overview.us.v1]"
+    )
+
+
 def test_tool_calls_execute_in_order_and_second_model_pass_writes_final_answer() -> None:
     model = RecordingModel(
         [

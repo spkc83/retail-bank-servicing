@@ -627,6 +627,7 @@ class ConversationalBankingAgent:
             pinned_exchange=pinned_exchange,
         )
         output, trace = self._generate_pass("policy_grounded", context, None)
+        output = strip_realizer_filler(output) or output
         model_passes = [trace]
         validation = validate_policy_answer(output, policy_matches)
         response_path = "policy_grounded"
@@ -638,6 +639,7 @@ class ConversationalBankingAgent:
                 authoritative_evidence=policy_matches,
             )
             output, repair_trace = self._generate_pass("policy_repair_1", repair_messages, None)
+            output = strip_realizer_filler(output) or output
             model_passes.append(repair_trace)
             repaired_validation = validate_policy_answer(output, policy_matches)
             if not repaired_validation.valid:
