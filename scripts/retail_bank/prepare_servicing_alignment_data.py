@@ -35,6 +35,28 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SYNTHETIC_BANK_PATH,
     )
     parser.add_argument(
+        "--export-teacher-requests",
+        type=Path,
+        default=None,
+        help="Write alignment train+validation teacher realization requests to this JSONL path.",
+    )
+    parser.add_argument(
+        "--teacher-responses",
+        type=Path,
+        default=None,
+        help="Apply teacher-authored final_response rewrites from this JSONL path.",
+    )
+    parser.add_argument(
+        "--teacher-model",
+        default=None,
+        help="Teacher model id recorded in provenance; required with --teacher-responses.",
+    )
+    parser.add_argument(
+        "--teacher-prompt-hash",
+        default=None,
+        help="Teacher prompt digest recorded in provenance; required with --teacher-responses.",
+    )
+    parser.add_argument(
         "--push-to-hub",
         action="store_true",
         help="Publish the generated dataset after local validation.",
@@ -59,6 +81,10 @@ def main() -> int:
         args.output_dir,
         base_sft_dir=args.base_sft_dir,
         synthetic_bank_path=args.synthetic_bank,
+        export_teacher_requests=args.export_teacher_requests,
+        teacher_responses=args.teacher_responses,
+        teacher_model=args.teacher_model,
+        teacher_prompt_hash=args.teacher_prompt_hash,
     )
     if args.expected_release_lock is not None:
         verify_release_lock(manifest, args.expected_release_lock)

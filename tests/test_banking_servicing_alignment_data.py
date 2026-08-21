@@ -747,3 +747,117 @@ def test_release_lock_detects_split_drift(tmp_path: Path) -> None:
         assert "split digests drifted" in str(error)
     else:
         raise AssertionError("drifted lock should fail")
+
+
+def _small_base(tmp_path: Path) -> Path:
+    base_dir = tmp_path / "base"
+    prepare(output_dir=base_dir, pilot_count=120)
+    return base_dir
+
+
+def _export_alignment_requests(tmp_path: Path, base_dir: Path) -> list[dict[str, Any]]:
+    requests = tmp_path / "requests.jsonl"
+    write_servicing_alignment_dataset(
+        tmp_path / "export", base_sft_dir=base_dir, export_teacher_requests=requests
+    )
+    rows = [
+        json.loads(line) for line in requests.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert len(rows) == 2202 + 218
+    return rows
+
+
+def test_alignment_teacher_hook_rewrites_only_train_and_validation_finals(tmp_path: Path) -> None:
+    base_dir = _small_base(tmp_path)
+    rows = _export_alignment_requests(tmp_path, base_dir)
+    target = next(r for r in rows if r["record_id"].startswith("outcome_replace"))
+    response = {
+        "record_id": target["record_id"],
+        "immutable_hash": target["immutable_hash"],
+        "user_content": target["user_content"],
+        "final_response": (
+            "Good news — the replacement for your Cashback Debit ending in 7742 is already "
+            "pending. Keep using your other cards as normal while it is on the way."
+        ),
+    }
+    responses = tmp_path / "responses.jsonl"
+    responses.write_text(json.dumps(response) + "\n", encoding="utf-8")
+    before_test = (tmp_path / "export" / "test.jsonl").read_bytes()
+
+    manifest = write_servicing_alignment_dataset(
+        tmp_path / "out",
+        base_sft_dir=base_dir,
+        teacher_responses=responses,
+        teacher_model="claude-opus-5",
+        teacher_prompt_hash="sha256:" + "0" * 64,
+    )
+
+    train = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    rewritten = next(r for r in train if r["record_id"] == target["record_id"])
+    assert rewritten["messages"][-1]["content"] == response["final_response"]
+    assert rewritten["provenance"]["teacher_model"] == "claude-opus-5"
+    assert (tmp_path / "out" / "test.jsonl").read_bytes() == before_test
+    assert manifest["report"]["alignment_teacher_realization"]["realized_counts"] == {
+        "train": 1,
+        "validation": 0,
+    }
+
+
+@pytest.mark.parametrize("which", ["base", "alignment"])
+def test_alignment_teacher_hook_rejects_test_split_rows(tmp_path: Path, which: str) -> None:
+    base_dir = _small_base(tmp_path)
+    _export_alignment_requests(tmp_path, base_dir)
+    test_rows = [
+        json.loads(line)
+        for line in (tmp_path / "export" / "test.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    # composite test = base rows first, alignment rows last
+    row = test_rows[0] if which == "base" else test_rows[-1]
+    bad = {
+        "record_id": row["record_id"],
+        "immutable_hash": "sha256:" + "0" * 64,
+        "user_content": "x",
+        "final_response": "y",
+    }
+    responses = tmp_path / "bad.jsonl"
+    responses.write_text(json.dumps(bad) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="test split"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out",
+            base_sft_dir=base_dir,
+            teacher_responses=responses,
+            teacher_model="m",
+            teacher_prompt_hash="sha256:" + "0" * 64,
+        )
+
+
+def test_alignment_teacher_hook_rejects_user_text_edits(tmp_path: Path) -> None:
+    base_dir = _small_base(tmp_path)
+    rows = _export_alignment_requests(tmp_path, base_dir)
+    edited = {k: rows[0][k] for k in ("record_id", "immutable_hash", "final_response")}
+    edited["user_content"] = rows[0]["user_content"] + " please"
+    responses = tmp_path / "bad.jsonl"
+    responses.write_text(json.dumps(edited) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="final_response only"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out",
+            base_sft_dir=base_dir,
+            teacher_responses=responses,
+            teacher_model="m",
+            teacher_prompt_hash="sha256:" + "0" * 64,
+        )
+
+
+def test_alignment_teacher_hook_requires_model_and_prompt_hash(tmp_path: Path) -> None:
+    base_dir = _small_base(tmp_path)
+    responses = tmp_path / "r.jsonl"
+    responses.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="teacher_model and teacher_prompt_hash"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out", base_sft_dir=base_dir, teacher_responses=responses
+        )

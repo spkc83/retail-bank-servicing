@@ -17,6 +17,8 @@ from hello_slm.banking_tool_sft_data import (
     POLICY_CHUNKS,
     SYSTEM_PROMPT,
     _attach_generation_contract,
+    export_teacher_realization_requests,
+    import_teacher_realizations,
     load_canonical_policy_corpus,
     validate_banking_tool_sft_manifest,
     validate_records,
@@ -383,11 +385,39 @@ def load_base_sft_splits(
     return manifest, splits
 
 
+def _assert_alignment_teacher_rows(
+    path: Path, *, trainable: Sequence[Mapping[str, Any]], test_ids: set[str]
+) -> None:
+    """Reject teacher rows that touch the test split or edit anything but the final."""
+
+    user_text = {
+        str(record["record_id"]): str(
+            [message for message in record["messages"] if message["role"] == "user"][-1]["content"]
+        ).strip()
+        for record in trainable
+    }
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        record_id = str(row.get("record_id"))
+        if record_id in test_ids:
+            raise ValueError(f"{record_id}: teacher rows must not target the test split")
+        if record_id in user_text and (
+            str(row.get("user_content", "")).strip() != user_text[record_id]
+        ):
+            raise ValueError(f"{record_id}: alignment teacher rows may edit final_response only")
+
+
 def write_servicing_alignment_dataset(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     *,
     base_sft_dir: Path = DEFAULT_BASE_SFT_DIR,
     synthetic_bank_path: Path = DEFAULT_SYNTHETIC_BANK_PATH,
+    export_teacher_requests: Path | None = None,
+    teacher_responses: Path | None = None,
+    teacher_model: str | None = None,
+    teacher_prompt_hash: str | None = None,
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
     shadow_records = build_coreference_shadow_gate()
@@ -397,6 +427,41 @@ def write_servicing_alignment_dataset(
     _assert_granite_shadow_isolation(alignment_splits, granite_shadow_records)
     _assert_screenshot_fixture_isolation(alignment_splits, screenshot_records)
     base_manifest, base_splits = load_base_sft_splits(base_sft_dir)
+    trainable = [*alignment_splits["train"], *alignment_splits["validation"]]
+    if export_teacher_requests is not None:
+        export_teacher_realization_requests(trainable, export_teacher_requests)
+    realized_counts = {"train": 0, "validation": 0}
+    if teacher_responses is not None:
+        if not teacher_model or not teacher_prompt_hash:
+            raise ValueError(
+                "teacher_model and teacher_prompt_hash are required with teacher_responses"
+            )
+        _assert_alignment_teacher_rows(
+            teacher_responses,
+            trainable=trainable,
+            test_ids={
+                str(record["record_id"])
+                for record in (*base_splits["test"], *alignment_splits["test"])
+            },
+        )
+        realized = import_teacher_realizations(
+            trainable,
+            teacher_responses,
+            teacher_model=teacher_model,
+            teacher_prompt_hash=teacher_prompt_hash,
+        )
+        n_train = len(alignment_splits["train"])
+        alignment_splits = {
+            **alignment_splits,
+            "train": realized[:n_train],
+            "validation": realized[n_train:],
+        }
+        for split in ("train", "validation"):
+            realized_counts[split] = sum(
+                1
+                for record in alignment_splits[split]
+                if record["provenance"].get("teacher_model") == teacher_model
+            )
     policy_revision = load_canonical_policy_corpus()["corpus_revision"]
     if base_manifest.get("policy_corpus_revision") != policy_revision:
         raise ValueError("base SFT policy corpus revision is missing or stale")
@@ -421,6 +486,11 @@ def write_servicing_alignment_dataset(
             for split, rows in splits.items()
         },
         "base_manifest_sha256": file_sha256(base_sft_dir / "manifest.json"),
+        "alignment_teacher_realization": {
+            "model": teacher_model,
+            "prompt_hash": teacher_prompt_hash,
+            "realized_counts": realized_counts,
+        },
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     entries = []
