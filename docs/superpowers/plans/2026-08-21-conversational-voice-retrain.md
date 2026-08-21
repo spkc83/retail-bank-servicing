@@ -503,3 +503,9 @@ git diff --stat data/                            # no frozen file listed
   destination repo (run 5's adapter lives there), negligible cost. Relaunched as `6a88a58873304676c8ec5dfa` into
   `spkc83/retail-bank-servicing-agent-9b-peft-v9b-conversational-voice` with `MIN_STEPS=550 MAX_STEPS=700 MAX_TRAIN_SECONDS=1500
   JOB_TIMEOUT=40m`, multipliers 3/6, dataset @0f99604a.
+- Run 6 `6a88a58873304676c8ec5dfa` (min-steps 550, cap 700): dev gate 1.0/1.0/1.0 at every checkpoint from step 200 to 550
+  (8 consecutive passes, stopped by the floor at 550); shadow gate on step 550 1.0/1.0/1.0; full bundle written to the bucket.
+  Upload then failed on the pre-existing check `consecutive_dev_passes != 2` (streak was 8) — a bookkeeping bug, not a model
+  issue. Recovery plan: relax the check to ≥ 2, add a publish-only recovery path keyed by the training commit (bundle identity
+  records a3acfad), publish from the bucket on cpu-basic (pennies), then probe locally. Estimated run-6 cost ≈ $1.0 (job timing
+  not reported by the API); cumulative ≈ $5.1 of $6.
