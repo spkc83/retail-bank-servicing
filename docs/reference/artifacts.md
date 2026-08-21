@@ -54,6 +54,34 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
+### Granite SFT dataset files
+
+Digests below are the conversational-voice regeneration described in
+[Granite SFT corpora](../02-data-generation.md#granite-sft-corpora). This is a
+local regeneration, not yet published: the Hub SFT dataset revision above stays
+`a78bed17db8c56099a32f835832b9878a895a602` until the corpora are republished,
+and it remains what the v8 adapter cites.
+
+`data/banking-v5-tool-sft`
+
+| File | Rows | SHA-256 |
+| --- | ---: | --- |
+| `train.jsonl` | 841 | `d31a45ea3896158043e0838211d989573efaccbc6fd4b3b03e052bc7775999a1` |
+| `validation.jsonl` | 179 | `f83810e5b51670bdff6f6ccbded37bae8eced2a065ee5db61ce64848012492aa` |
+| `test.jsonl` (frozen) | 180 | `9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c` |
+
+`data/banking-servicing-alignment-v5`
+
+| File | Rows | SHA-256 |
+| --- | ---: | --- |
+| `train.jsonl` | 3,043 | `153fb80d5ad59494fefeb46d388f73868a876d41d8be424ce42ad045b014b65b` |
+| `validation.jsonl` | 397 | `b9faae7657913568dca7c8d1db5f4bebe6509988e516c01e7265119771500c28` |
+| `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
+
+The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,
+`granite-v7-shadow.jsonl`, and `screenshot-regression.jsonl` files, are
+unchanged by the regeneration.
+
 The runtime loads the base and attaches the adapter without merging: BF16 on
 ZeroGPU and NF4-quantized base plus adapter locally.
 

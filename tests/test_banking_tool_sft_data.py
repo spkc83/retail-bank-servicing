@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,11 @@ def _final_text(record: dict) -> str:
         if message.get("role") == "assistant" and not message.get("tool_calls"):
             return str(message["content"])
     raise AssertionError(f"{record.get('record_id')} has no final assistant message")
+
+
+def _sentence_count(text: str) -> int:
+    prose = " ".join(line for line in text.splitlines() if not line.strip().startswith("|"))
+    return len(re.findall(r"[.!?](?:\s|$)", prose))
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -806,3 +812,27 @@ def test_every_customer_can_answer_the_five_most_recent_preset() -> None:
 
     for customer in payload["customers"]:
         assert len(customer["transactions"]) >= 5
+
+
+def test_training_execute_tool_finals_are_conversational() -> None:
+    rows = _read_jsonl(Path("data/banking-v5-tool-sft/train.jsonl"))
+
+    short: list[tuple[str, str]] = []
+    trailing: list[tuple[str, str]] = []
+    for row in rows:
+        if row["expected"].get("generation_contract", {}).get("mode") != "execute_tool":
+            continue
+        final = _final_text(row)
+        if "|" not in final:
+            if _sentence_count(final) < 2:
+                short.append((row["record_id"], final[:60]))
+            continue
+        if _sentence_count(final.split("|", 1)[0]) < 1:
+            short.append((row["record_id"], final[:60]))
+        lines = final.splitlines()
+        last_row = max(index for index, line in enumerate(lines) if line.strip().startswith("|"))
+        if any(line.strip() for line in lines[last_row + 1 :]):
+            trailing.append((row["record_id"], final[:60]))
+
+    assert short == []
+    assert trailing == []

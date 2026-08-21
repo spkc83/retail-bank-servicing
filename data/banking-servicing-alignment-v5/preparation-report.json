@@ -21,7 +21,15 @@
     "train": 2202,
     "validation": 218
   },
-  "base_manifest_sha256": "38555b4a5ae32ed94f9b550ef6210a069b2b5f31d6b3e1af32f452cffce0648d",
+  "alignment_teacher_realization": {
+    "model": "claude-opus-5",
+    "prompt_hash": "21d264fe83490f5ef3666041490a493828847c368a0aca619a034a3c3f72ed6f",
+    "realized_counts": {
+      "train": 651,
+      "validation": 168
+    }
+  },
+  "base_manifest_sha256": "d4cca6feb38a3f8acb4e6361be0208cf0b1cba3e72606f0e43da306cfb889ddc",
   "base_split_counts": {
     "test": 180,
     "train": 841,

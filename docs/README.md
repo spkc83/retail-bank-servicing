@@ -38,6 +38,7 @@ the pages themselves describe V6 format 4 and its seven heads.
 
 | Path | Purpose |
 | --- | --- |
+| `data/banking-v5-tool-sft` | Governed Granite tool-use SFT corpus. |
 | `data/banking-servicing-alignment-v5` | Governed Granite alignment source used to derive in-domain router examples. |
 | `data/banking-conversation-router-v8-first-turn-mutation` | V6 train, validation, and test rows. |
 | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` | Source and prepared-split digests. |
@@ -45,6 +46,20 @@ the pages themselves describe V6 format 4 and its seven heads.
 | `src/hello_slm/banking_domain_taxonomy.py` | Canonical hierarchy and legal action/entity combinations. |
 | `poc/retail-bank-customer-service-poc` | Shared Gradio/ZeroGPU and Streamlit runtime. |
 | `scripts/retail_bank` | Data, training, evaluation, and deployment entry points. |
+
+### Granite SFT dataset digests
+
+Current local digests after the conversational-voice regeneration
+([details](02-data-generation.md#granite-sft-corpora)). This is a local
+regeneration, not yet published; the Hub SFT dataset revision stays
+`a78bed17db8c56099a32f835832b9878a895a602`.
+
+| File | Rows | SHA-256 |
+| --- | ---: | --- |
+| `data/banking-v5-tool-sft/train.jsonl` | 841 | `d31a45ea3896158043e0838211d989573efaccbc6fd4b3b03e052bc7775999a1` |
+| `data/banking-v5-tool-sft/validation.jsonl` | 179 | `f83810e5b51670bdff6f6ccbded37bae8eced2a065ee5db61ce64848012492aa` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,043 | `153fb80d5ad59494fefeb46d388f73868a876d41d8be424ce42ad045b014b65b` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `b9faae7657913568dca7c8d1db5f4bebe6509988e516c01e7265119771500c28` |
 
 ## Safe Local Checks
 

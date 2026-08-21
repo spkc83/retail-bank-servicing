@@ -15,6 +15,8 @@ import pytest
 import hello_slm.banking_servicing_alignment_data as alignment_data
 import hello_slm.banking_tool_sft_data as tool_sft_data
 from hello_slm.banking_servicing_alignment_data import (
+    FINAL_CLOSERS,
+    FINAL_OPENERS,
     SCREENSHOT_HELDOUT_CURRENTS,
     build_coreference_shadow_gate,
     build_screenshot_regression_fixture,
@@ -24,6 +26,8 @@ from hello_slm.banking_servicing_alignment_data import (
     write_servicing_alignment_dataset,
 )
 from hello_slm.banking_tool_sft_data import (
+    REALIZER_FINAL_CLOSERS,
+    REALIZER_FINAL_PREFIXES,
     BankingToolSftDataError,
     prepare,
     validate_banking_tool_sft_manifest,
@@ -917,3 +921,95 @@ def test_validation_ambiguity_finals_use_the_conversational_pool() -> None:
         assert "which" in head
         assert "card" in head
         assert "last four digits" in final
+
+
+_SPLIT_LEADS = ("For this request,", "In this session,")
+_REALIZED_FAMILIES = {
+    "history_entity_action",
+    "tool_outcome_consistency",
+    "service_case_context",
+    "card_anaphora_action",
+    "clarification_answer",
+    "agent_repair",
+    "banking_topic_shift",
+    "policy_resume",
+    "external_topic_shift",
+    "policy_detour",
+    "history_entity_ambiguity",
+    "deictic_replace_ambiguity",
+}
+
+
+def _sentence_count(text: str) -> int:
+    prose = " ".join(line for line in text.splitlines() if not line.strip().startswith("|"))
+    return len(re.findall(r"[.!?](?:\s|$)", prose))
+
+
+def _finals(split: str) -> list[tuple[str, str, str, dict]]:
+    path = Path(f"data/banking-servicing-alignment-v5/{split}.jsonl")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    finals = []
+    for row in rows:
+        final = next(
+            message
+            for message in reversed(row["messages"])
+            if message["role"] == "assistant" and not message.get("tool_calls")
+        )
+        mode = row["expected"].get("generation_contract", {}).get("mode", "")
+        finals.append((row["metadata"]["scenario_family"], mode, str(final["content"]), row))
+    return finals
+
+
+def _is_teacher_realized(row: dict[str, Any]) -> bool:
+    provenance = row.get("provenance")
+    return bool(isinstance(provenance, dict) and provenance.get("teacher_model"))
+
+
+def test_alignment_training_finals_carry_no_template_scaffolding() -> None:
+    prefixes = tuple(filter(None, (*FINAL_OPENERS, *REALIZER_FINAL_PREFIXES, *_SPLIT_LEADS)))
+    closers = tuple(filter(None, (*FINAL_CLOSERS, *REALIZER_FINAL_CLOSERS)))
+
+    offenders = [
+        (family, final[:40])
+        for split in ("train", "validation")
+        for family, _, final, _row in _finals(split)
+        if final.startswith(prefixes) or final.endswith(closers)
+    ]
+
+    assert offenders == []
+
+
+def test_realized_alignment_finals_are_conversational() -> None:
+    # Only teacher-realized finals were rewritten; each family's inline generator
+    # seed final also feeds the frozen test split, so it cannot be reworded here.
+    short = [
+        (family, final[:60])
+        for family, _, final, row in _finals("train")
+        if family in _REALIZED_FAMILIES
+        and _is_teacher_realized(row)
+        and "|" not in final
+        and _sentence_count(final) < 2
+    ]
+
+    assert short == []
+
+
+def test_clarify_finals_keep_dev_gate_markers_early() -> None:
+    # The dev gate only scores rows carrying a coreference_pair_id
+    # (cloud_continue_tool_sft.py:989) and matches the markers as substrings, not
+    # word tokens (:975), so "cards" satisfies it; the other clarify families were
+    # not rewritten in this pass. Scope to the gate's population plus the
+    # teacher-authored rows.
+    bad = [
+        final[:60]
+        for split in ("train", "validation")
+        for _, mode, final, row in _finals(split)
+        if mode == "clarify"
+        and "card" in final.lower()
+        and (row["metadata"].get("coreference_pair_id") or _is_teacher_realized(row))
+        and not all(
+            marker in " ".join(final.lower().split()[:45]) for marker in ("which", "card")
+        )
+    ]
+
+    assert bad == []

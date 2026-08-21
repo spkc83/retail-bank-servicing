@@ -216,3 +216,89 @@ PYTHONPATH=src uv run pytest -q \
 Do not mix the `expected`, grounding, or assistant-answer fields from Granite
 SFT records into the router input. Those fields are evaluation truth for the
 generative model, not classifier features.
+
+## Granite SFT Corpora
+
+The alignment corpus consumed above is one of two governed Granite SFT datasets.
+Both were regenerated in the conversational-voice pass so that every
+loss-bearing customer-visible final reads like a human bank-chat agent rather
+than a filler-wrapped template. Record counts, split membership, tool calls, and
+gate multipliers are unchanged; only customer-visible text moved.
+
+| Dataset | Train | Validation | Test |
+| --- | ---: | ---: | ---: |
+| `data/banking-v5-tool-sft` | 841 | 179 | 180 |
+| `data/banking-servicing-alignment-v5` | 3,043 | 397 | 215 |
+
+### Voice contract
+
+[`2026-08-21-conversational-voice-spec.md`](superpowers/plans/2026-08-21-conversational-voice-spec.md)
+is the authoring contract for every rewritten final: persona, per-mode sentence
+shapes, the phrases each mode must keep for its corpus and runtime validators,
+the opening-trigram diversity rule, and the substrings banned from finals.
+
+### Teacher realizations
+
+Rewritten finals are supplied as teacher-realization files and applied through
+the existing export/import hook in
+[`banking_tool_sft_data.py`](../src/hello_slm/banking_tool_sft_data.py).
+
+| Source file | Rows | Rewrites |
+| --- | ---: | --- |
+| `data/sources/banking-v5-tool-sft-teacher-realizations-v2.jsonl` | 1,020 | `final_response` and `user_content` for every base train (841) and validation (179) row |
+| `data/sources/banking-servicing-alignment-v5-teacher-realizations.jsonl` | 819 | `final_response` only, for the 651 train and 168 validation alignment rows that `_varied_final` had wrapped in opener/closer filler |
+
+The alignment preparer exposes the same three teacher flags as the base
+preparer: `--teacher-responses`, `--teacher-model`, and `--teacher-prompt-hash`.
+Alignment rows edit `final_response` only, because alignment user text feeds the
+leakage and held-out gates; the preparer enforces this. Neither teacher file may
+contain a test-split record id of either dataset, which is also enforced in
+code.
+
+Regenerate both corpora in place:
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_tool_sft_data.py \
+  --output-dir data/banking-v5-tool-sft \
+  --teacher-responses data/sources/banking-v5-tool-sft-teacher-realizations-v2.jsonl \
+  --teacher-model claude-opus-5 \
+  --teacher-prompt-hash 95dd4bc84e7b5a3a89a89c27e888b5505e6c72ebd25add9be58c143cee7f7ace
+
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_servicing_alignment_data.py \
+  --output-dir data/banking-servicing-alignment-v5 \
+  --teacher-responses data/sources/banking-servicing-alignment-v5-teacher-realizations.jsonl \
+  --teacher-model claude-opus-5 \
+  --teacher-prompt-hash 21d264fe83490f5ef3666041490a493828847c368a0aca619a034a3c3f72ed6f
+```
+
+The prompt hash is a digest over the voice spec plus the request file sent to
+the teacher. The base preparer stamps `teacher_model` and `teacher_prompt_hash`
+onto every prepared row's `provenance`; the alignment preparer additionally
+records `report.alignment_teacher_realization.realized_counts` in its
+`manifest.json` (`{"train": 651, "validation": 168}`).
+
+Regeneration must leave these files byte-identical:
+`data/banking-v5-tool-sft/test.jsonl` and the alignment `test.jsonl`,
+`coreference-shadow.jsonl`, `granite-v7-shadow.jsonl`, and
+`screenshot-regression.jsonl`.
+
+### Conversational ambiguity pool
+
+`_deictic_replace_curriculum` previously emitted a single inline clarification
+template for every `deictic_replace_ambiguity` row. The `train` and `validation`
+branches now draw from `_CONVERSATIONAL_AMBIGUITY_FINALS`, 32 distinct phrasings
+selected deterministically by pair and family index. The `shadow` branch still
+emits the original string verbatim so the frozen shadow split does not move.
+Every phrasing names both candidate cards and keeps `which` and `card` early,
+which is what the coreference dev gate matches on.
+
+### Documented limitations
+
+- The `_suffix` concatenation defect is retained. The split suffix is appended
+  without a separating space, so alignment user turns read `get createdin the
+  app?` in train and `get createdfrom my profile?` in test. The same defect is
+  present in the frozen `test.jsonl`, so correcting it would change a
+  byte-identical split; it is deferred to the next frozen-split rotation.
+- Alignment user turns remain scaffolded ("... I am checking this in the mobile
+  app. Please keep the answer concise."). Only assistant finals were rewritten
+  in this pass, for the leakage-gate reason above.
