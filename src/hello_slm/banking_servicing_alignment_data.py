@@ -1150,6 +1150,23 @@ def _coreference_curriculum_specs(split: str) -> tuple[dict[str, str], ...]:
                 "prompt": "replace the card referenced above",
                 "product": "Moor",
             },
+            # Targeted margin for the held-out "list-reference" validation pair:
+            # nearby list/showed phrasings that never reuse the held-out wording.
+            {
+                "phrase_family": "listed-card",
+                "prompt": "replace the card you listed",
+                "product": "Marsh",
+            },
+            {
+                "phrase_family": "from-your-list",
+                "prompt": "the card in your list needs replacing",
+                "product": "Alder",
+            },
+            {
+                "phrase_family": "card-you-showed",
+                "prompt": "replace the card you just showed me",
+                "product": "Brook",
+            },
         )
     if split == "validation":
         return (
