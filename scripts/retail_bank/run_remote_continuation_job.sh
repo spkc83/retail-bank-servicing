@@ -7,6 +7,7 @@ if [[ $# -lt 2 || $# -gt 5 ]]; then
   echo "env: MIN_STEPS holds training past early dev-gate passes (default 0)" >&2
   echo "env: POSITIVE_MULTIPLIER / AMBIGUITY_MULTIPLIER weight the coreference mix (defaults 2 / 4)" >&2
   echo "env: JOB_TIMEOUT caps the whole HF job including setup and upload (default 5h)" >&2
+  echo "env: RECOVERY_SOURCE_COMMIT re-publishes the bundle written by that training commit (PUBLISH_ONLY=1 only)" >&2
   exit 2
 fi
 
@@ -23,6 +24,7 @@ ambiguity_multiplier="${AMBIGUITY_MULTIPLIER:-4}"
 job_timeout_override="${JOB_TIMEOUT:-5h}"
 probe_only="${PROBE_ONLY:-0}"
 publish_only="${PUBLISH_ONLY:-0}"
+recovery_source_commit="${RECOVERY_SOURCE_COMMIT:-}"
 probe_checkpoint_dir="${PROBE_CHECKPOINT_DIR:-/data/retail-bank-agent-9b-continuation-34484bb0-d965816b-715064e5/trainer/checkpoint-600}"
 probe_checkpoint_step="${PROBE_CHECKPOINT_STEP:-600}"
 script_url="https://raw.githubusercontent.com/spkc83/retail-bank-servicing/${source_commit}/scripts/retail_bank/hf_job_continue_tool_sft.py"
@@ -82,6 +84,18 @@ fi
 if [[ "$source_adapter_repo" != "spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation" || "$source_adapter_revision" != "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2" ]]; then
   echo "Source adapter must be exactly spkc83/retail-bank-servicing-agent-9b-peft-v5-remediation@d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2." >&2
   exit 2
+fi
+
+if [[ -n "$recovery_source_commit" ]]; then
+  if [[ "$publish_only" != "1" ]]; then
+    echo "RECOVERY_SOURCE_COMMIT is only honoured when PUBLISH_ONLY=1." >&2
+    exit 2
+  fi
+  if [[ ! "$recovery_source_commit" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "RECOVERY_SOURCE_COMMIT must be the exact 40-character lowercase Git commit." >&2
+    exit 2
+  fi
+  output_dir="/data/retail-bank-agent-9b-peft-v6-generation-contract-${recovery_source_commit:0:8}-${source_adapter_revision:0:8}-${dataset_revision:0:8}"
 fi
 
 if [[ "$destination_repo" == "$source_adapter_repo" ]]; then
@@ -154,6 +168,9 @@ fi
 
 if [[ "$publish_only" == "1" ]]; then
   job_args+=(--publish-only)
+  if [[ -n "$recovery_source_commit" ]]; then
+    job_args+=(--recovery-source-commit "$recovery_source_commit")
+  fi
 fi
 
 hf jobs uv run "${job_args[@]}"

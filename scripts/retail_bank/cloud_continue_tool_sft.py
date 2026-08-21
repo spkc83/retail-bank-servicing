@@ -1414,8 +1414,13 @@ def upload_release(
     if not isinstance(shadow_gate, Mapping):
         raise RuntimeError("training result is missing the shadow coreference gate")
     validate_coreference_behavioral_gate(shadow_gate)
-    if result.get("consecutive_dev_passes") != 2:
-        raise RuntimeError("training result must record two consecutive passing dev gates")
+    consecutive_dev_passes = result.get("consecutive_dev_passes")
+    if (
+        not isinstance(consecutive_dev_passes, int)
+        or isinstance(consecutive_dev_passes, bool)
+        or consecutive_dev_passes < 2
+    ):
+        raise RuntimeError("training result must record at least two consecutive passing dev gates")
     if read_json(result_path) != dict(result):
         raise RuntimeError("training result file does not match the atomic release payload")
     adapter_dir = config.output_dir / "adapter"
@@ -1548,6 +1553,23 @@ def run_checkpoint_probe(config: ContinuationConfig) -> dict[str, Any]:
     return result
 
 
+def recovery_bundle_source_commit() -> str:
+    """Return the commit a recovery run must validate the bundle identity against.
+
+    A publication recovery runs from a newer source commit than the training run
+    that wrote the bundle, so the identity check has to use the recorded training
+    commit. It is only used for the bundle identity check: the running commit
+    still governs every other provenance check, and the uploaded metadata keeps
+    the training commit it was written with.
+    """
+
+    override = os.environ.get("RETAIL_BANK_RECOVERY_SOURCE_COMMIT", "")
+    if override:
+        require_exact_revision(override, field="recovery source commit")
+        return override
+    return os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
+
+
 def run_publish_recovery(config: ContinuationConfig) -> dict[str, Any]:
     from huggingface_hub import HfApi  # type: ignore[import-not-found]
 
@@ -1555,7 +1577,7 @@ def run_publish_recovery(config: ContinuationConfig) -> dict[str, Any]:
     validate_pinned_model_inputs(config)
     if not config.push_to_hub:
         raise RuntimeError("publication recovery requires --push-to-hub")
-    source_commit = os.environ.get("RETAIL_BANK_SOURCE_COMMIT", "")
+    source_commit = recovery_bundle_source_commit()
     dataset_revision = os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "")
     dataset = dataset_identity(config.manifest)
     if dataset["revision"] != dataset_revision:

@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tool-outcome-multiplier", type=int, default=6)
     parser.add_argument("--probe-only", action="store_true")
     parser.add_argument("--publish-only", action="store_true")
+    parser.add_argument("--recovery-source-commit", default=None)
     parser.add_argument("--probe-checkpoint-dir", default=DEFAULT_PROBE_CHECKPOINT_DIR)
     parser.add_argument("--probe-checkpoint-step", type=int, default=DEFAULT_PROBE_CHECKPOINT_STEP)
     return parser.parse_args()
@@ -130,6 +131,10 @@ def main() -> int:
     validate_source_adapter(args.source_adapter_repo, args.source_adapter_revision)
     if args.probe_only and args.publish_only:
         raise ValueError("--probe-only and --publish-only are mutually exclusive")
+    if args.recovery_source_commit is not None:
+        if not args.publish_only:
+            raise ValueError("--recovery-source-commit requires --publish-only")
+        require_exact_revision(args.recovery_source_commit, field="--recovery-source-commit")
     if args.destination_repo == args.source_adapter_repo:
         raise ValueError("--destination-repo must differ from the source adapter repository")
     if args.probe_only and args.dataset_revision != CANDIDATE3_PROBE_DATASET_REVISION:
@@ -163,6 +168,10 @@ def main() -> int:
             "RETAIL_BANK_TOOL_SFT_DATASET_REPO": DATASET_REPO,
             "RETAIL_BANK_TOOL_SFT_DATASET_REVISION": args.dataset_revision,
         }
+        if args.recovery_source_commit is not None:
+            env["RETAIL_BANK_RECOVERY_SOURCE_COMMIT"] = args.recovery_source_commit
+        else:
+            env.pop("RETAIL_BANK_RECOVERY_SOURCE_COMMIT", None)
         command = [
             sys.executable,
             str(source_root / "scripts/retail_bank/cloud_continue_tool_sft.py"),

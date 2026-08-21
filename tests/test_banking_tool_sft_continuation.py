@@ -1164,6 +1164,139 @@ def test_publish_only_recovery_rejects_incomplete_and_mismatched_bundles(
         )
 
 
+def test_atomic_upload_accepts_longer_dev_gate_streaks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+    streak = {**result, "consecutive_dev_passes": 8}
+    result_path.write_text(json.dumps(streak), encoding="utf-8")
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.exists = False
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if not self.exists:
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return []
+
+        def create_repo(self, *_args: Any, **_kwargs: Any) -> None:
+            self.exists = True
+
+        def create_commit(self, **_kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(oid="e" * 40)
+
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda token: FakeApi())
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    assert (
+        WORKER.upload_release(
+            config,
+            result=streak,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+        == "e" * 40
+    )
+
+
+@pytest.mark.parametrize("passes", [1, 0, None, "2", True])
+def test_atomic_upload_requires_at_least_two_consecutive_dev_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    passes: Any,
+) -> None:
+    config, result, result_path, metadata_path = _release_bundle(tmp_path)
+    short = {**result, "consecutive_dev_passes": passes}
+    result_path.write_text(json.dumps(short), encoding="utf-8")
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    with pytest.raises(RuntimeError, match="at least two consecutive passing dev gates"):
+        WORKER.upload_release(
+            config,
+            result=short,
+            result_path=result_path,
+            metadata_path=metadata_path,
+        )
+
+
+def test_publish_recovery_validates_the_bundle_under_its_recorded_training_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _result, result_path, metadata_path = _release_bundle(tmp_path)
+    config = replace(
+        config,
+        dry_run=False,
+        allow_remote_execution=True,
+        push_to_hub=True,
+        publish_only=True,
+    )
+    monkeypatch.setenv(WORKER.REMOTE_CONFIRMATION_ENV, WORKER.REMOTE_CONFIRMATION_VALUE)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REPO", WORKER.DATASET_REPO)
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "d" * 40)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+    monkeypatch.setenv("RETAIL_BANK_SOURCE_COMMIT", "a" * 40)
+    WORKER.write_publication_bundle_manifest(
+        config,
+        result_path=result_path,
+        metadata_path=metadata_path,
+    )
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.exists = False
+            self.commits = 0
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if not self.exists:
+                raise _repository_not_found()
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return []
+
+        def create_repo(self, *_args: Any, **_kwargs: Any) -> None:
+            self.exists = True
+
+        def create_commit(self, **_kwargs: Any) -> SimpleNamespace:
+            self.commits += 1
+            return SimpleNamespace(oid="e" * 40)
+
+    api = FakeApi()
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda token: api)
+    monkeypatch.setattr(
+        WORKER,
+        "dataset_identity",
+        lambda _path: {"repository": WORKER.DATASET_REPO, "revision": "d" * 40},
+    )
+
+    monkeypatch.setenv("RETAIL_BANK_SOURCE_COMMIT", "b" * 40)
+    with pytest.raises(RuntimeError, match="bundle identity mismatch"):
+        WORKER.run_publish_recovery(config)
+    assert api.commits == 0
+
+    monkeypatch.setenv("RETAIL_BANK_RECOVERY_SOURCE_COMMIT", "not-a-commit")
+    with pytest.raises(ValueError, match="recovery source commit"):
+        WORKER.run_publish_recovery(config)
+    assert api.commits == 0
+
+    monkeypatch.setenv("RETAIL_BANK_RECOVERY_SOURCE_COMMIT", "a" * 40)
+    recovered = WORKER.run_publish_recovery(config)
+
+    assert recovered["publish_recovery"] is True
+    assert recovered["published_adapter_revision"] == "e" * 40
+    assert api.commits == 1
+    stored = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert stored["fingerprint"]["source_commit"] == "a" * 40
+
+
 @pytest.mark.parametrize(
     "metrics",
     [{}, {"eval_loss": float("nan")}, {"eval_loss": 0.2, "eval_runtime": float("inf")}],

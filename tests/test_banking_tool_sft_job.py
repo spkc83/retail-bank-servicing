@@ -333,6 +333,95 @@ def test_continuation_launcher_forwards_max_train_seconds(
     assert submitted[submitted.index("--min-steps") + 1] == expected_min_steps
 
 
+def test_continuation_publish_recovery_targets_the_training_commit_output_dir(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "
+        '"retail-bank-peft-v6-generation-contract/v1"\'\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n', encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+        "PUBLISH_ONLY": "1",
+        "RECOVERY_SOURCE_COMMIT": "c" * 40,
+    }
+
+    subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=True,
+        env=env,
+    )
+
+    submitted = hf_log.read_text(encoding="utf-8").splitlines()
+    assert "--publish-only" in submitted
+    assert submitted[submitted.index("--recovery-source-commit") + 1] == "c" * 40
+    output_dir = submitted[submitted.index("--output-dir") + 1]
+    assert output_dir.startswith("/data/retail-bank-agent-9b-peft-v6-generation-contract-cccccccc-")
+    assert output_dir.endswith("-d965816b-bbbbbbbb")
+
+
+def test_continuation_launcher_rejects_recovery_commit_outside_publish_only(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'V6_CONTINUATION_PROTOCOL = "
+        '"retail-bank-peft-v6-generation-contract/v1"\'\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text("#!/usr/bin/env bash\nprintf 'called\\n' > \"$HF_LOG\"\n", encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+        "RECOVERY_SOURCE_COMMIT": "c" * 40,
+    }
+    env.pop("PUBLISH_ONLY", None)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_continuation_job.sh",
+            "a" * 40,
+            "b" * 40,
+            "d965816bd6a9252bfb4327c1b0d64f9d34f4a1a2",
+        ],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "RECOVERY_SOURCE_COMMIT" in completed.stderr
+    assert not hf_log.exists()
+
+
 def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
