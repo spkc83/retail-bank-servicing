@@ -51,8 +51,8 @@ def fake_torch(cuda: FakeCuda | None = None):
 
 
 def test_local_runtime_pins_released_model_identity() -> None:
-    assert MODEL_ID == "spkc83/retail-bank-servicing-agent-9b-peft"
-    assert MODEL_REVISION == "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+    assert MODEL_ID == "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
+    assert MODEL_REVISION == "badbc05ad1f861818ea244b462eda49bca6c6fca"
 
 
 def test_nf4_load_configuration_uses_fp16_double_quantization_on_cuda_zero() -> None:

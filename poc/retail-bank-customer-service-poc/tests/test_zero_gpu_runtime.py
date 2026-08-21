@@ -15,8 +15,8 @@ def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract
     sys.modules.pop("zero_gpu_runtime", None)
     runtime = importlib.import_module("zero_gpu_runtime")
 
-    assert runtime.MODEL_ID == "spkc83/retail-bank-servicing-agent-9b-peft"
-    assert runtime.MODEL_REVISION == "cc95e446af2b5e1d8d9df2751a8192613ad386e3"
+    assert runtime.MODEL_ID == "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
+    assert runtime.MODEL_REVISION == "badbc05ad1f861818ea244b462eda49bca6c6fca"
     assert not hasattr(runtime, "BANK")
     assert not hasattr(runtime.generate_text, "_zero_gpu_config")
     assert runtime.runtime_metadata() == {
@@ -26,8 +26,8 @@ def test_zero_gpu_runtime_exposes_generic_generation_and_exact_counting_contract
         "model_dtype": "bf16",
         "base_model_id": "spkc83/retail-bank-servicing-agent-9b",
         "base_model_revision": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
-        "adapter_id": "spkc83/retail-bank-servicing-agent-9b-peft",
-        "adapter_revision": "cc95e446af2b5e1d8d9df2751a8192613ad386e3",
+        "adapter_id": "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation",
+        "adapter_revision": "badbc05ad1f861818ea244b462eda49bca6c6fca",
     }
     with pytest.raises(RuntimeError, match="unavailable"):
         runtime.generate_text(
