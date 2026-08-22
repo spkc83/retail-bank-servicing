@@ -543,3 +543,40 @@ Completion-gate critic on fad8eef (FIX-FIRST → fixed in the follow-up commit):
 - **M3 model card.** Card now branches on `merge_adapter` (`library_name: peft`, PEFT load instructions, no "merged FP16" claim).
 - Minor: shadow-gate manifest contract is validated before the tokenizer load; `OUTPUT_PREFIX` set explicitly per launch so a
   retry at the same commit cannot overwrite a failed run's bundle.
+
+**Launch (approved 2026-08-22, ≈$2.75 expected / $3.67 ceiling):** HF job `6a892eb37c5c7dd37923440b`, started 05:08 UTC, source
+commit `22009570`, dataset `@0f99604a`, `OUTPUT_PREFIX=/data/retail-bank-agent-9b-v9-scratch-22009570`, destination
+`spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch`, mix 2/3/1/2, 2000 steps, 3600 s train cap, 80 m job timeout, skip-merge.
+Outcome: **COMPLETED in 27m35s (≈$1.26)** — 2000 steps, epoch 1.39, train_loss 0.258, 0.72 s/step (the 1.52 s/step estimate came
+from the continuation lane's per-step eval overhead); eval_loss 0.607 (unmasked validation, not comparable to continuation runs).
+Dev gate 1.0/1.0/1.0, shadow gate 1.0/1.0/1.0. Published `spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch@5c35635b`
+(adapter-only bundle, PEFT card). Tone verdict against the success criterion (mean ≥2.0 sentences, ≥5/7 two-sentence, 0 filler):
+**voice met, behaviour regressed.** Local probe (alex.demo, BEST_OF_N=2): every model-authored reply is ≥2 grounded
+sentences with zero filler and no product/demo wording (S2 card status, S6b policy citation, S7 service case). But S1 freeze
+and S3 cancel-transfer hit `model did not return a required tool call after one retry`: with the router at `execute_tool /
+entity resolved` (live_candidate last4=4821) the adapter answered "Which card should I freeze? Please share its last four
+digits." on both the base pass and the retry (diagnostics at `agent-tmp/scratch-v9/verify/diag_dump*.txt`). S5 failed the
+same way and S6-weather only failed as session carry-over (fresh run = OOD stock response, Granite not invoked).
+Diagnosis: the scratch adapter over-learned the gate-scored clarification target — ambiguity rows were 41 % of the 2/3/1/2
+mix (positives 27 % with finals masked) — and now clarifies even when the entity is resolved. v8 stays live; v9-scratch is
+gate-passing but NOT releasable. Candidate next run (needs priced approval): multipliers 1/1/1/1 (3,267 rows, 2000 steps =
+2.45 epochs, masking skipped at 1/1/1/1 so positive finals also train), same caps ⇒ ≈27 min ≈ $1.26, ceiling $3.67.
+
+**Run 2 (approved, job `6a89a54b7c5c7dd379234cad`, queued ≈4.5 h on HF then ran 26m46s ≈ $1.23):** 1/1/1/1, 2000 steps,
+epoch 2.45, train_loss 0.302. Dev gate 1.0/1.0/1.0, shadow 1.0/1.0/1.0. Published
+`spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch2@038ef77f`. Local probe (alex.demo, BEST_OF_N=2): **S1 freeze executes**
+("I froze your debit card ending in 4821 just now, so it's frozen and can't be used. Sorry someone took it — have a look through
+your recent charges, and I'll dispute anything that isn't yours."), S2 status, **S3 cancel-transfer executes** ("The scheduled
+transfer to River Consulting is cancelled. Nothing will be sent, and your current balance stays as it is."), S6b policy citation
+(note: opens with the vocative "Harbor," — a hallucinated customer name), S7 control ("Your mailing address was updated on
+2026-06-18 at 14:00 UTC. The case is closed, so there's nothing left for you to do."). Every model-authored reply is 2–3 sentences,
+zero filler, no app/demo wording. Remaining failure: **S5 (FM-3, mailing address after the mortgage-policy detour)** → runtime
+fallback; S6-weather failed only as carry-over in that session. Diagnostics (reproduced twice in the 7-turn session; passes in a 2-turn detour→question session and in a fresh
+session): at 978 input tokens the adapter emitted `{"name": "list_addresses", "arguments": {}}` — a tool that does not exist —
+while the router exposed exactly `["list_service_cases"]`, so the runtime raised `model selected unsupported tool: list_addresses`
+(no retry path exists for an unsupported tool name, unlike the required-tool retry). At 468 tokens the same question yields the
+correct `list_service_cases` call. **Verdict for scratch2:** voice criterion met (mean ≥2 sentences, 0 filler, tools execute on
+first-turn mutations) but a long-context tool-name fidelity regression vs v8 (FM-3). Not repinned; v8 remains live. Options:
+(a) runtime guard — when exactly one tool is exposed and the model names an unknown tool, retry once with the tool name pinned
+(mirrors the existing required-tool retry; protects every adapter, no training spend); (b) a further run weighting multi-turn
+long-context rows (new spend); (c) stop here.
