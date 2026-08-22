@@ -521,3 +521,10 @@ git diff --stat data/                            # no frozen file listed
   Levers that would change the outcome (each needs new budget): final-token-weighted loss in the continuation worker (cheap code,
   ≈$1.1/run); higher continuation LR (≈$1.1/run, behaviour risk gated); or a from-scratch Stage-2 LoRA on the v9 data (no gate in
   that lane, ≈$4–5 incl. a gating continuation). v8 remains the live default; v9b is gate-passing and app-free if a repin is wanted.
+
+## Option 3 (user decision 2026-08-21): from-scratch Stage-2 LoRA on the v9 data
+
+Guards required before launch: (1) `MAX_TRAIN_SECONDS` / `JOB_TIMEOUT` caps on `run_remote_training_job.sh`; (2) a NEW hub
+destination (never the pinned base repo); (3) the coreference dev + shadow gate ported into `cloud_train_tool_sft.py` as a
+post-train check that blocks upload on any metric < 0.95. Launch only after a priced approval (target: MAX_STEPS≈2000 ≈ 2.4 epochs,
+MAX_TRAIN_SECONDS=3600, JOB_TIMEOUT=80m ⇒ hard ceiling ≈ $3.67; expected ≈ $2.5–3.0).
