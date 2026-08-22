@@ -36,7 +36,7 @@ BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--dataset-revision", required=True)
@@ -60,7 +60,101 @@ def parse_args() -> argparse.Namespace:
         default="banking-v5-grounded-dialogue-sft",
         help="Value required by the worker confirmation env guard.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--skip-merge-adapter",
+        action="store_true",
+        help="Publish the trained adapter without merging it into FP16 base weights.",
+    )
+    parser.add_argument("--positive-multiplier", type=int, default=1)
+    parser.add_argument("--ambiguity-multiplier", type=int, default=1)
+    parser.add_argument("--policy-faq-multiplier", type=int, default=1)
+    parser.add_argument("--tool-outcome-multiplier", type=int, default=1)
+    return parser
+
+
+def parse_args_from(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def parse_args() -> argparse.Namespace:
+    return parse_args_from()
+
+
+MULTIPLIER_ARGUMENTS = (
+    ("--positive-multiplier", "positive_multiplier"),
+    ("--ambiguity-multiplier", "ambiguity_multiplier"),
+    ("--policy-faq-multiplier", "policy_faq_multiplier"),
+    ("--tool-outcome-multiplier", "tool_outcome_multiplier"),
+)
+
+
+def validate_arguments(args: argparse.Namespace) -> None:
+    """Reject a self-overwriting destination and an out-of-range mix before any network call."""
+
+    if args.hub_dest == args.base_model:
+        raise ValueError(
+            f"--hub-dest {args.hub_dest!r} must differ from the training base model; "
+            "publishing into the base repository would overwrite the weights this run "
+            "trains from"
+        )
+    for flag, attribute in MULTIPLIER_ARGUMENTS:
+        value = int(getattr(args, attribute))
+        if not 1 <= value <= 99:
+            raise ValueError(f"{flag} multiplier must be a whole number from 1 to 99")
+
+
+def build_worker_command(
+    args: argparse.Namespace,
+    *,
+    source_root: Path,
+    manifest: Path,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(source_root / "scripts/retail_bank/cloud_train_tool_sft.py"),
+        "--execute-remote",
+        "--allow-remote-execution",
+        "--push-to-hub",
+        "--manifest",
+        str(manifest),
+        "--output-dir",
+        args.output_dir,
+        "--hub-dest",
+        args.hub_dest,
+        "--base-model",
+        args.base_model,
+        "--base-revision",
+        args.base_revision,
+        "--family",
+        args.base_family,
+        "--precision",
+        "bf16-lora",
+        "--max-steps",
+        str(args.max_steps),
+        "--max-train-seconds",
+        str(args.max_train_seconds),
+        "--batch-size",
+        "2",
+        "--gradient-accumulation-steps",
+        str(args.gradient_accumulation_steps),
+        "--max-seq-len",
+        "2048",
+        "--learning-rate",
+        str(args.learning_rate),
+        "--checkpoint-every",
+        str(args.checkpoint_every),
+        "--trackio-project",
+        args.trackio_project,
+        "--trackio-run-name",
+        args.trackio_run_name or f"{args.base_family}-tool-sft-{args.source_commit[:8]}",
+    ]
+    for flag, attribute in MULTIPLIER_ARGUMENTS:
+        command.extend([flag, str(int(getattr(args, attribute)))])
+    if args.skip_merge_adapter:
+        command.append("--skip-merge-adapter")
+    if args.resume_from:
+        command.extend(["--resume-from", args.resume_from])
+    return command
 
 
 def download_source(source_commit: str, destination: Path) -> Path:
@@ -81,6 +175,7 @@ def download_source(source_commit: str, destination: Path) -> Path:
 
 def main() -> int:
     args = parse_args()
+    validate_arguments(args)
     if "HF_TOKEN" not in os.environ:
         raise RuntimeError("HF_TOKEN must be passed as a Hugging Face Job secret")
     with tempfile.TemporaryDirectory(prefix="retail-bank-agent-source-") as temp_dir:
@@ -106,47 +201,7 @@ def main() -> int:
             "RETAIL_BANK_TOOL_SFT_DATASET_REPO": args.dataset_repo,
             "RETAIL_BANK_TOOL_SFT_DATASET_REVISION": args.dataset_revision,
         }
-        command = [
-            sys.executable,
-            str(source_root / "scripts/retail_bank/cloud_train_tool_sft.py"),
-            "--execute-remote",
-            "--allow-remote-execution",
-            "--push-to-hub",
-            "--manifest",
-            str(manifest),
-            "--output-dir",
-            args.output_dir,
-            "--hub-dest",
-            args.hub_dest,
-            "--base-model",
-            args.base_model,
-            "--base-revision",
-            args.base_revision,
-            "--family",
-            args.base_family,
-            "--precision",
-            "bf16-lora",
-            "--max-steps",
-            str(args.max_steps),
-            "--max-train-seconds",
-            str(args.max_train_seconds),
-            "--batch-size",
-            "2",
-            "--gradient-accumulation-steps",
-            str(args.gradient_accumulation_steps),
-            "--max-seq-len",
-            "2048",
-            "--learning-rate",
-            str(args.learning_rate),
-            "--checkpoint-every",
-            str(args.checkpoint_every),
-            "--trackio-project",
-            args.trackio_project,
-            "--trackio-run-name",
-            args.trackio_run_name or f"{args.base_family}-tool-sft-{args.source_commit[:8]}",
-        ]
-        if args.resume_from:
-            command.extend(["--resume-from", args.resume_from])
+        command = build_worker_command(args, source_root=source_root, manifest=manifest)
         subprocess.run(command, cwd=source_root, env=env, check=True)
     return 0
 

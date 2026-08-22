@@ -41,6 +41,8 @@ DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b"
 DEFAULT_BASE_MODEL = "spkc83/retail-bank-servicing-agent-9b"
 DEFAULT_BASE_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
 DEFAULT_FAMILY = "granite"
+DATASET_REPO = "spkc83/retail-bank-servicing-alignment-sft"
+COREFERENCE_GATE_MINIMUM = 0.95
 
 LORA_TARGET_MODULES = (
     "q_proj",
@@ -83,6 +85,10 @@ class WorkerConfig:
     merge_adapter: bool
     trackio_project: str | None
     trackio_run_name: str | None
+    positive_multiplier: int = 1
+    ambiguity_multiplier: int = 1
+    policy_faq_multiplier: int = 1
+    tool_outcome_multiplier: int = 1
 
 
 class ToolSftDataset(Dataset[dict[str, Tensor]]):
@@ -190,6 +196,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-merge-adapter", action="store_false", dest="merge_adapter")
     parser.add_argument("--trackio-project")
     parser.add_argument("--trackio-run-name")
+    parser.add_argument(
+        "--positive-multiplier",
+        type=int,
+        default=1,
+        help="Repeat coreference positives this many times in the training mix.",
+    )
+    parser.add_argument("--ambiguity-multiplier", type=int, default=1)
+    parser.add_argument("--policy-faq-multiplier", type=int, default=1)
+    parser.add_argument("--tool-outcome-multiplier", type=int, default=1)
     return parser.parse_args(argv)
 
 
@@ -221,6 +236,10 @@ def worker_config_from_args(args: argparse.Namespace) -> WorkerConfig:
         merge_adapter=bool(args.merge_adapter),
         trackio_project=args.trackio_project,
         trackio_run_name=args.trackio_run_name,
+        positive_multiplier=int(args.positive_multiplier),
+        ambiguity_multiplier=int(args.ambiguity_multiplier),
+        policy_faq_multiplier=int(args.policy_faq_multiplier),
+        tool_outcome_multiplier=int(args.tool_outcome_multiplier),
     )
 
 
@@ -280,6 +299,17 @@ def build_dry_run_plan(config: WorkerConfig) -> dict[str, Any]:
             "checkpoint_every": config.checkpoint_every,
             "trackio_project": config.trackio_project,
             "trackio_run_name": config.trackio_run_name,
+            "mix_multipliers": {
+                "positive": config.positive_multiplier,
+                "ambiguity": config.ambiguity_multiplier,
+                "policy_faq": config.policy_faq_multiplier,
+                "tool_outcome": config.tool_outcome_multiplier,
+            },
+        },
+        "publication_guard": {
+            "hub_dest_differs_from_base": config.hub_dest != config.base_model,
+            "requires_empty_destination_repository": True,
+            "coreference_behavioral_gate_minimum": COREFERENCE_GATE_MINIMUM,
         },
         "remote_guard": {
             "requires_flag": "--allow-remote-execution",
@@ -369,6 +399,189 @@ def dataset_identity(manifest_path: Path) -> dict[str, str | None]:
         "revision": os.environ.get("RETAIL_BANK_TOOL_SFT_DATASET_REVISION"),
         "manifest_sha256": sha256_file(manifest_path),
     }
+
+
+def validate_hub_destination(config: WorkerConfig) -> None:
+    """The from-scratch lane must publish a new repository, never its own training base."""
+
+    if config.hub_dest == config.base_model:
+        raise RuntimeError(
+            f"hub destination {config.hub_dest!r} must differ from the training base model; "
+            "publishing into the base repository would overwrite the weights this run "
+            "trains from"
+        )
+
+
+def validate_dataset_identity(manifest_path: Path) -> dict[str, str]:
+    """Pin the dataset the same way the continuation worker does before spending GPU time."""
+
+    identity = dataset_identity(manifest_path)
+    repository = identity.get("repository")
+    revision = identity.get("revision")
+    if repository != DATASET_REPO:
+        raise RuntimeError(f"dataset repository must be exactly {DATASET_REPO}, got {repository!r}")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise RuntimeError(
+            f"dataset revision must be an exact 40-character lowercase revision, got {revision!r}"
+        )
+    if identity.get("manifest_sha256") is None:
+        raise RuntimeError(f"dataset manifest is unavailable: {manifest_path}")
+    return {
+        "repository": repository,
+        "revision": revision,
+        "manifest_sha256": str(identity["manifest_sha256"]),
+    }
+
+
+def continuation_module() -> Any:
+    """Import the continuation worker lazily.
+
+    ``cloud_continue_tool_sft`` imports this module at module scope, so a top-level
+    import here would be circular. Importing inside a call keeps the shared mix and
+    behavioural-gate helpers available without duplicating them.
+    """
+
+    script_dir = str(Path(__file__).resolve().parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    import cloud_continue_tool_sft  # noqa: PLC0415
+
+    return cloud_continue_tool_sft
+
+
+def build_training_mix(
+    config: WorkerConfig,
+    records: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Return the training records plus mix stats, or the untouched records when unweighted."""
+
+    multipliers = (
+        config.positive_multiplier,
+        config.ambiguity_multiplier,
+        config.policy_faq_multiplier,
+        config.tool_outcome_multiplier,
+    )
+    if min(multipliers) < 1:
+        raise ValueError("training mix multipliers must be >= 1")
+    if max(multipliers) == 1:
+        return [dict(record) for record in records], None
+    continuation = continuation_module()
+    masked = continuation.mask_coreference_positive_final_loss([dict(record) for record in records])
+    mixed, stats = continuation.build_continuation_mix(
+        masked,
+        positive_multiplier=config.positive_multiplier,
+        ambiguity_multiplier=config.ambiguity_multiplier,
+        policy_faq_multiplier=config.policy_faq_multiplier,
+        tool_outcome_multiplier=config.tool_outcome_multiplier,
+        seed=TRAINING_SEED,
+    )
+    return mixed, dict(stats)
+
+
+def enable_generation_cache(model: Any) -> None:
+    """Gradient checkpointing forces ``use_cache=False``; greedy gate decoding needs it back."""
+
+    disable = getattr(model, "gradient_checkpointing_disable", None)
+    if callable(disable):
+        disable()
+    for holder in ("config", "generation_config"):
+        holder_value = getattr(model, holder, None)
+        if holder_value is not None and hasattr(holder_value, "use_cache"):
+            holder_value.use_cache = True
+    base = getattr(model, "base_model", None)
+    base_config = getattr(base, "config", None)
+    if base_config is not None and hasattr(base_config, "use_cache"):
+        base_config.use_cache = True
+    model.eval()
+
+
+def coreference_gate_records(
+    records: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    return [
+        record
+        for record in records
+        if isinstance(record.get("metadata"), Mapping)
+        and "coreference_pair_id" in record["metadata"]
+    ]
+
+
+def run_coreference_behavioral_gates(
+    *,
+    model: Any,
+    tokenizer: Any,
+    adapter: Any,
+    validation_records: Sequence[Mapping[str, Any]],
+    manifest_path: Path,
+    output_dir: Path,
+    step: int,
+) -> dict[str, dict[str, Any]]:
+    """Run the dev and shadow coreference gates, persisting both reports.
+
+    Raises ``RuntimeError`` when either gate falls below the minimum, which keeps the
+    trained adapter on the job bucket for diagnosis and stops the run before publication.
+    """
+
+    continuation = continuation_module()
+    dev_records = coreference_gate_records(validation_records)
+    if not dev_records:
+        raise RuntimeError("validation split has no coreference gate records")
+    evaluations = output_dir / "behavioral-evaluations"
+    dev_report = continuation.generate_coreference_behavior_report(
+        model,
+        tokenizer,
+        adapter,
+        dev_records,
+        cumulative_step=step,
+    )
+    dev_gate = continuation.persist_and_validate_coreference_report(
+        dev_report,
+        evaluations / f"dev-step-{step}.json",
+    )
+    shadow_records = continuation.load_shadow_gate_records(manifest_path)
+    shadow_report = continuation.generate_coreference_behavior_report(
+        model,
+        tokenizer,
+        adapter,
+        shadow_records,
+        cumulative_step=step,
+    )
+    shadow_gate = continuation.persist_and_validate_coreference_report(
+        shadow_report,
+        evaluations / f"shadow-step-{step}.json",
+    )
+    return {"dev": dict(dev_gate), "shadow": dict(shadow_gate)}
+
+
+def destination_repo_state(api: Any, repo_id: str) -> str:
+    from huggingface_hub.errors import RepositoryNotFoundError  # type: ignore[import-not-found]
+
+    try:
+        api.repo_info(repo_id=repo_id, repo_type="model")
+    except RepositoryNotFoundError:
+        return "absent"
+    files = list(api.list_repo_files(repo_id=repo_id, repo_type="model"))
+    return "empty" if not files else "nonempty"
+
+
+def require_publishable_destination(api: Any, repo_id: str) -> str:
+    state = destination_repo_state(api, repo_id)
+    if state == "nonempty":
+        raise RuntimeError(f"destination model repository is not empty: {repo_id}")
+    return state
+
+
+def preflight_destination_repo(config: WorkerConfig) -> str:
+    from huggingface_hub import HfApi  # type: ignore[import-not-found]
+
+    return require_publishable_destination(
+        HfApi(token=os.environ.get("HF_TOKEN")),
+        config.hub_dest,
+    )
 
 
 def training_fingerprint(config: WorkerConfig, adapter: ToolWireAdapter) -> dict[str, Any]:
@@ -908,6 +1121,11 @@ def run_tiny_smoke(config: WorkerConfig) -> dict[str, Any]:
 
 def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
     assert_remote_execution_allowed(config)
+    validate_hub_destination(config)
+    dataset_pin = validate_dataset_identity(config.manifest)
+    if config.push_to_hub:
+        # Fail before the GPU spend rather than after it when the destination is taken.
+        preflight_destination_repo(config)
     configure_trackio_environment(config)
     configs = build_training_configs(config)
     from datasets import Dataset as HfDataset  # type: ignore[import-not-found]
@@ -937,8 +1155,9 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         validate_resume_fingerprint(config.resume_from, fingerprint)
     train_records = load_manifest_records(config.manifest, "train")
     validation_records = load_manifest_records(config.manifest, "validation")
+    mixed_train_records, mix_stats = build_training_mix(config, train_records)
     train_examples = tokenize_records(
-        train_records,
+        mixed_train_records,
         adapter,
         max_seq_len=config.max_seq_len,
     )
@@ -1035,6 +1254,16 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
     trainer.save_model(str(config.output_dir / "adapter"))
     tokenizer.save_pretrained(config.output_dir / "adapter")
     actual_step = int(trainer.state.global_step)
+    enable_generation_cache(trainer.model)
+    behavioral_gates = run_coreference_behavioral_gates(
+        model=trainer.model,
+        tokenizer=tokenizer,
+        adapter=adapter,
+        validation_records=validation_records,
+        manifest_path=config.manifest,
+        output_dir=config.output_dir,
+        step=actual_step,
+    )
     save_checkpoint_metadata(
         config.output_dir,
         step=actual_step,
@@ -1044,6 +1273,8 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
             "optimizer_scheduler_rng_state": True,
             "train_metrics": dict(train_output.metrics),
             "eval_metrics": dict(eval_metrics),
+            "coreference_behavioral_gate": behavioral_gates["dev"],
+            "shadow_coreference_behavioral_gate": behavioral_gates["shadow"],
         },
     )
     result: dict[str, Any] = {
@@ -1052,6 +1283,11 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         "template_hash": adapter.template_hash,
         "train_metrics": dict(train_output.metrics),
         "eval_metrics": dict(eval_metrics),
+        "dataset_identity": dataset_pin,
+        "training_mix": mix_stats,
+        "merged_adapter": config.merge_adapter,
+        "coreference_behavioral_gate": behavioral_gates["dev"],
+        "shadow_coreference_behavioral_gate": behavioral_gates["shadow"],
         "pushed_to_hub": False,
     }
     del trainer
@@ -1077,7 +1313,7 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         result["merge_reload_parity"] = parity
     model_card = write_model_card(
         config,
-        train_records=len(train_records),
+        train_records=len(mixed_train_records),
         validation_records=len(validation_records),
         result=result,
     )
@@ -1089,8 +1325,12 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
     if config.push_to_hub:
         from huggingface_hub import HfApi  # type: ignore[import-not-found]
 
-        api = HfApi()
+        api = HfApi(token=os.environ.get("HF_TOKEN"))
+        require_publishable_destination(api, config.hub_dest)
         api.create_repo(config.hub_dest, repo_type="model", private=False, exist_ok=True)
+        # Repo root holds merged FP16 weights, or the adapter itself under
+        # --skip-merge-adapter. The adapter/ copy is uploaded either way so consumers
+        # can always load the PEFT weights from the same path.
         api.upload_folder(
             repo_id=config.hub_dest,
             repo_type="model",

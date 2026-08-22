@@ -187,9 +187,7 @@ def test_v7_tokenization_renders_generation_contract_guidance() -> None:
         public_tool_manifest=worker.PUBLIC_BANKING_TOOL_MANIFEST,
     )
     record = worker.tiny_smoke_records()[0]
-    record["messages"].insert(
-        0, {"role": "system", "content": "Banking system", "loss": False}
-    )
+    record["messages"].insert(0, {"role": "system", "content": "Banking system", "loss": False})
     record["expected"] = {
         "generation_contract": {
             "mode": "execute_tool",
@@ -429,3 +427,328 @@ def test_configs_pin_tool_sft_contract_and_disable_push_by_default() -> None:
         assert config["training"]["precision"] == "bf16"
         assert config["training"]["push_to_hub"] is False
         assert config["training"]["max_train_seconds"] == 14_400
+
+
+def _continuation() -> ModuleType:
+    return worker.continuation_module()
+
+
+def _mix_records() -> list[dict[str, Any]]:
+    return [
+        {
+            "record_id": "positive_1",
+            "expected": {"path": "tool_success"},
+            "metadata": {
+                "scenario_family": "deictic_replace_action",
+                "coreference_target": "replace_card",
+                "coreference_pair_id": "pair_1",
+            },
+            "messages": [
+                {"role": "user", "content": "do that one too", "loss": False},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "loss": True,
+                    "tool_calls": [
+                        {
+                            "id": "call_0",
+                            "index": 0,
+                            "type": "function",
+                            "function": {"name": "replace_card", "arguments": {"last4": "4821"}},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_0",
+                    "name": "replace_card",
+                    "content": {"ok": True},
+                    "loss": False,
+                },
+                {"role": "assistant", "content": "Replacement ordered.", "loss": True},
+            ],
+        },
+        {
+            "record_id": "ambiguity_1",
+            "expected": {"path": "clarification"},
+            "metadata": {
+                "scenario_family": "deictic_replace_ambiguity",
+                "coreference_target": "clarification",
+                "coreference_pair_id": "pair_1",
+            },
+            "messages": [
+                {"role": "user", "content": "replace it", "loss": False},
+                {"role": "assistant", "content": "Which card?", "loss": True},
+            ],
+        },
+        {
+            "record_id": "regression_1",
+            "expected": {"path": "tool_success"},
+            "metadata": {"scenario_family": "tool_success"},
+            "messages": [
+                {"role": "user", "content": "freeze my card", "loss": False},
+                {"role": "assistant", "content": "Done.", "loss": True},
+            ],
+        },
+    ]
+
+
+def test_hub_destination_must_differ_from_the_training_base(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    same = worker.WorkerConfig(**{**vars(config), "hub_dest": config.base_model})
+
+    worker.validate_hub_destination(config)
+    with pytest.raises(RuntimeError, match="must differ from the training base model"):
+        worker.validate_hub_destination(same)
+
+
+def test_dataset_identity_validation_pins_repository_and_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"contract":"test"}', encoding="utf-8")
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "0" * 40)
+    monkeypatch.setenv(
+        "RETAIL_BANK_TOOL_SFT_DATASET_REPO",
+        "spkc83/retail-bank-servicing-alignment-sft",
+    )
+
+    identity = worker.validate_dataset_identity(manifest)
+    assert identity["repository"] == "spkc83/retail-bank-servicing-alignment-sft"
+
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REPO", "spkc83/some-other-dataset")
+    with pytest.raises(RuntimeError, match="dataset repository must be exactly"):
+        worker.validate_dataset_identity(manifest)
+
+    monkeypatch.setenv(
+        "RETAIL_BANK_TOOL_SFT_DATASET_REPO",
+        "spkc83/retail-bank-servicing-alignment-sft",
+    )
+    monkeypatch.setenv("RETAIL_BANK_TOOL_SFT_DATASET_REVISION", "0f99604")
+    with pytest.raises(RuntimeError, match="40-character"):
+        worker.validate_dataset_identity(manifest)
+
+
+def test_unweighted_multipliers_keep_the_manifest_order_and_record_no_mix(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    records = _mix_records()
+
+    mixed, stats = worker.build_training_mix(config, records)
+
+    assert stats is None
+    assert [record["record_id"] for record in mixed] == [
+        "positive_1",
+        "ambiguity_1",
+        "regression_1",
+    ]
+    assert mixed[0]["messages"][-1]["loss"] is True
+
+
+def test_weighted_multipliers_mask_positives_and_record_mix_stats(tmp_path: Path) -> None:
+    config = worker.WorkerConfig(
+        **{
+            **vars(_config(tmp_path)),
+            "positive_multiplier": 3,
+            "ambiguity_multiplier": 6,
+            "policy_faq_multiplier": 1,
+            "tool_outcome_multiplier": 1,
+        }
+    )
+    records = _mix_records()
+
+    mixed, stats = worker.build_training_mix(config, records)
+
+    assert stats is not None
+    assert stats["input_records"] == 3
+    assert stats["coreference_positive_records"] == 1
+    assert stats["coreference_ambiguity_records"] == 1
+    assert stats["total_weighted_records"] == 10
+    assert stats["positive_multiplier"] == 3
+    assert stats["ambiguity_multiplier"] == 6
+    assert len(mixed) == 10
+    counts = {record["record_id"]: 0 for record in records}
+    for record in mixed:
+        counts[record["record_id"]] += 1
+    assert counts == {"positive_1": 3, "ambiguity_1": 6, "regression_1": 1}
+    positives = [record for record in mixed if record["record_id"] == "positive_1"]
+    assert all(record["messages"][-1]["loss"] is False for record in positives)
+    assert records[0]["messages"][-1]["loss"] is True
+
+
+def test_destination_repo_states_absent_empty_and_nonempty() -> None:
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    class FakeApi:
+        def __init__(self, state: str) -> None:
+            self.state = state
+
+        def repo_info(self, **_kwargs: Any) -> None:
+            if self.state == "absent":
+                request = httpx.Request("GET", "https://huggingface.co/api/models/example/repo")
+                raise RepositoryNotFoundError(
+                    "absent", response=httpx.Response(404, request=request)
+                )
+
+        def list_repo_files(self, **_kwargs: Any) -> list[str]:
+            return [] if self.state == "empty" else ["model.safetensors"]
+
+    assert worker.require_publishable_destination(FakeApi("absent"), "example/repo") == "absent"
+    assert worker.require_publishable_destination(FakeApi("empty"), "example/repo") == "empty"
+    with pytest.raises(RuntimeError, match="not empty"):
+        worker.require_publishable_destination(FakeApi("nonempty"), "example/repo")
+
+
+def _canned_report(accuracy: float, step: int) -> dict[str, Any]:
+    return {
+        "contract": "banking-v5-coreference-behavior-report/v1",
+        "cumulative_step": step,
+        "metrics": {
+            "positive_tool_argument_accuracy": accuracy,
+            "ambiguity_accuracy": accuracy,
+            "pair_flip_accuracy": accuracy,
+            "positive_records": 1,
+            "ambiguity_records": 1,
+            "pairs": 1,
+            "parse_failures": 0,
+        },
+        "records": [],
+    }
+
+
+def _install_fake_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dev_accuracy: float,
+    shadow_accuracy: float,
+    shadow_records: list[dict[str, Any]],
+) -> list[str]:
+    continuation = _continuation()
+    calls: list[str] = []
+
+    def fake_report(
+        model: Any,
+        tokenizer: Any,
+        adapter: Any,
+        records: Any,
+        *,
+        cumulative_step: int,
+    ) -> dict[str, Any]:
+        del model, tokenizer, adapter
+        first = str(list(records)[0]["record_id"])
+        calls.append(first)
+        accuracy = shadow_accuracy if first.startswith("shadow") else dev_accuracy
+        return _canned_report(accuracy, cumulative_step)
+
+    monkeypatch.setattr(continuation, "generate_coreference_behavior_report", fake_report)
+    monkeypatch.setattr(
+        continuation,
+        "load_shadow_gate_records",
+        lambda _manifest: shadow_records,
+    )
+    return calls
+
+
+def test_behavioral_gates_persist_reports_and_return_passing_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shadow_records = [{"record_id": "shadow_1", "metadata": {"coreference_pair_id": "pair_s"}}]
+    calls = _install_fake_gate(
+        monkeypatch,
+        dev_accuracy=1.0,
+        shadow_accuracy=1.0,
+        shadow_records=shadow_records,
+    )
+
+    gates = worker.run_coreference_behavioral_gates(
+        model=object(),
+        tokenizer=object(),
+        adapter=object(),
+        validation_records=_mix_records(),
+        manifest_path=tmp_path / "manifest.json",
+        output_dir=tmp_path / "out",
+        step=1200,
+    )
+
+    assert calls == ["positive_1", "shadow_1"]
+    assert gates["dev"]["pair_flip_accuracy"] == 1.0
+    assert gates["shadow"]["pair_flip_accuracy"] == 1.0
+    dev_path = tmp_path / "out" / "behavioral-evaluations" / "dev-step-1200.json"
+    shadow_path = tmp_path / "out" / "behavioral-evaluations" / "shadow-step-1200.json"
+    assert json.loads(dev_path.read_text(encoding="utf-8"))["cumulative_step"] == 1200
+    assert json.loads(shadow_path.read_text(encoding="utf-8"))["cumulative_step"] == 1200
+
+
+@pytest.mark.parametrize(
+    ("dev_accuracy", "shadow_accuracy", "expected_reports"),
+    [
+        (0.5, 1.0, ["dev-step-1200.json"]),
+        (1.0, 0.5, ["dev-step-1200.json", "shadow-step-1200.json"]),
+    ],
+)
+def test_behavioral_gate_failure_raises_and_keeps_the_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dev_accuracy: float,
+    shadow_accuracy: float,
+    expected_reports: list[str],
+) -> None:
+    shadow_records = [{"record_id": "shadow_1", "metadata": {"coreference_pair_id": "pair_s"}}]
+    _install_fake_gate(
+        monkeypatch,
+        dev_accuracy=dev_accuracy,
+        shadow_accuracy=shadow_accuracy,
+        shadow_records=shadow_records,
+    )
+
+    with pytest.raises(RuntimeError, match="each accuracy >= 0.95"):
+        worker.run_coreference_behavioral_gates(
+            model=object(),
+            tokenizer=object(),
+            adapter=object(),
+            validation_records=_mix_records(),
+            manifest_path=tmp_path / "manifest.json",
+            output_dir=tmp_path / "out",
+            step=1200,
+        )
+
+    evaluations = tmp_path / "out" / "behavioral-evaluations"
+    assert sorted(path.name for path in evaluations.iterdir()) == sorted(expected_reports)
+
+
+def test_behavioral_gate_requires_coreference_validation_records(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="no coreference gate records"):
+        worker.run_coreference_behavioral_gates(
+            model=object(),
+            tokenizer=object(),
+            adapter=object(),
+            validation_records=[{"record_id": "plain_1", "metadata": {}}],
+            manifest_path=tmp_path / "manifest.json",
+            output_dir=tmp_path / "out",
+            step=1,
+        )
+
+
+def test_remote_training_gates_behavior_before_any_publication() -> None:
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    gate = source.index("behavioral_gates = run_coreference_behavioral_gates(")
+    assert gate < source.index("if config.merge_adapter:")
+    assert gate < source.index("api.upload_folder(")
+    assert gate < source.index("api.create_repo(")
+    assert source.index("eval_metrics = trainer.evaluate()") < gate
+    assert source.index('trainer.save_model(str(config.output_dir / "adapter"))') < gate
+    assert gate < source.index("    del model\n")
+    assert source.index("require_publishable_destination(api, config.hub_dest)") < source.index(
+        "api.create_repo("
+    )
+    assert source.index("validate_hub_destination(config)") < source.index(
+        "AutoTokenizer.from_pretrained"
+    )
+    assert source.index("validate_dataset_identity(config.manifest)") < source.index(
+        "AutoTokenizer.from_pretrained"
+    )
+    assert source.index("preflight_destination_repo(config)") < source.index(
+        "AutoTokenizer.from_pretrained"
+    )

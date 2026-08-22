@@ -164,6 +164,9 @@ printf '%s\\n' "$@" > "$HF_LOG"
         "CURL_LOG": str(curl_log),
         "HF_LOG": str(hf_log),
     }
+    if launcher == "run_remote_training_job.sh":
+        # The from-scratch lane refuses to run without an explicit, distinct destination.
+        env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
 
     subprocess.run(
         ["bash", f"scripts/retail_bank/{launcher}", *arguments],
@@ -435,7 +438,7 @@ def test_continuation_launcher_rejects_non_numeric_max_train_seconds(tmp_path: P
     )
     curl.chmod(0o755)
     hf = bin_dir / "hf"
-    hf.write_text('#!/usr/bin/env bash\nprintf \'called\\n\' > "$HF_LOG"\n', encoding="utf-8")
+    hf.write_text("#!/usr/bin/env bash\nprintf 'called\\n' > \"$HF_LOG\"\n", encoding="utf-8")
     hf.chmod(0o755)
     env = {
         **os.environ,
@@ -521,3 +524,281 @@ def test_post_training_evaluation_detaches_closed_trackio_callback() -> None:
     assert worker_source.index("trainer.remove_callback(TrackioCallback)") < (
         worker_source.index("eval_metrics = trainer.evaluate()")
     )
+
+
+def _training_launcher_harness(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hf_log = tmp_path / "hf.log"
+    curl = bin_dir / "curl"
+    curl.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    curl.chmod(0o755)
+    hf = bin_dir / "hf"
+    hf.write_text('#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$HF_LOG"\n', encoding="utf-8")
+    hf.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HF_LOG": str(hf_log),
+    }
+    for name in (
+        "JOB_TIMEOUT",
+        "SKIP_MERGE_ADAPTER",
+        "HF_HUB_DEST",
+        "BASE_MODEL",
+        "POSITIVE_MULTIPLIER",
+        "AMBIGUITY_MULTIPLIER",
+        "POLICY_FAQ_MULTIPLIER",
+        "TOOL_OUTCOME_MULTIPLIER",
+    ):
+        env.pop(name, None)
+    return env, hf_log
+
+
+def _run_training_launcher(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "scripts/retail_bank/run_remote_training_job.sh",
+            "a" * 40,
+            "b" * 40,
+        ],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected_timeout"),
+    [({"JOB_TIMEOUT": "80m"}, "80m"), ({}, "5h")],
+)
+def test_training_launcher_forwards_job_timeout(
+    tmp_path: Path,
+    environment: dict[str, str],
+    expected_timeout: str,
+) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    env.update(environment)
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 0, completed.stderr
+    submitted = hf_log.read_text(encoding="utf-8").splitlines()
+    assert submitted[submitted.index("--timeout") + 1] == expected_timeout
+
+
+def test_training_launcher_rejects_a_malformed_job_timeout(tmp_path: Path) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    env["JOB_TIMEOUT"] = "80 minutes"
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 2
+    assert "JOB_TIMEOUT" in completed.stderr
+    assert not hf_log.exists()
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected_flag"),
+    [({"SKIP_MERGE_ADAPTER": "1"}, True), ({}, False)],
+)
+def test_training_launcher_forwards_skip_merge_adapter(
+    tmp_path: Path,
+    environment: dict[str, str],
+    expected_flag: bool,
+) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    env.update(environment)
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 0, completed.stderr
+    submitted = hf_log.read_text(encoding="utf-8").splitlines()
+    assert ("--skip-merge-adapter" in submitted) is expected_flag
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param(
+            {"HF_HUB_DEST": "spkc83/retail-bank-servicing-agent-9b"},
+            id="equal-to-default-base",
+        ),
+        pytest.param(
+            {
+                "HF_HUB_DEST": "spkc83/some-other-base",
+                "BASE_MODEL": "spkc83/some-other-base",
+            },
+            id="equal-to-overridden-base",
+        ),
+    ],
+)
+def test_training_launcher_requires_a_distinct_explicit_hub_destination(
+    tmp_path: Path,
+    environment: dict[str, str],
+) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env.update(environment)
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 2
+    assert "HF_HUB_DEST" in completed.stderr
+    assert not hf_log.exists()
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        (
+            {
+                "POSITIVE_MULTIPLIER": "3",
+                "AMBIGUITY_MULTIPLIER": "6",
+                "POLICY_FAQ_MULTIPLIER": "4",
+                "TOOL_OUTCOME_MULTIPLIER": "6",
+            },
+            ("3", "6", "4", "6"),
+        ),
+        ({}, ("1", "1", "1", "1")),
+    ],
+)
+def test_training_launcher_forwards_mix_multipliers(
+    tmp_path: Path,
+    environment: dict[str, str],
+    expected: tuple[str, str, str, str],
+) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    env.update(environment)
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 0, completed.stderr
+    submitted = hf_log.read_text(encoding="utf-8").splitlines()
+    assert (
+        submitted[submitted.index("--positive-multiplier") + 1],
+        submitted[submitted.index("--ambiguity-multiplier") + 1],
+        submitted[submitted.index("--policy-faq-multiplier") + 1],
+        submitted[submitted.index("--tool-outcome-multiplier") + 1],
+    ) == expected
+
+
+def test_training_launcher_rejects_a_non_numeric_multiplier(tmp_path: Path) -> None:
+    env, hf_log = _training_launcher_harness(tmp_path)
+    env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    env["AMBIGUITY_MULTIPLIER"] = "six"
+
+    completed = _run_training_launcher(env)
+
+    assert completed.returncode == 2
+    assert "MULTIPLIER" in completed.stderr
+    assert not hf_log.exists()
+
+
+def test_bootstrap_forwards_guard_flags_to_the_worker(tmp_path: Path) -> None:
+    job = _load_job()
+    args = job.parse_args_from(
+        [
+            "--source-commit",
+            "a" * 40,
+            "--dataset-revision",
+            "b" * 40,
+            "--hub-dest",
+            "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch",
+            "--skip-merge-adapter",
+            "--positive-multiplier",
+            "3",
+            "--ambiguity-multiplier",
+            "6",
+            "--policy-faq-multiplier",
+            "4",
+            "--tool-outcome-multiplier",
+            "6",
+        ]
+    )
+
+    command = job.build_worker_command(
+        args,
+        source_root=tmp_path,
+        manifest=tmp_path / "manifest.json",
+    )
+
+    assert "--skip-merge-adapter" in command
+    assert command[command.index("--positive-multiplier") + 1] == "3"
+    assert command[command.index("--ambiguity-multiplier") + 1] == "6"
+    assert command[command.index("--policy-faq-multiplier") + 1] == "4"
+    assert command[command.index("--tool-outcome-multiplier") + 1] == "6"
+    assert command[command.index("--hub-dest") + 1] == (
+        "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+    )
+
+
+def test_bootstrap_defaults_keep_merging_and_an_unweighted_mix(tmp_path: Path) -> None:
+    job = _load_job()
+    args = job.parse_args_from(
+        [
+            "--source-commit",
+            "a" * 40,
+            "--dataset-revision",
+            "b" * 40,
+            "--hub-dest",
+            "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch",
+        ]
+    )
+
+    command = job.build_worker_command(
+        args,
+        source_root=tmp_path,
+        manifest=tmp_path / "manifest.json",
+    )
+
+    assert "--skip-merge-adapter" not in command
+    for flag in (
+        "--positive-multiplier",
+        "--ambiguity-multiplier",
+        "--policy-faq-multiplier",
+        "--tool-outcome-multiplier",
+    ):
+        assert command[command.index(flag) + 1] == "1"
+
+
+def test_bootstrap_refuses_publishing_over_the_training_base() -> None:
+    job = _load_job()
+    args = job.parse_args_from(
+        [
+            "--source-commit",
+            "a" * 40,
+            "--dataset-revision",
+            "b" * 40,
+            "--hub-dest",
+            "spkc83/retail-bank-servicing-agent-9b",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="must differ from the training base model"):
+        job.validate_arguments(args)
+
+
+def test_bootstrap_rejects_out_of_range_multipliers() -> None:
+    job = _load_job()
+    args = job.parse_args_from(
+        [
+            "--source-commit",
+            "a" * 40,
+            "--dataset-revision",
+            "b" * 40,
+            "--hub-dest",
+            "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch",
+            "--ambiguity-multiplier",
+            "0",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="multiplier"):
+        job.validate_arguments(args)

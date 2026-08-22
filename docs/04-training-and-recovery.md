@@ -91,8 +91,11 @@ PYTHONPATH=src uv run python scripts/retail_bank/cloud_train_tool_sft.py \
 
 [`run_remote_training_job.sh`](../scripts/retail_bank/run_remote_training_job.sh)
 validates exact source, dataset, and base revisions, checks that the bootstrap
-URL resolves, requests an RTX PRO 6000, applies a five-hour timeout, mounts the
-persistent artifact bucket, and forwards `HF_TOKEN` as a secret.
+URL resolves, requests an RTX PRO 6000, applies the `JOB_TIMEOUT` cap (default
+five hours), mounts the persistent artifact bucket, and forwards `HF_TOKEN` as a
+secret. It also requires `HF_HUB_DEST` to be set explicitly and to differ from
+`BASE_MODEL`, so a from-scratch run can no longer overwrite the repository it
+trains from.
 
 For the currently submitted V5 configuration, the equivalent launcher inputs
 are:
@@ -116,7 +119,9 @@ bash scripts/retail_bank/run_remote_training_job.sh \
 ```
 
 This command creates a paid external job. The documentation records it for
-reproduction; it was not re-submitted while editing these files.
+reproduction; it was not re-submitted while editing these files. It is kept
+verbatim as history and would now be refused: its `HF_HUB_DEST` equals
+`BASE_MODEL`, which the launcher rejects with exit code 2.
 
 The bootstrap script
 [`hf_job_tool_sft.py`](../scripts/retail_bank/hf_job_tool_sft.py) downloads the
@@ -128,6 +133,65 @@ then invokes the worker with all three execution guards:
 --allow-remote-execution
 RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT=banking-v5-grounded-dialogue-sft
 ```
+
+## V9 From-Scratch Guarded Run
+
+The from-scratch Stage-2 lane carries the same destination, wall-clock, mix, and
+behavioural guards as the continuation lane. One run against the V9 dataset,
+publishing a new adapter repository:
+
+```bash
+HF_HUB_DEST=spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch \
+JOB_TIMEOUT=80m \
+MAX_STEPS=2000 \
+MAX_TRAIN_SECONDS=3600 \
+SKIP_MERGE_ADAPTER=1 \
+POSITIVE_MULTIPLIER=3 \
+AMBIGUITY_MULTIPLIER=6 \
+POLICY_FAQ_MULTIPLIER=4 \
+TOOL_OUTCOME_MULTIPLIER=6 \
+scripts/retail_bank/run_remote_training_job.sh \
+  <commit> 0f99604ac5f9366828e90fd46a6343cebb72f1a5
+```
+
+### What each guard does
+
+- `HF_HUB_DEST` is mandatory and must differ from `BASE_MODEL`. The launcher
+  exits 2 before calling `hf`, the bootstrap raises `ValueError` before any
+  network call, and the worker raises `RuntimeError` before loading the
+  tokenizer.
+- Before training starts, the worker refuses a destination repository that
+  already contains files, so a second run cannot silently replace a release.
+  The same check runs again immediately before upload.
+- `JOB_TIMEOUT` caps the whole job (setup, training, gates, merge, upload).
+  `MAX_TRAIN_SECONDS` caps only optimizer work, leaving the remaining budget
+  for the gates and the upload.
+- The dataset repository must be exactly
+  `spkc83/retail-bank-servicing-alignment-sft` and the revision must be an exact
+  40-character lowercase SHA. This is validated before the base weights load.
+- The four multipliers weight the training mix. They default to `1/1/1/1`, which
+  is the unweighted manifest order. When any is above `1`, the worker masks the
+  final assistant turn of every coreference positive and rebuilds the mix with
+  the continuation worker's `build_continuation_mix`, seeded by `TRAINING_SEED`.
+  The resulting stats land in `training_result.json` under `training_mix`.
+- After `trainer.evaluate()` and `trainer.save_model()`, but before merging or
+  any upload, the worker runs two greedy behavioural gates: the dev gate over
+  the validation records carrying `metadata.coreference_pair_id`, and the shadow
+  gate over the manifest's non-trainable `coreference-shadow` split. Each of
+  `positive_tool_argument_accuracy`, `ambiguity_accuracy`, and
+  `pair_flip_accuracy` must be at least `0.95`. Reports are written to
+  `<output_dir>/behavioral-evaluations/dev-step-<step>.json` and
+  `shadow-step-<step>.json`, and the metrics are recorded in
+  `training_result.json` as `coreference_behavioral_gate` and
+  `shadow_coreference_behavioral_gate`. A failing gate raises before any upload,
+  leaving the adapter and both reports on the job bucket for diagnosis.
+- `SKIP_MERGE_ADAPTER=1` skips the FP16 merge and its reload-parity check. The
+  published repository root then holds the LoRA adapter itself rather than
+  merged weights; the `adapter/` subdirectory holds the same files either way,
+  so downstream loaders can always read the PEFT weights from `adapter/`.
+
+`MAX_STEPS` and `LEARNING_RATE` defaults are unchanged; the line above sets
+`MAX_STEPS` explicitly for this run.
 
 ## Monitor and Capture Evidence
 
