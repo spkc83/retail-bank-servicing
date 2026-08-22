@@ -519,8 +519,13 @@ def run_coreference_behavioral_gates(
     manifest_path: Path,
     output_dir: Path,
     step: int,
+    shadow_records: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run the dev and shadow coreference gates, persisting both reports.
+
+    ``shadow_records`` are normally loaded (and validated) before training starts so a
+    malformed manifest fails before the GPU spend; they are re-read here only when the
+    caller did not pre-load them.
 
     Raises ``RuntimeError`` when either gate falls below the minimum, which keeps the
     trained adapter on the job bucket for diagnosis and stops the run before publication.
@@ -542,7 +547,8 @@ def run_coreference_behavioral_gates(
         dev_report,
         evaluations / f"dev-step-{step}.json",
     )
-    shadow_records = continuation.load_shadow_gate_records(manifest_path)
+    if shadow_records is None:
+        shadow_records = continuation.load_shadow_gate_records(manifest_path)
     shadow_report = continuation.generate_coreference_behavior_report(
         model,
         tokenizer,
@@ -1001,6 +1007,40 @@ def merge_adapter_with_reload_parity(
     return report
 
 
+def write_training_result(path: Path, result: Mapping[str, Any]) -> Path:
+    path.write_text(
+        json.dumps(result, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def model_card_release_text(config: WorkerConfig) -> tuple[str, str, str]:
+    """Return (frontmatter extra, description sentence, release paragraph) for the card."""
+
+    if config.merge_adapter:
+        return (
+            "",
+            f"It is a merged {config.precision} LoRA adaptation of "
+            f"`{config.base_model}` at revision `{config.base_revision}`. The model has "
+            "approximately 8.8 billion parameters and uses the base model's native tagged "
+            "JSON tool-call format.",
+            "The released root checkpoint is merged FP16 weights. The trained BF16 adapter is\n"
+            "also stored under `adapter/`.",
+        )
+    return (
+        "library_name: peft\n",
+        f"It is a {config.precision} LoRA adapter (rank {config.lora_rank}, alpha "
+        f"{config.lora_alpha}) trained on top of `{config.base_model}` at revision "
+        f"`{config.base_revision}`; the base has approximately 8.8 billion parameters "
+        "and uses its native tagged JSON tool-call format.",
+        "The repository root is the trained BF16 LoRA adapter only: there are no merged\n"
+        "weights and no `config.json`. Load it with `PeftModel.from_pretrained(base, repo,\n"
+        "revision=...)` on top of the base model at the pinned revision. The same adapter is\n"
+        "duplicated under `adapter/`.",
+    )
+
+
 def write_model_card(
     config: WorkerConfig,
     *,
@@ -1008,6 +1048,7 @@ def write_model_card(
     validation_records: int,
     result: Mapping[str, Any],
 ) -> Path:
+    frontmatter_extra, description, release_text = model_card_release_text(config)
     dataset_repo = os.environ.get(
         "RETAIL_BANK_TOOL_SFT_DATASET_REPO",
         "spkc83/retail-bank-servicing-alignment-sft",
@@ -1020,7 +1061,7 @@ base_model: {config.base_model}
 datasets:
 - {dataset_repo}
 pipeline_tag: text-generation
-tags:
+{frontmatter_extra}tags:
 - retail-banking
 - tool-calling
 - conversational
@@ -1030,10 +1071,7 @@ tags:
 # Retail Bank Agent 9B
 
 This is a research checkpoint for a synthetic retail-bank customer-service
-demonstration. It is a merged {config.precision} LoRA adaptation of
-`{config.base_model}` at revision `{config.base_revision}`. The model has
-approximately 8.8 billion parameters and uses the base model's native tagged
-JSON tool-call format.
+demonstration. {description}
 
 ## Training
 
@@ -1048,8 +1086,7 @@ JSON tool-call format.
 - Source commit: `{source_commit}`
 - Chat-template SHA-256: `{result.get("template_hash", "unrecorded")}`
 
-The released root checkpoint is merged FP16 weights. The trained BF16 adapter is
-also stored under `adapter/`.
+{release_text}
 
 ## Intended use and limitations
 
@@ -1123,6 +1160,8 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
     assert_remote_execution_allowed(config)
     validate_hub_destination(config)
     dataset_pin = validate_dataset_identity(config.manifest)
+    # Fail before the GPU spend when the shadow gate contract is broken, too.
+    shadow_gate_records = continuation_module().load_shadow_gate_records(config.manifest)
     if config.push_to_hub:
         # Fail before the GPU spend rather than after it when the destination is taken.
         preflight_destination_repo(config)
@@ -1255,15 +1294,36 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
     tokenizer.save_pretrained(config.output_dir / "adapter")
     actual_step = int(trainer.state.global_step)
     enable_generation_cache(trainer.model)
-    behavioral_gates = run_coreference_behavioral_gates(
-        model=trainer.model,
-        tokenizer=tokenizer,
-        adapter=adapter,
-        validation_records=validation_records,
-        manifest_path=config.manifest,
-        output_dir=config.output_dir,
-        step=actual_step,
-    )
+    result: dict[str, Any] = {
+        "steps": actual_step,
+        "adapter_dir": str(config.output_dir / "adapter"),
+        "template_hash": adapter.template_hash,
+        "train_metrics": dict(train_output.metrics),
+        "eval_metrics": dict(eval_metrics),
+        "dataset_identity": dataset_pin,
+        "training_mix": mix_stats,
+        "merged_adapter": config.merge_adapter,
+        "pushed_to_hub": False,
+    }
+    result_path = config.output_dir / "training_result.json"
+    try:
+        behavioral_gates = run_coreference_behavioral_gates(
+            model=trainer.model,
+            tokenizer=tokenizer,
+            adapter=adapter,
+            validation_records=validation_records,
+            manifest_path=config.manifest,
+            output_dir=config.output_dir,
+            step=actual_step,
+            shadow_records=shadow_gate_records,
+        )
+    except RuntimeError as gate_error:
+        # The adapter and the failing behavioural report already sit on the job bucket.
+        # Keep the run's metrics next to them so the bundle can be diagnosed, and
+        # published by hand only on a deliberate decision, without a second GPU run.
+        result["behavioral_gate_failure"] = str(gate_error)
+        write_training_result(result_path, result)
+        raise
     save_checkpoint_metadata(
         config.output_dir,
         step=actual_step,
@@ -1277,19 +1337,8 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
             "shadow_coreference_behavioral_gate": behavioral_gates["shadow"],
         },
     )
-    result: dict[str, Any] = {
-        "steps": actual_step,
-        "adapter_dir": str(config.output_dir / "adapter"),
-        "template_hash": adapter.template_hash,
-        "train_metrics": dict(train_output.metrics),
-        "eval_metrics": dict(eval_metrics),
-        "dataset_identity": dataset_pin,
-        "training_mix": mix_stats,
-        "merged_adapter": config.merge_adapter,
-        "coreference_behavioral_gate": behavioral_gates["dev"],
-        "shadow_coreference_behavioral_gate": behavioral_gates["shadow"],
-        "pushed_to_hub": False,
-    }
+    result["coreference_behavioral_gate"] = behavioral_gates["dev"]
+    result["shadow_coreference_behavioral_gate"] = behavioral_gates["shadow"]
     del trainer
     del model
     gc.collect()
@@ -1317,11 +1366,7 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         validation_records=len(validation_records),
         result=result,
     )
-    result_path = config.output_dir / "training_result.json"
-    result_path.write_text(
-        json.dumps(result, indent=2, sort_keys=True, default=str) + "\n",
-        encoding="utf-8",
-    )
+    write_training_result(result_path, result)
     if config.push_to_hub:
         from huggingface_hub import HfApi  # type: ignore[import-not-found]
 

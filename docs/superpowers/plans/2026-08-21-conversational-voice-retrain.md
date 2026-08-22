@@ -526,5 +526,20 @@ git diff --stat data/                            # no frozen file listed
 
 Guards required before launch: (1) `MAX_TRAIN_SECONDS` / `JOB_TIMEOUT` caps on `run_remote_training_job.sh`; (2) a NEW hub
 destination (never the pinned base repo); (3) the coreference dev + shadow gate ported into `cloud_train_tool_sft.py` as a
-post-train check that blocks upload on any metric < 0.95. Launch only after a priced approval (target: MAX_STEPS≈2000 ≈ 2.4 epochs,
-MAX_TRAIN_SECONDS=3600, JOB_TIMEOUT=80m ⇒ hard ceiling ≈ $3.67; expected ≈ $2.5–3.0).
+post-train check that blocks upload on any metric < 0.95. Launch only after a priced approval (target: MAX_STEPS=2000,
+MAX_TRAIN_SECONDS=3600, JOB_TIMEOUT=80m ⇒ hard ceiling ≈ $3.67; expected ≈ $2.5–3.1).
+
+Completion-gate critic on fad8eef (FIX-FIRST → fixed in the follow-up commit):
+- **M1 mix sizing.** The "≈2.4 epochs" figure was 8000/3267 (unweighted). Measured with the real mix builder: 3/6/4/6 yields
+  10,139 weighted rows, so 2000 steps × (2×2) = 0.79 epoch and ~70 % of samples are coreference (23 % with the final masked).
+  Ruling: launch with `POSITIVE_MULTIPLIER=2 AMBIGUITY_MULTIPLIER=3 POLICY_FAQ_MULTIPLIER=1 TOOL_OUTCOME_MULTIPLIER=2` →
+  5,747 rows, 2000 steps = 1.39 epochs, unmasked conversational finals ≈32 % of samples (ambiguity 41 %, masked positives 27 %).
+  The 3/6 weights were tuned for a lr 2e-6 continuation; a 1e-4 from-scratch run sees every ambiguity pair ~4× already.
+- **M2 single-shot gate.** The lane gates once, after the final step (16/16 dev pairs + 32-record shadow, no streak/selection).
+  Accepted for this run — the bucket keeps `adapter/`, both `behavioral-evaluations/*.json` and now `training_result.json`
+  (with `behavioral_gate_failure`) on failure. Pre-agreed recovery: if the gate fails, read the raw outputs from the reports;
+  do **not** relaunch on sunk cost. A manual `hf upload` of the bucket adapter is allowed only as an explicitly labelled
+  non-gated diagnostic revision, never as a release candidate.
+- **M3 model card.** Card now branches on `merge_adapter` (`library_name: peft`, PEFT load instructions, no "merged FP16" claim).
+- Minor: shadow-gate manifest contract is validated before the tokenizer load; `OUTPUT_PREFIX` set explicitly per launch so a
+  retry at the same commit cannot overwrite a failed run's bundle.

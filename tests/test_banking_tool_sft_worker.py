@@ -718,6 +718,52 @@ def test_behavioral_gate_failure_raises_and_keeps_the_report(
     assert sorted(path.name for path in evaluations.iterdir()) == sorted(expected_reports)
 
 
+def test_behavioral_gates_use_preloaded_shadow_records_without_rereading_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_fake_gate(
+        monkeypatch,
+        dev_accuracy=1.0,
+        shadow_accuracy=1.0,
+        shadow_records=[{"record_id": "shadow_manifest", "metadata": {}}],
+    )
+    preloaded = [{"record_id": "shadow_preloaded", "metadata": {"coreference_pair_id": "p"}}]
+
+    worker.run_coreference_behavioral_gates(
+        model=object(),
+        tokenizer=object(),
+        adapter=object(),
+        validation_records=_mix_records(),
+        manifest_path=tmp_path / "manifest.json",
+        output_dir=tmp_path / "out",
+        step=7,
+        shadow_records=preloaded,
+    )
+
+    assert calls == ["positive_1", "shadow_preloaded"]
+
+
+def test_model_card_describes_adapter_only_release(tmp_path: Path) -> None:
+    base = _config(tmp_path)
+    adapter_only = WorkerConfig(**{**base.__dict__, "merge_adapter": False})
+    adapter_only.output_dir.mkdir(parents=True, exist_ok=True)
+    card = worker.write_model_card(
+        adapter_only, train_records=1, validation_records=1, result={}
+    ).read_text(encoding="utf-8")
+    assert "library_name: peft" in card
+    assert "PeftModel.from_pretrained" in card
+    assert "merged FP16" not in card
+    assert "8.8 billion" in card
+
+    merged = WorkerConfig(**{**base.__dict__, "merge_adapter": True})
+    card = worker.write_model_card(
+        merged, train_records=1, validation_records=1, result={}
+    ).read_text(encoding="utf-8")
+    assert "library_name: peft" not in card
+    assert "The released root checkpoint is merged FP16 weights" in card
+
+
 def test_behavioral_gate_requires_coreference_validation_records(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="no coreference gate records"):
         worker.run_coreference_behavioral_gates(
@@ -734,7 +780,8 @@ def test_behavioral_gate_requires_coreference_validation_records(tmp_path: Path)
 def test_remote_training_gates_behavior_before_any_publication() -> None:
     source = WORKER_PATH.read_text(encoding="utf-8")
     gate = source.index("behavioral_gates = run_coreference_behavioral_gates(")
-    assert gate < source.index("if config.merge_adapter:")
+    post_train_merge = "if config.merge_adapter:\n        parity = merge_adapter_with_reload"
+    assert gate < source.index(post_train_merge)
     assert gate < source.index("api.upload_folder(")
     assert gate < source.index("api.create_repo(")
     assert source.index("eval_metrics = trainer.evaluate()") < gate
@@ -751,4 +798,12 @@ def test_remote_training_gates_behavior_before_any_publication() -> None:
     )
     assert source.index("preflight_destination_repo(config)") < source.index(
         "AutoTokenizer.from_pretrained"
+    )
+    # The shadow gate contract is checked before the GPU spend, and a failing gate
+    # still leaves training_result.json on the bucket for diagnosis.
+    assert source.index("load_shadow_gate_records(config.manifest)") < source.index(
+        "AutoTokenizer.from_pretrained"
+    )
+    assert (
+        gate < source.index('result["behavioral_gate_failure"]') < source.index("    del model\n")
     )
