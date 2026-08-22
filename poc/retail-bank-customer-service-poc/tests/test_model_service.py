@@ -181,6 +181,7 @@ def test_invalid_first_tool_response_preserves_raw_model_trace() -> None:
         "content": "Show my accounts.",
     }
     assert failure.value.model_passes[0].raw_output == raw_output
+    assert len(agent.model.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -421,6 +422,185 @@ def test_v4_execute_rejects_repeated_prose_without_executing_tool(
         "The replacement is complete.",
     ]
     assert model.outputs == []
+
+
+def test_v4_execute_retries_once_when_model_names_a_tool_that_is_not_exposed() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+            '<tool_call>{"name": "list_transactions", "arguments": {"limit": 5}}</tool_call>',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my five most recent transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+    assert [trace.label for trace in result.model_passes] == [
+        "base",
+        "wrong_tool_retry_1",
+        "grounded_final",
+    ]
+    retry_system = model.calls[1]["messages"][0]["content"]
+    assert "list_addresses" in retry_system
+    assert "Call list_transactions, the only available tool" in retry_system
+    assert [tool["function"]["name"] for tool in model.calls[1]["tools"]] == ["list_transactions"]
+
+
+def test_v4_execute_rejects_a_wrong_tool_after_one_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+        ]
+    )
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(
+        AgentExecutionError,
+        match="unsupported tool: list_addresses after one retry",
+    ) as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my five most recent transactions.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_transactions",
+            ),
+        )
+
+    assert executed == []
+    assert [trace.label for trace in failure.value.model_passes] == [
+        "base",
+        "wrong_tool_retry_1",
+    ]
+    assert model.outputs == []
+
+
+def test_v4_wrong_tool_retry_names_the_tool_that_failed_the_retry() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+            '<tool_call>{"name": "list_cards", "arguments": {}}</tool_call>',
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    with pytest.raises(AgentExecutionError, match="unexposed tool: list_cards after one retry"):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my five most recent transactions.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_transactions",
+            ),
+        )
+
+    assert model.outputs == []
+
+
+def test_v4_wrong_tool_retry_returning_two_calls_fails_on_arity() -> None:
+    two_calls = (
+        '<tool_call>{"name": "list_transactions", "arguments": {"limit": 5}}</tool_call>'
+        '<tool_call>{"name": "list_transactions", "arguments": {"limit": 5}}</tool_call>'
+    )
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+            two_calls,
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    with pytest.raises(AgentExecutionError, match="exactly one tool call"):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my five most recent transactions.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_transactions",
+            ),
+        )
+
+    assert model.outputs == []
+
+
+def test_v4_hallucinated_tool_after_a_required_tool_retry_fails_without_a_second_retry() -> None:
+    model = RecordingModel(
+        [
+            "Let me look that up.",
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>',
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    with pytest.raises(AgentExecutionError, match="unsupported tool: list_addresses$") as failure:
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my five most recent transactions.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_transactions",
+            ),
+        )
+
+    assert [trace.label for trace in failure.value.model_passes] == [
+        "base",
+        "required_tool_retry_1",
+    ]
+    assert model.outputs == []
+
+
+def test_v4_hallucinated_tool_among_two_first_pass_calls_fails_on_arity() -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "list_addresses", "arguments": {}}</tool_call>'
+            '<tool_call>{"name": "list_transactions", "arguments": {"limit": 5}}</tool_call>',
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    with pytest.raises(AgentExecutionError, match="exactly one tool call"):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Show my five most recent transactions.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="view_transactions",
+            ),
+        )
+
+    assert len(model.calls) == 1
 
 
 def test_v4_execute_rejects_multiple_routed_write_calls_before_execution(

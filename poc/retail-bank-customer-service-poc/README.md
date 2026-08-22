@@ -59,7 +59,8 @@ customer turn + recent conversation + trusted prior dialogue state
      -> no corpus match: stock response, unless recent tool results answer the
         question, then a grounded no-tool converse pass with strict claim checks
   -> execute_tool: Granite gets one intent-compatible schema and must call it once
-     -> one bounded retry if the first pass emits prose
+     -> one bounded retry if the first pass emits prose, or names a tool that
+        does not exist (the routed tool is pinned on the retry)
      -> grounded-final pass receives the result and no tools
   -> clarify/converse/uncertain: Granite gets no tools
   -> validate and execute model-selected arguments against fictional state

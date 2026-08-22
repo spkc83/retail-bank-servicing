@@ -580,3 +580,10 @@ first-turn mutations) but a long-context tool-name fidelity regression vs v8 (FM
 (a) runtime guard — when exactly one tool is exposed and the model names an unknown tool, retry once with the tool name pinned
 (mirrors the existing required-tool retry; protects every adapter, no training spend); (b) a further run weighting multi-turn
 long-context rows (new spend); (c) stop here.
+
+**Option (a) implemented (2026-08-22):** `model_service.py` now retries once (`wrong_tool_retry_1`, routed tool pinned in the
+system prompt) when a routed single-tool turn's first pass names a tool that does not exist; a real-but-unexposed tool still
+fails immediately; a second miss raises `model selected unsupported tool: <name> after one retry`. 75 model-service tests,
+critic-gated. Re-probe on scratch2: the retry fired and the adapter hallucinated a second nonexistent tool
+(`get_address_history`), so S5 still falls back — scratch2's long-context tool fidelity is a model defect the runtime cannot
+paper over. Remaining choices: (b) or (c).

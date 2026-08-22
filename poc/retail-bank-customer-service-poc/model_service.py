@@ -389,8 +389,8 @@ class ConversationalBankingAgent:
                 first_output,
                 turn_key=first_trace.prompt_sha256,
             )
-            if not calls and routed_single_call:
-                retry_system = _required_tool_retry_system(system, public_tools)
+
+            def retry_pass(label: str, retry_system: dict[str, str]) -> tuple[ToolCall, ...]:
                 retry_context = select_token_budgeted_context(
                     retry_system,
                     current,
@@ -400,7 +400,7 @@ class ConversationalBankingAgent:
                     pinned_exchange=pinned_exchange,
                 )
                 retry_output, retry_trace = self._generate_pass(
-                    "required_tool_retry_1",
+                    label,
                     retry_context,
                     serving_tools,
                 )
@@ -409,14 +409,36 @@ class ConversationalBankingAgent:
                     raise AgentProtocolError(
                         "model returned an empty response when a tool call was required"
                     )
-                calls = self.tool_adapter.parse_assistant(
+                return self.tool_adapter.parse_assistant(
                     retry_output,
                     turn_key=retry_trace.prompt_sha256,
+                )
+
+            if not calls and routed_single_call:
+                calls = retry_pass(
+                    "required_tool_retry_1",
+                    _required_tool_retry_system(system, public_tools),
                 )
                 if not calls:
                     raise AgentProtocolError(
                         "model did not return a required tool call after one retry"
                     )
+            elif routed_single_call and len(calls) == 1 and not _call_is_supported(calls[0]):
+                # The router already decided the tool. A tool name that does not
+                # exist (a hallucination, seen under long context) gets one pinned
+                # retry, the same way a missing call does, before it is a protocol
+                # failure. A real but unexposed tool is a routing disagreement and
+                # still fails immediately in _validate_tool_calls.
+                wrong_name = calls[0].name
+                calls = retry_pass(
+                    "wrong_tool_retry_1",
+                    _wrong_tool_retry_system(system, public_tools, wrong_name),
+                )
+                if len(calls) == 1 and not _call_is_exposed(calls[0], public_tools):
+                    raise AgentProtocolError(
+                        f"{_tool_selection_error(calls[0].name)} after one retry"
+                    )
+                # A wrong number of calls falls through to the arity check below.
             if routed_single_call and len(calls) != 1:
                 raise AgentProtocolError("routed servicing turns require exactly one tool call")
             if not calls:
@@ -1358,6 +1380,37 @@ def _requires_tool_call(
         and router_result.get("entity_resolution") in {"resolved", "not_required"}
         and len(public_tools) == 1
     )
+
+
+def _call_is_exposed(call: ToolCall, public_tools: list[dict[str, Any]]) -> bool:
+    return call.name in {tool["function"]["name"] for tool in public_tools}
+
+
+def _call_is_supported(call: ToolCall) -> bool:
+    return call.name in {tool["function"]["name"] for tool in MODEL_TOOLS}
+
+
+def _tool_selection_error(name: str) -> str:
+    supported_names = {tool["function"]["name"] for tool in MODEL_TOOLS}
+    kind = "unexposed" if name in supported_names else "unsupported"
+    return f"model selected {kind} tool: {name}"
+
+
+def _wrong_tool_retry_system(
+    system: dict[str, str],
+    public_tools: list[dict[str, Any]],
+    wrong_name: str,
+) -> dict[str, str]:
+    tool_name = str(public_tools[0]["function"]["name"])
+    return {
+        "role": "system",
+        "content": (
+            f"{system['content']}\n\nWRONG TOOL: {wrong_name} is not an available tool "
+            f"for this request. Call {tool_name}, the only available tool, with its "
+            "documented arguments. Do not describe, simulate, or claim the result before "
+            "the application returns the tool result."
+        ),
+    }
 
 
 def _required_tool_retry_system(
