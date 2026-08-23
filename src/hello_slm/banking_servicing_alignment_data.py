@@ -2287,12 +2287,12 @@ LONG_CONTEXT_TRAIN_HISTORY_BUNDLES = 5
 # calibrated char proxy instead. Measured over all 224 rows of this curriculum with
 # the granite-4.1-8b tokenizer through ToolWireAdapter._render_messages (system
 # prompt + turn guidance + the one exposed tool schema + the full message chain),
-# the ratio of _long_context_prompt_chars to rendered tokens fell between 2.99 and
-# 3.51. The two constants below sit just outside that window, so dividing the char
+# the ratio of _long_context_prompt_chars to rendered tokens fell between 3.01 and
+# 3.50. The two constants below sit just outside that window, so dividing the char
 # count by them brackets the real render from both sides rather than estimating it.
 # tests/test_banking_servicing_alignment_data.py re-measures the exact rendered
 # lengths against the real tokenizer whenever it is available locally; the observed
-# distribution at the time of writing was 819 to 1292 tokens.
+# distribution at the time of writing was 818 to 1311 tokens.
 LONG_CONTEXT_CHARS_PER_TOKEN_FLOOR = 2.95
 LONG_CONTEXT_CHARS_PER_TOKEN_CEILING = 3.55
 LONG_CONTEXT_MIN_RENDERED_TOKENS = 800
@@ -2354,6 +2354,55 @@ _LONGCTX_RECIPIENTS = (
     "Westhaven Removals",
     "Yarrowfield Heating",
 )
+_LONGCTX_SERVICES = (
+    "Utilities",
+    "Landscaping",
+    "Dental Care",
+    "Storage",
+    "Roofing",
+    "Insurance",
+    "Broadband",
+    "Childcare",
+    "Fitness",
+    "Cleaning",
+    "Removals",
+    "Heating",
+    "Plumbing",
+    "Glaziers",
+    "Veterinary",
+    "Opticians",
+    "Tutoring",
+    "Laundry",
+    "Catering",
+    "Security",
+)
+_LONGCTX_LOCALITIES = (
+    "Ashfield",
+    "Brackenmoor",
+    "Colnebridge",
+    "Dunhollow",
+    "Edenvale",
+    "Fernhurst",
+    "Greystone",
+    "Hartsmere",
+    "Inglewood",
+    "Kelsford",
+    "Lowmarsh",
+    "Marlbury",
+    "Netherby",
+    "Oakmere",
+    "Pendlecombe",
+    "Rushmere",
+    "Stanwick",
+    "Thorpeleigh",
+    "Wexley",
+    "Yarnton",
+)
+# Train and validation walk the name pools from different starting points. Without
+# that, a train row and a validation row at the same index share every name and their
+# finals differ only by the single digit of the number base, which
+# _assert_no_fuzzy_final_duplicates rejects at 0.995 similarity.
+_LONGCTX_POOL_OFFSETS = {"train": 0, "validation": 7}
 _LONGCTX_CARD_PRODUCTS = (
     "Harborview",
     "Stonebridge",
@@ -2482,6 +2531,11 @@ _LONGCTX_HISTORY_BUNDLES = (
     (5,),
 )
 _LONGCTX_TOOL_BACKED_BUNDLE = 4
+# Tier C, the 20% tier. Read decoys spend their extra length on two context tool-call
+# pairs plus one plain exchange; write decoys cannot repeat their call without
+# performing the write twice, so they buy the same length with plain exchanges only.
+_LONGCTX_TIER_C_READ_FILLERS = (5, 2)
+_LONGCTX_TIER_C_WRITE_FILLERS = (5, 2, 6, 1)
 # 24 validation rows as (decoy, phrasing, bundle): ten tier-A, ten tier-B and four
 # tier-C rows covering all ten decoys, a strict subset of the train cross-product.
 _LONGCTX_VALIDATION_PLAN = (
@@ -2514,29 +2568,51 @@ _LONGCTX_VALIDATION_PLAN = (
 
 def _long_context_entities(split: str, index: int) -> dict[str, str]:
     reference = LONG_CONTEXT_NUMBER_BASES[split] + index
-    stem = _LONGCTX_PLACE_STEMS[index % len(_LONGCTX_PLACE_STEMS)]
-    trade = _LONGCTX_TRADES[(index // len(_LONGCTX_PLACE_STEMS)) % len(_LONGCTX_TRADES)]
-    product = _LONGCTX_CARD_PRODUCTS[index % len(_LONGCTX_CARD_PRODUCTS)]
-    tier = _LONGCTX_CARD_TIERS[(index // len(_LONGCTX_CARD_PRODUCTS)) % len(_LONGCTX_CARD_TIERS)]
+    position = index + _LONGCTX_POOL_OFFSETS[split]
+    group = position // len(_LONGCTX_PLACE_STEMS)
+    stem = _LONGCTX_PLACE_STEMS[position % len(_LONGCTX_PLACE_STEMS)]
+    recipient_stem = _LONGCTX_PLACE_STEMS[(position + 3) % len(_LONGCTX_PLACE_STEMS)]
+    product = _LONGCTX_CARD_PRODUCTS[position % len(_LONGCTX_CARD_PRODUCTS)]
+    tier_index = (position // len(_LONGCTX_CARD_PRODUCTS)) % len(_LONGCTX_CARD_TIERS)
     return {
         # Every current turn and every final carries this per-row reference, which
-        # makes both globally unique by construction without a phrasing pool.
+        # makes both globally unique by construction without a phrasing pool. The
+        # word-level names carry the rest of the variety, which is what keeps two
+        # finals of the same decoy far enough apart for the fuzzy-duplicate check.
         "last4": f"{reference:04d}",
         "case_ref": f"HB-{reference}",
         "amount": f"{reference / 100:.2f}",
-        "merchant": f"{stem} {trade}",
-        "recipient": _LONGCTX_RECIPIENTS[index % len(_LONGCTX_RECIPIENTS)],
-        "card_name": f"{product} {tier}",
+        "savings": f"{(reference + 33900) / 100:.2f}",
+        "merchant": f"{stem} {_LONGCTX_TRADES[group % len(_LONGCTX_TRADES)]}",
+        "recipient": f"{recipient_stem} {_LONGCTX_SERVICES[group % len(_LONGCTX_SERVICES)]}",
+        "card_name": f"{product} {_LONGCTX_CARD_TIERS[tier_index]}",
+        # Digit-free on purpose: the final quotes it, and PII_PATTERNS matches any
+        # 12-19 digit run.
+        "address": f"{stem} House, {_LONGCTX_LOCALITIES[group % len(_LONGCTX_LOCALITIES)]}",
     }
 
 
 def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str, Any], ...]:
     """Ten misleading-noun / correct-tool pairs covering all nine exposed tools.
 
+    Each entry carries the one tool the row may ever name, the envelope that tool
+    returns, and a final that states only what that envelope contains. Two rules are
+    load-bearing and are asserted at build time:
+
+    * `_assert_long_context_contract_tools` - no message anywhere in the row may name
+      a tool other than `tool`, because `training_tools_for_record` renders exactly
+      that one schema. A history call to anything else would demonstrate the very
+      defect this curriculum corrects.
+    * every numeric token and every spelled-out count in `final` has to be readable
+      out of `envelope`; `read_history` decoys additionally reuse `envelope` verbatim
+      for their context calls, so a row cannot contradict itself across turns.
+
     The four write tools are in ENTITY_REQUIRED_TOOLS, so their contract asserts
     entity_state="resolved". Each of those anchors therefore states the selector --
     the last four digits, the merchant, the recipient -- in an earlier assistant
-    turn, so the row never teaches the model to guess one.
+    turn, so the row never teaches the model to guess one. Where the customer asks
+    for an action the manifest cannot perform (a lost-card report, a stop payment, a
+    chargeback, a PIN reissue), the final says so rather than silently substituting.
     """
 
     return (
@@ -2545,21 +2621,31 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "list_addresses",
             "tool": "list_service_cases",
             "arguments": {},
+            # Repeating a read call later in a session is ordinary, so these decoys
+            # carry the tier-C context pairs; the write decoys below cannot without
+            # performing the write twice, and use a longer plain history instead.
+            "read_history": True,
             "anchor": (
                 f"Remind me which service requests are still sitting open {suffix}.",
                 f"One request is open: {entity['case_ref']}, raised on 2026-07-02 to "
-                "confirm a change of mailing address. Nothing else is outstanding on "
-                "the profile, and the two requests before it were both closed off "
+                f"confirm {entity['address']} as the mailing address. Nothing else is "
+                "outstanding on the profile, and the two before it were closed off "
                 "earlier in the spring without needing anything from you.",
             ),
             "ask": f"pin down the mailing address entry filed under {entity['case_ref']}",
             "final": (
-                f"Request {entity['case_ref']} is the only one still open. It was raised "
-                "on 2026-07-02 to confirm a change of mailing address, and no other "
-                "service request is waiting on you."
+                f"Case {entity['case_ref']} is the mailing address entry you asked "
+                f"about. It is still open, it was raised on 2026-07-02, and the address "
+                f"it is confirming is {entity['address']}. Nothing else is recorded "
+                "against it."
+            ),
+            "history_summary": (
+                f"The case list comes back with {entity['case_ref']}, an open mailing "
+                f"address confirmation for {entity['address']} raised on 2026-07-02."
             ),
             "grounding": [
                 f"service_case.reference={entity['case_ref']}",
+                f"service_case.requested_address={entity['address']}",
                 "service_case.status=open",
                 "service_case.created_at=2026-07-02T09:30:00Z",
             ],
@@ -2568,6 +2654,7 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                     {
                         "case_type": "address_update",
                         "reference": entity["case_ref"],
+                        "requested_address": entity["address"],
                         "subject": "Confirm change of mailing address",
                         "status": "open",
                         "created_at": "2026-07-02T09:30:00Z",
@@ -2580,26 +2667,48 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "get_statement",
             "tool": "list_transactions",
             "arguments": {"limit": 6},
+            "read_history": True,
             "anchor": (
                 f"Tell me what has hit the account since the month began {suffix}.",
-                f"Six items have posted since 2026-07-01. The largest of them is "
-                f"{entity['amount']} at {entity['merchant']}, and the rest are smaller "
-                "everyday purchases spread across the first fortnight. None of the six "
-                "is still pending, so what you can see is what has actually left the "
-                "account.",
+                f"Six entries have posted since 2026-07-01, one of them "
+                f"{entity['amount']} at {entity['merchant']}. The others are everyday "
+                "purchases spread across the first fortnight, and none of the six is "
+                "still pending.",
             ),
             "ask": (
                 f"read out the monthly statement lines around the {entity['amount']} "
                 f"charge at {entity['merchant']}"
             ),
             "final": (
-                f"Six items are posted on the account. The largest is {entity['amount']} "
-                f"at {entity['merchant']} on 2026-07-14, and the five behind it are "
-                "smaller everyday purchases, all of them already settled."
+                f"Six entries came back on the account. The {entity['merchant']} charge "
+                f"is {entity['amount']} and posted on 2026-07-14, and the rest are "
+                "everyday purchases from earlier in the month."
+            ),
+            "context_arguments": {"limit": 2},
+            "context_envelope": _success_envelope(
+                transactions=[
+                    {
+                        "description": entity["merchant"],
+                        "amount": entity["amount"],
+                        "posted_at": "2026-07-14",
+                        "status": "posted",
+                    },
+                    {
+                        "description": "Kingsford Transit",
+                        "amount": "18.40",
+                        "posted_at": "2026-07-12",
+                        "status": "posted",
+                    },
+                ]
+            ),
+            "history_summary": (
+                f"The two most recent entries are {entity['amount']} at "
+                f"{entity['merchant']} on 2026-07-14 and 18.40 at Kingsford Transit."
             ),
             "grounding": [
                 f"transaction.description={entity['merchant']}",
                 f"transaction.amount={entity['amount']}",
+                "transaction.posted_at=2026-07-14",
                 "transaction.status=posted",
             ],
             "envelope": _success_envelope(
@@ -2616,6 +2725,30 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                         "posted_at": "2026-07-12",
                         "status": "posted",
                     },
+                    {
+                        "description": "Ravensworth Energy",
+                        "amount": "64.20",
+                        "posted_at": "2026-07-08",
+                        "status": "posted",
+                    },
+                    {
+                        "description": "Halewood Newsagent",
+                        "amount": "3.95",
+                        "posted_at": "2026-07-05",
+                        "status": "posted",
+                    },
+                    {
+                        "description": "Bexley Lane Cafe",
+                        "amount": "11.75",
+                        "posted_at": "2026-07-03",
+                        "status": "posted",
+                    },
+                    {
+                        "description": "Cranmore Water",
+                        "amount": "29.60",
+                        "posted_at": "2026-07-02",
+                        "status": "posted",
+                    },
                 ]
             ),
         },
@@ -2624,25 +2757,33 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "list_pin_requests",
             "tool": "list_cards",
             "arguments": {},
+            "read_history": True,
             "anchor": (
                 f"Which card am I actually holding on this profile {suffix}?",
                 f"You hold one active card, the {entity['card_name']} ending in "
-                f"{entity['last4']}. It has been active since 2026-03-11 and nothing is "
-                "blocking it. There is no second card on the profile, so anything you "
-                "ask me about a card refers to that one.",
+                f"{entity['last4']}, and it has been active since 2026-03-11. There is "
+                "no second card on the profile, so anything you ask me about a card "
+                "refers to that one.",
             ),
             "ask": (
                 f"check whether a PIN reissue is showing against the "
                 f"{entity['card_name']} ending in {entity['last4']}"
             ),
             "final": (
-                f"Your {entity['card_name']} ending in {entity['last4']} is active and "
-                "carries no PIN reissue on it. It is the only card on the profile, so "
-                "nothing else is waiting on a new PIN."
+                f"Your card list shows one card, the {entity['card_name']} ending in "
+                f"{entity['last4']}, active since 2026-03-11. The card record does not "
+                "carry PIN request history, so I cannot tell you from here whether a "
+                "reissue is under way. Say the word and I will raise it with the card "
+                "team."
+            ),
+            "history_summary": (
+                f"The card list comes back with one card, the {entity['card_name']} "
+                f"ending in {entity['last4']}, active since 2026-03-11."
             ),
             "grounding": [
                 f"card.last4={entity['last4']}",
                 "card.status=active",
+                "card.opened_at=2026-03-11",
             ],
             "envelope": _success_envelope(
                 cards=[
@@ -2660,6 +2801,7 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "list_disputes",
             "tool": "list_transactions",
             "arguments": {"limit": 8},
+            "read_history": True,
             "anchor": (
                 f"Read me back the card purchase I asked about earlier {suffix}.",
                 f"The purchase was {entity['amount']} at {entity['merchant']}, posted on "
@@ -2672,13 +2814,38 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                 f"{entity['merchant']}"
             ),
             "final": (
-                f"The {entity['amount']} charge at {entity['merchant']} from 2026-07-09 "
-                "is still posted with no claim raised against it. Say the word and I "
-                "will open one for you."
+                f"The {entity['merchant']} charge is {entity['amount']} and posted on "
+                "2026-07-09, with no claim recorded against it. Say the word and I will "
+                "raise a dispute for you."
+            ),
+            "context_arguments": {"limit": 2},
+            "context_envelope": _success_envelope(
+                transactions=[
+                    {
+                        "description": entity["merchant"],
+                        "amount": entity["amount"],
+                        "posted_at": "2026-07-09",
+                        "status": "posted",
+                        "disputed": False,
+                    },
+                    {
+                        "description": "Ravensworth Energy",
+                        "amount": "64.20",
+                        "posted_at": "2026-07-08",
+                        "status": "posted",
+                        "disputed": False,
+                    },
+                ]
+            ),
+            "history_summary": (
+                f"The two most recent entries are {entity['amount']} at "
+                f"{entity['merchant']} on 2026-07-09, with no claim on it, and 64.20 "
+                "at Ravensworth Energy."
             ),
             "grounding": [
                 f"transaction.description={entity['merchant']}",
                 f"transaction.amount={entity['amount']}",
+                "transaction.posted_at=2026-07-09",
                 "transaction.disputed=false",
             ],
             "envelope": _success_envelope(
@@ -2689,7 +2856,21 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                         "posted_at": "2026-07-09",
                         "status": "posted",
                         "disputed": False,
-                    }
+                    },
+                    {
+                        "description": "Ravensworth Energy",
+                        "amount": "64.20",
+                        "posted_at": "2026-07-08",
+                        "status": "posted",
+                        "disputed": False,
+                    },
+                    {
+                        "description": "Bexley Lane Cafe",
+                        "amount": "11.75",
+                        "posted_at": "2026-07-03",
+                        "status": "posted",
+                        "disputed": False,
+                    },
                 ]
             ),
         },
@@ -2698,25 +2879,31 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "list_standing_orders",
             "tool": "list_transfers",
             "arguments": {},
+            "read_history": True,
             "anchor": (
                 f"What money is queued to leave the account this month {suffix}?",
-                f"One payment is queued: {entity['amount']} to {entity['recipient']}, due "
-                "on the 28th. It is the only outgoing item that has not left yet. "
-                "Everything else you set up this month has already gone through and "
-                "settled at the receiving end.",
+                f"One payment is queued: {entity['amount']} to {entity['recipient']}, "
+                "due on 2026-07-28 and still pending. Everything else you set up this "
+                "month has already gone through and settled at the receiving end.",
             ),
             "ask": (
                 f"confirm the standing order sending {entity['amount']} to "
                 f"{entity['recipient']} each month"
             ),
             "final": (
-                f"One scheduled payment of {entity['amount']} to {entity['recipient']} is "
-                "queued for the 28th, and it repeats monthly. Nothing else recurring is "
-                "set up on the account."
+                f"Your transfer list shows one payment waiting, {entity['amount']} to "
+                f"{entity['recipient']}, due on 2026-07-28 and still pending. The "
+                "transfer record does not mark it as recurring, so I cannot confirm a "
+                "monthly standing order from here."
+            ),
+            "history_summary": (
+                f"The transfer list comes back with one pending payment, "
+                f"{entity['amount']} to {entity['recipient']} due on 2026-07-28."
             ),
             "grounding": [
                 f"transfer.recipient={entity['recipient']}",
                 f"transfer.amount={entity['amount']}",
+                "transfer.due_on=2026-07-28",
                 "transfer.status=pending",
             ],
             "envelope": _success_envelope(
@@ -2735,24 +2922,29 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "get_balance_sheet",
             "tool": "list_accounts",
             "arguments": {},
+            "read_history": True,
             "anchor": (
                 f"Give me a rough idea of where I stand overall {suffix}.",
-                f"Your everyday account is holding {entity['amount']} available today, "
-                "and the savings behind it carries a smaller cushion. Neither of them is "
-                "overdrawn, and no charge is waiting to come off either balance in the "
-                "next few days.",
+                f"Your everyday account is holding {entity['amount']} available today "
+                f"and the savings behind it holds {entity['savings']}. Both are open, and "
+                "no charge is waiting to come off either balance in the next few days.",
             ),
             "ask": (
                 f"walk me through the balance sheet position before I commit "
                 f"{entity['amount']} anywhere"
             ),
             "final": (
-                f"The everyday account holds {entity['amount']} available right now and "
-                "the linked savings holds a smaller cushion behind it. Neither balance "
-                "is overdrawn, so the money is there if you want it."
+                f"You hold two accounts. Everyday Checking has {entity['amount']} "
+                f"available and Reserve Savings has {entity['savings']}. Both accounts are "
+                "open and neither balance is negative, so the money is there if you want it."
+            ),
+            "history_summary": (
+                f"The account list comes back with Everyday Checking at "
+                f"{entity['amount']} and Reserve Savings at {entity['savings']}, both open."
             ),
             "grounding": [
-                f"account.available={entity['amount']}",
+                f"account.everyday_checking.available={entity['amount']}",
+                f"account.reserve_savings.available={entity['savings']}",
                 "account.status=open",
             ],
             "envelope": _success_envelope(
@@ -2764,7 +2956,7 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                     },
                     {
                         "name": "Reserve Savings",
-                        "available": "412.66",
+                        "available": entity["savings"],
                         "status": "open",
                     },
                 ]
@@ -2775,6 +2967,9 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "decoy_tool": "report_lost_card",
             "tool": "freeze_card",
             "arguments": {"last4": entity["last4"]},
+            # A write decoy: repeating the call in the history would freeze the card
+            # twice, so tier C reaches its length with more plain exchanges instead.
+            "read_history": False,
             "anchor": (
                 f"Which card is currently live on the profile {suffix}?",
                 f"The live card is your {entity['card_name']} ending in "
@@ -2787,10 +2982,12 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                 f"{entity['card_name']} ending in {entity['last4']}"
             ),
             "final": (
-                f"Your {entity['card_name']} ending in {entity['last4']} is frozen now, "
-                "so nothing further can be charged to it while you look for it. Tell me "
-                "when it turns up and I will lift the freeze."
+                "I cannot file a lost-card report from here, so I have frozen the card "
+                f"instead. Your {entity['card_name']} ending in {entity['last4']} now "
+                "shows as frozen, and nothing further can be charged to it while you "
+                "look for it."
             ),
+            "history_summary": "",
             "grounding": [
                 f"card.last4={entity['last4']}",
                 "card.status=frozen",
@@ -2807,6 +3004,7 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "key": "new_card_order",
             "decoy_tool": "order_card",
             "tool": "replace_card",
+            "read_history": False,
             "arguments": {"last4": entity["last4"]},
             "anchor": (
                 f"Confirm for me which card is worn out on the profile {suffix}.",
@@ -2820,10 +3018,11 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                 f"{entity['last4']}"
             ),
             "final": (
-                f"A replacement is on its way for your {entity['card_name']} ending in "
-                f"{entity['last4']}. The one you are holding keeps working until the new "
-                "card arrives and you activate it."
+                "I have raised a replacement rather than a separate new-card order. "
+                f"Your {entity['card_name']} ending in {entity['last4']} now shows "
+                "replacement pending on the card record."
             ),
+            "history_summary": "",
             "grounding": [
                 f"card.last4={entity['last4']}",
                 "card.status=replacement_pending",
@@ -2840,6 +3039,7 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "key": "chargeback",
             "decoy_tool": "open_chargeback",
             "tool": "dispute_transaction",
+            "read_history": False,
             "arguments": {"description": entity["merchant"]},
             "anchor": (
                 f"Which purchase was it that I flagged earlier {suffix}?",
@@ -2852,17 +3052,21 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
                 f"start the chargeback on the {entity['amount']} charge at {entity['merchant']}"
             ),
             "final": (
-                f"I have raised a claim on the {entity['amount']} charge at "
-                f"{entity['merchant']}. It stays posted on the account while the claim "
-                "is reviewed, and you will hear the outcome in writing."
+                f"I have raised a dispute on the {entity['amount']} charge at "
+                f"{entity['merchant']} rather than a separate chargeback. It still "
+                "shows as posted on the account while the claim is looked at."
             ),
+            "history_summary": "",
             "grounding": [
                 f"transaction.description={entity['merchant']}",
+                f"transaction.amount={entity['amount']}",
+                "transaction.status=posted",
                 "transaction.disputed=true",
             ],
             "envelope": _success_envelope(
                 transaction={
                     "description": entity["merchant"],
+                    "amount": entity["amount"],
                     "status": "posted",
                     "disputed": True,
                 }
@@ -2872,31 +3076,37 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
             "key": "stop_payment",
             "decoy_tool": "stop_payment",
             "tool": "cancel_transfer",
+            "read_history": False,
             "arguments": {"recipient": entity["recipient"]},
             "anchor": (
                 f"Remind me who the queued payment is going to {suffix}.",
-                f"It is going to {entity['recipient']}, {entity['amount']} due on the "
-                "28th, and it has not left the account yet. That is the only queued "
-                "payment on the account, so nothing else is waiting behind it to go "
-                "out.",
+                f"It is going to {entity['recipient']}, {entity['amount']} due on "
+                "2026-07-28, and it has not left the account yet. That is the only "
+                "queued payment on the account, so nothing else is waiting behind it "
+                "to go out.",
             ),
             "ask": (
                 f"place a stop payment on the {entity['amount']} heading out to "
                 f"{entity['recipient']}"
             ),
             "final": (
-                f"The pending payment of {entity['amount']} to {entity['recipient']} is "
-                "cancelled, so it will not leave the account on the 28th. Nothing else "
-                "outgoing is queued behind it."
+                "A stop payment is not something I can place, so I have cancelled the "
+                f"transfer instead. The {entity['amount']} to {entity['recipient']} "
+                "that was due on 2026-07-28 is now cancelled and will not leave the "
+                "account."
             ),
+            "history_summary": "",
             "grounding": [
                 f"transfer.recipient={entity['recipient']}",
+                f"transfer.amount={entity['amount']}",
+                "transfer.due_on=2026-07-28",
                 "transfer.status=cancelled",
             ],
             "envelope": _success_envelope(
                 transfer={
                     "recipient": entity["recipient"],
                     "amount": entity["amount"],
+                    "due_on": "2026-07-28",
                     "status": "cancelled",
                 }
             ),
@@ -2904,113 +3114,34 @@ def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str,
     )
 
 
-def _long_context_tool_filler(
+def _long_context_context_pair(
     record_id: str,
     context_index: int,
-    entity: dict[str, str],
-    suffix: str,
+    decoy: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     """One tool-backed prior exchange: user, context call, its result, a summary.
 
-    The call id is context_{record_id}_{n} with loss=False, content=None and index 0,
-    exactly as validate_records demands of a non-target call, and the tool result
-    follows it immediately so the correlation check stays satisfied.
+    The call names the row's own target tool with the row's own arguments and returns
+    the row's own envelope, which is what keeps the whole chain inside the single
+    schema `training_tools_for_record` renders and stops the history contradicting the
+    loss-bearing turn. The id is context_{record_id}_{n} with loss=False, content=None
+    and index 0, exactly as validate_records demands of a non-target call, and the
+    tool result follows it immediately so the correlation check stays satisfied.
     """
 
     if context_index == 0:
-        user_text = f"While we are on it, show me the position across everything I hold {suffix}."
-        tool_name = "list_accounts"
-        arguments: dict[str, Any] = {}
-        envelope = _success_envelope(
-            accounts=[
-                {
-                    "name": "Everyday Checking",
-                    "kind": "current",
-                    "available": entity["amount"],
-                    "currency": "GBP",
-                    "status": "open",
-                },
-                {
-                    "name": "Reserve Savings",
-                    "kind": "savings",
-                    "available": "412.66",
-                    "currency": "GBP",
-                    "status": "open",
-                },
-                {
-                    "name": "Holiday Pot",
-                    "kind": "savings",
-                    "available": "85.10",
-                    "currency": "GBP",
-                    "status": "open",
-                },
-            ]
-        )
-        summary = (
-            f"You hold three accounts. Everyday Checking has {entity['amount']} "
-            "available, Reserve Savings sits behind it with a little over four hundred, "
-            "and the Holiday Pot carries the smallest balance of the three. All three "
-            "are open and none of them is overdrawn, so there is nothing needing "
-            "attention on the balances themselves."
-        )
+        user_text = "While we are on it, pull that up for me before we go any further."
+        summary = str(decoy["history_summary"])
     else:
-        user_text = "And put the recent card entries in front of me so I can see them together."
-        tool_name = "list_transactions"
-        arguments = {"limit": 6}
-        envelope = _success_envelope(
-            transactions=[
-                {
-                    "description": entity["merchant"],
-                    "amount": entity["amount"],
-                    "posted_at": "2026-07-14",
-                    "channel": "card",
-                    "status": "posted",
-                },
-                {
-                    "description": "Kingsford Transit",
-                    "amount": "18.40",
-                    "posted_at": "2026-07-12",
-                    "channel": "card",
-                    "status": "posted",
-                },
-                {
-                    "description": "Ravensworth Energy",
-                    "amount": "64.20",
-                    "posted_at": "2026-07-08",
-                    "channel": "direct debit",
-                    "status": "posted",
-                },
-                {
-                    "description": "Halewood Newsagent",
-                    "amount": "3.95",
-                    "posted_at": "2026-07-05",
-                    "channel": "card",
-                    "status": "posted",
-                },
-                {
-                    "description": "Bexley Lane Cafe",
-                    "amount": "11.75",
-                    "posted_at": "2026-07-03",
-                    "channel": "card",
-                    "status": "posted",
-                },
-                {
-                    "description": "Cranmore Water",
-                    "amount": "29.60",
-                    "posted_at": "2026-07-02",
-                    "channel": "direct debit",
-                    "status": "posted",
-                },
-            ]
-        )
+        user_text = "Can you run it once more? I want to be sure nothing moved since."
         summary = (
-            f"The six most recent entries begin with {entity['amount']} at "
-            f"{entity['merchant']} on the fourteenth, followed by Kingsford Transit, "
-            "Ravensworth Energy, Halewood Newsagent, Bexley Lane Cafe and Cranmore "
-            "Water. Two of those are collected by direct debit and the other four went "
-            "through on the card. Every one of them has settled."
+            "That comes back exactly as it did a moment ago, so nothing has moved on "
+            "the record while we have been talking."
         )
     call_id = f"context_{record_id}_{context_index}"
+    tool_name = str(decoy["tool"])
+    arguments = dict(decoy.get("context_arguments", decoy["arguments"]))
+    envelope = decoy.get("context_envelope", decoy["envelope"])
     return [
         _user(user_text),
         {
@@ -3022,7 +3153,7 @@ def _long_context_tool_filler(
                     "id": call_id,
                     "index": 0,
                     "type": "function",
-                    "function": {"name": tool_name, "arguments": dict(arguments)},
+                    "function": {"name": tool_name, "arguments": arguments},
                 }
             ],
         },
@@ -3034,16 +3165,20 @@ def _long_context_tool_filler(
 def _long_context_history(
     record_id: str,
     decoy: Mapping[str, Any],
-    entity: dict[str, str],
-    suffix: str,
     bundle: int,
 ) -> list[dict[str, Any]]:
     anchor_user, anchor_assistant = decoy["anchor"]
     messages = [_user(anchor_user), _assistant(anchor_assistant, loss=False)]
-    if bundle == _LONGCTX_TOOL_BACKED_BUNDLE:
-        messages.extend(_long_context_tool_filler(record_id, 0, entity, suffix))
-        messages.extend(_long_context_tool_filler(record_id, 1, entity, suffix))
-    for filler_index in _LONGCTX_HISTORY_BUNDLES[bundle]:
+    read_history = bool(decoy["read_history"])
+    if bundle == _LONGCTX_TOOL_BACKED_BUNDLE and read_history:
+        messages.extend(_long_context_context_pair(record_id, 0, decoy))
+        messages.extend(_long_context_context_pair(record_id, 1, decoy))
+        fillers = _LONGCTX_TIER_C_READ_FILLERS
+    elif bundle == _LONGCTX_TOOL_BACKED_BUNDLE:
+        fillers = _LONGCTX_TIER_C_WRITE_FILLERS
+    else:
+        fillers = _LONGCTX_HISTORY_BUNDLES[bundle]
+    for filler_index in fillers:
         filler_user, filler_assistant = _LONGCTX_PLAIN_FILLERS[filler_index]
         messages.extend([_user(filler_user), _assistant(filler_assistant, loss=False)])
     return messages
@@ -3114,12 +3249,36 @@ def _long_context_tool_fidelity(split: str) -> list[dict[str, Any]]:
                 tool_plan=[(decoy["tool"], dict(decoy["arguments"]))],
                 grounding_facts=decoy["grounding"],
                 path="multi_turn",
-                pre_messages=_long_context_history(record_id, decoy, entity, suffix, bundle),
+                pre_messages=_long_context_history(record_id, decoy, bundle),
                 tool_envelopes=[decoy["envelope"]],
             )
         )
+    _assert_long_context_contract_tools(records)
     _assert_long_context_render_budget(records)
     return records
+
+
+def _assert_long_context_contract_tools(records: Sequence[dict[str, Any]]) -> None:
+    """Every tool named anywhere in a row must be the one tool its contract exposes.
+
+    training_tools_for_record (scripts/retail_bank/cloud_train_tool_sft.py) renders
+    exactly the target tool's schema for a single-tool contract, so a history call to
+    any other tool would show the model calling something the prompt does not expose
+    -- which is the defect this curriculum exists to correct, demonstrated at
+    loss=False immediately before the loss-bearing turn.
+    """
+
+    offenders = []
+    for record in records:
+        target = str(record["expected"]["tool_calls"][0]["name"])
+        for message in record["messages"]:
+            for call in message.get("tool_calls") or ():
+                if str(call["function"]["name"]) != target:
+                    offenders.append((str(record["record_id"]), call["function"]["name"]))
+            if message.get("role") == "tool" and str(message["name"]) != target:
+                offenders.append((str(record["record_id"]), message["name"]))
+    if offenders:
+        raise ValueError(f"long-context rows name a tool outside their contract: {offenders}")
 
 
 def _assert_long_context_render_budget(records: Sequence[dict[str, Any]]) -> None:

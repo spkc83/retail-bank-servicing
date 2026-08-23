@@ -1133,23 +1133,25 @@ def _long_context_target_call(record: dict[str, Any]) -> dict[str, Any]:
 def _real_rendered_tokens(records: Sequence[dict[str, Any]]) -> list[int] | None:
     """Render exactly as the trainer does, or None when the tokenizer is unavailable."""
 
+    from transformers import AutoTokenizer
+
+    from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
+    from hello_slm.banking_tool_wire import ToolWireAdapter
+
+    spec = importlib.util.spec_from_file_location(
+        "cloud_train_tool_sft_for_length", LONG_CONTEXT_TRAINER_PATH
+    )
+    assert spec is not None and spec.loader is not None
+    trainer = importlib.util.module_from_spec(spec)
+    # The worker declares frozen dataclasses, which resolve their annotations
+    # through sys.modules, so the module has to be registered before it executes.
+    sys.modules[spec.name] = trainer
+    spec.loader.exec_module(trainer)
     try:
-        from transformers import AutoTokenizer
-
-        from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
-        from hello_slm.banking_tool_wire import ToolWireAdapter
-
-        spec = importlib.util.spec_from_file_location(
-            "cloud_train_tool_sft_for_length", LONG_CONTEXT_TRAINER_PATH
-        )
-        assert spec is not None and spec.loader is not None
-        trainer = importlib.util.module_from_spec(spec)
-        # The worker declares frozen dataclasses, which resolve their annotations
-        # through sys.modules, so the module has to be registered before it executes.
-        sys.modules[spec.name] = trainer
-        spec.loader.exec_module(trainer)
         tokenizer = AutoTokenizer.from_pretrained(LONG_CONTEXT_TOKENIZER, local_files_only=True)
-    except Exception:  # pragma: no cover - exercised only where the snapshot is absent
+    except OSError:  # pragma: no cover - only where the tokenizer snapshot is absent
+        # Narrow on purpose: a broken import or a renamed helper has to fail the test
+        # rather than quietly downgrade it to the proxy-only assertion.
         return None
 
     adapter = ToolWireAdapter(
@@ -1237,7 +1239,9 @@ def test_long_context_write_tool_selectors_are_stated_in_the_history() -> None:
             assert record["expected"]["generation_contract"]["entity_state"] == "resolved"
             checked += 1
 
-    assert checked == 4 * 4 * 5 + 9
+    train_write_rows = 4 * 4 * 5  # 4 write decoys x 4 phrasings x 5 history bundles
+    validation_write_rows = 9  # write-decoy entries in _LONGCTX_VALIDATION_PLAN
+    assert checked == train_write_rows + validation_write_rows
 
 
 def _long_context_current_index(record: dict[str, Any]) -> int:
@@ -1278,8 +1282,11 @@ def test_long_context_tool_call_ids_follow_the_stable_id_convention() -> None:
             ]
             tiers[len(context_ids)] += 1
 
-    # 20% of each split is the tier that carries two context tool-call pairs.
-    assert tiers == Counter({0: 160 + 20, 2: 40 + 4})
+    # Tier C carries two context tool-call pairs, but only for the six read decoys:
+    # a write decoy cannot repeat its own call in the history without performing the
+    # write twice, and calling anything else would break the contract-tool invariant.
+    # 24 train rows (6 read decoys x 4 phrasings) plus 3 validation rows qualify.
+    assert tiers == Counter({0: 224 - 27, 2: 27})
 
 
 def test_long_context_rows_sit_in_the_measured_defect_length_band() -> None:
@@ -1300,7 +1307,9 @@ def test_long_context_rows_sit_in_the_measured_defect_length_band() -> None:
     assert min(lengths) > 800
     assert max(lengths) < alignment_data.LONG_CONTEXT_MAX_RENDERED_TOKENS
     # The measured defect sits near 980 tokens, so the curriculum must reach past it.
-    assert sum(1 for length in lengths if length > 1100) >= 1
+    # 44 tier-C rows plus the longest tier-B rows clear 1100; pin the floor well above
+    # a single row so the assertion cannot pass on an accidental outlier.
+    assert sum(1 for length in lengths if length > 1100) >= 40
     for record, length in zip(rows, lengths, strict=True):
         floor, ceiling = alignment_data._long_context_rendered_token_bounds(record)
         assert floor <= length <= ceiling, record["record_id"]
@@ -1351,3 +1360,129 @@ def _long_context_final(record: dict[str, Any]) -> str:
         if message["role"] == "assistant" and not message.get("tool_calls"):
             return str(message["content"])
     raise AssertionError("missing final assistant message")
+
+
+def test_long_context_rows_never_name_a_tool_outside_their_contract() -> None:
+    # training_tools_for_record renders exactly the target tool's schema for a
+    # single-tool contract, so any other tool named in the row - including at
+    # loss=False in the history - shows the model calling something the prompt does
+    # not expose. That is the defect this curriculum exists to correct, so a row that
+    # demonstrates it in its own history teaches against itself.
+    splits, _report = build_servicing_alignment_splits()
+
+    offenders = []
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            target = record["expected"]["generation_contract"]["tool_names"][0]
+            for message in record["messages"]:
+                for call in message.get("tool_calls") or ():
+                    if call["function"]["name"] != target:
+                        offenders.append((record["record_id"], call["function"]["name"]))
+                if message["role"] == "tool" and message["name"] != target:
+                    offenders.append((record["record_id"], message["name"]))
+
+    assert offenders == []
+
+
+_LONG_CONTEXT_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+# Magnitude claims are banned outright rather than checked, because verifying "the
+# largest" needs the comparison the final is asserting; without them, grounding
+# reduces to "every number in the final is in the envelope".
+_LONG_CONTEXT_BANNED_COMPARATIVES = (
+    "largest",
+    "smallest",
+    "smaller",
+    "larger",
+    "biggest",
+    "most",
+    "least",
+    "fewer",
+)
+
+
+def _long_context_envelope(record: dict[str, Any]) -> dict[str, Any]:
+    for message in reversed(record["messages"]):
+        if message["role"] == "tool":
+            return dict(message["content"])
+    raise AssertionError(f"{record['record_id']} has no tool result")
+
+
+def test_long_context_finals_state_only_what_their_envelope_contains() -> None:
+    # These finals are loss-bearing. A final that asserts six transactions from a
+    # two-row envelope, or calls the larger balance the smaller one, trains exactly
+    # the ungrounded answering the runtime guard was added to stop.
+    splits, _report = build_servicing_alignment_splits()
+
+    ungrounded: list[tuple[str, str, str]] = []
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            final = _long_context_final(record)
+            envelope = _long_context_envelope(record)
+            blob = json.dumps(envelope, ensure_ascii=False)
+            result_lists = [
+                value for value in envelope["result"].values() if isinstance(value, list)
+            ]
+            for token in re.findall(r"\d+(?:\.\d+)?", final):
+                if token not in blob:
+                    ungrounded.append((record["record_id"], "digit", token))
+            for word in re.findall(r"[a-z]+", final.lower()):
+                count = _LONG_CONTEXT_NUMBER_WORDS.get(word)
+                if count is None:
+                    continue
+                # A spelled-out number must be the size of something the tool returned;
+                # "Six" escaped the digit rule in the first cut of this curriculum.
+                if not any(len(items) == count for items in result_lists):
+                    ungrounded.append((record["record_id"], "count", word))
+            for comparative in _LONG_CONTEXT_BANNED_COMPARATIVES:
+                if re.search(rf"\b{comparative}\b", final.lower()):
+                    ungrounded.append((record["record_id"], "comparative", comparative))
+
+    assert ungrounded == []
+
+
+def test_long_context_read_decoy_context_calls_reuse_their_own_result() -> None:
+    # The context pairs replay the row's own tool against its own envelope, so the
+    # history cannot contradict the loss-bearing turn that follows it.
+    splits, _report = build_servicing_alignment_splits()
+
+    checked = 0
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            results = [message for message in record["messages"] if message["role"] == "tool"]
+            if len(results) == 1:
+                continue
+            context_results, target_result = results[:-1], results[-1]
+            assert len(context_results) == 2, record["record_id"]
+            assert context_results[0]["content"] == context_results[1]["content"]
+            target_items = [
+                value
+                for value in target_result["content"]["result"].values()
+                if isinstance(value, list)
+            ]
+            context_items = [
+                value
+                for value in context_results[0]["content"]["result"].values()
+                if isinstance(value, list)
+            ]
+            # Either the identical envelope, or a strict prefix of it under a smaller
+            # limit - never a longer or contradicting list.
+            if target_items and context_items:
+                assert context_items[0] == target_items[0][: len(context_items[0])]
+            else:
+                assert context_results[0]["content"] == target_result["content"]
+            checked += 1
+
+    assert checked == 27
