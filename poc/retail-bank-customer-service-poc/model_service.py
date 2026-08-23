@@ -213,6 +213,7 @@ class ModelRuntime(Protocol):
         max_new_tokens: int,
         *,
         sample: bool = False,
+        prefill: str = "",
     ) -> str: ...
 
     def count_tokens(
@@ -390,7 +391,11 @@ class ConversationalBankingAgent:
                 turn_key=first_trace.prompt_sha256,
             )
 
-            def retry_pass(label: str, retry_system: dict[str, str]) -> tuple[ToolCall, ...]:
+            def retry_pass(
+                label: str,
+                retry_system: dict[str, str],
+                prefill: str = "",
+            ) -> tuple[ToolCall, ...]:
                 retry_context = select_token_budgeted_context(
                     retry_system,
                     current,
@@ -403,21 +408,31 @@ class ConversationalBankingAgent:
                     label,
                     retry_context,
                     serving_tools,
+                    prefill=prefill,
                 )
                 model_passes.append(retry_trace)
                 if not retry_output:
                     raise AgentProtocolError(
                         "model returned an empty response when a tool call was required"
                     )
-                return self.tool_adapter.parse_assistant(
-                    retry_output,
-                    turn_key=retry_trace.prompt_sha256,
-                )
+                try:
+                    return self.tool_adapter.parse_assistant(
+                        _close_tool_call(retry_output),
+                        turn_key=retry_trace.prompt_sha256,
+                    )
+                except AgentProtocolError:
+                    if not prefill:
+                        raise
+                    # A prefilled retry always carries an opening tag, so a model
+                    # that answered in prose instead produces an unparseable block.
+                    # Report it as the missing call it is, not as malformed JSON.
+                    return ()
 
             if not calls and routed_single_call:
                 calls = retry_pass(
                     "required_tool_retry_1",
                     _required_tool_retry_system(system, public_tools),
+                    _tool_call_prefill(public_tools),
                 )
                 if not calls:
                     raise AgentProtocolError(
@@ -433,6 +448,7 @@ class ConversationalBankingAgent:
                 calls = retry_pass(
                     "wrong_tool_retry_1",
                     _wrong_tool_retry_system(system, public_tools, wrong_name),
+                    _tool_call_prefill(public_tools),
                 )
                 if len(calls) == 1 and not _call_is_exposed(calls[0], public_tools):
                     raise AgentProtocolError(
@@ -831,6 +847,7 @@ class ConversationalBankingAgent:
         tools: list[dict[str, Any]] | None,
         *,
         sample: bool = False,
+        prefill: str = "",
     ) -> tuple[str, ModelPassTrace]:
         input_tokens = self.model.count_tokens(messages, tools)
         prompt_payload = json.dumps(
@@ -839,13 +856,14 @@ class ConversationalBankingAgent:
             sort_keys=True,
             separators=(",", ":"),
         )
-        # Only pass `sample` when true, so runtimes and test doubles that predate
-        # Best-of-N (and never opted into the keyword) keep working unmodified.
-        output = (
-            self.model.generate(messages, tools, MAX_NEW_TOKENS, sample=True)
-            if sample
-            else self.model.generate(messages, tools, MAX_NEW_TOKENS)
-        ).strip()
+        # Only pass `sample`/`prefill` when set, so runtimes and test doubles that
+        # predate them (and never opted into the keyword) keep working unmodified.
+        keywords: dict[str, Any] = {}
+        if sample:
+            keywords["sample"] = True
+        if prefill:
+            keywords["prefill"] = prefill
+        output = self.model.generate(messages, tools, MAX_NEW_TOKENS, **keywords).strip()
         metadata_provider = getattr(self.model, "runtime_metadata", None)
         metadata = metadata_provider() if callable(metadata_provider) else {}
         return output, ModelPassTrace(
@@ -1390,6 +1408,26 @@ def _requires_tool_call(
         and router_result.get("entity_resolution") in {"resolved", "not_required"}
         and len(public_tools) == 1
     )
+
+
+def _tool_call_prefill(public_tools: list[dict[str, Any]]) -> str:
+    """Open the tool call for the model so a retry cannot name a different tool.
+
+    The router has already chosen the single exposed tool; leaving only the
+    arguments to generate makes a hallucinated name structurally impossible
+    rather than something to catch afterwards.
+    """
+
+    name = str(public_tools[0]["function"]["name"])
+    return '<tool_call>\n{"name": "' + name + '", "arguments": '
+
+
+def _close_tool_call(output: str) -> str:
+    """A prefilled generation may stop after the JSON, before the closing tag."""
+
+    if "<tool_call>" in output and "</tool_call>" not in output:
+        return output + "\n</tool_call>"
+    return output
 
 
 def _call_is_exposed(call: ToolCall, public_tools: list[dict[str, Any]]) -> bool:

@@ -167,6 +167,7 @@ class LocalGraniteRuntime:
         max_new_tokens: int,
         *,
         sample: bool = False,
+        prefill: str = "",
     ) -> str:
         tokenizer, model, torch = self._required_components()
         if not messages or messages[0].get("role") != "system":
@@ -179,6 +180,10 @@ class LocalGraniteRuntime:
             tokenize=False,
             add_generation_prompt=True,
         )
+        # A prefill opens the assistant turn for the model: it continues from the
+        # given text instead of choosing how to start, so a routed retry cannot
+        # name a tool other than the one the router exposed.
+        rendered = f"{rendered}{prefill}" if prefill else rendered
         encoded = tokenizer(rendered, return_tensors="pt")
         device = _model_device(model)
         inputs = {
@@ -196,7 +201,8 @@ class LocalGraniteRuntime:
             output_ids = model.generate(**inputs, **generation_kwargs)
         prompt_width = int(inputs["input_ids"].shape[-1])
         new_ids = output_ids[0, prompt_width:]
-        return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+        completion = str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+        return f"{prefill}{completion}".strip() if prefill else completion
 
     def runtime_metadata(self) -> dict[str, str]:
         device = "unavailable" if self.model is None else str(_model_device(self.model))

@@ -188,6 +188,7 @@ def generate_text(
     max_new_tokens: int,
     *,
     sample: bool = False,
+    prefill: str = "",
 ) -> str:
     if tokenizer is None or model is None:
         raise RuntimeError("ZeroGPU model is unavailable")
@@ -202,6 +203,10 @@ def generate_text(
         tokenize=False,
         add_generation_prompt=True,
     )
+    # A prefill opens the assistant turn for the model: it continues from the given
+    # text instead of choosing how to start, so a routed retry cannot name a tool
+    # other than the one the router exposed.
+    rendered = f"{rendered}{prefill}" if prefill else rendered
     encoded = tokenizer(rendered, return_tensors="pt")
     inputs = {name: tensor.to(model.device) for name, tensor in encoded.items()}
     generation_kwargs = build_generation_kwargs(
@@ -213,4 +218,5 @@ def generate_text(
     with torch.inference_mode():
         output_ids = model.generate(**inputs, **generation_kwargs)
     new_ids = output_ids[0, inputs["input_ids"].shape[-1] :]
-    return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+    completion = str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
+    return f"{prefill}{completion}".strip() if prefill else completion
