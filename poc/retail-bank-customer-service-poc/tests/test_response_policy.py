@@ -407,6 +407,12 @@ def test_claims_attributed_to_the_conversation_are_not_retrieval_claims() -> Non
     assert not bypass.valid  # attribution never launders a credential claim
 
 
+# The runtime never calls the guard with an empty conversation: _complete_without_tools
+# passes the live turn list. Tests use this shape so a rule cannot pass only in a
+# shape production never produces.
+LIVE_TURN = ({"role": "user", "content": "I want to change my PIN."},)
+
+
 def test_credential_claims_are_rejected_whatever_the_evidence() -> None:
     """No published tool returns a PIN, so no evidence can ground knowing one."""
 
@@ -418,7 +424,8 @@ def test_credential_claims_are_rejected_whatever_the_evidence() -> None:
         "Your current PIN is 4821.",
         "Your PIN is on file as 4821.",
         "We have your passcode on file.",
-        "I checked and your account number is 12345678.",
+        "Your card's CVV: 321.",
+        "Your PIN ends in 21.",
     ):
         assert not validate_no_unsupported_action_claims(text, ()).valid, text
         assert not validate_no_unsupported_action_claims(text, evidence).valid, text
@@ -429,11 +436,60 @@ def test_credential_claims_are_rejected_whatever_the_evidence() -> None:
 
 def test_credential_refusals_and_safety_advice_stay_valid() -> None:
     for text in (
-        "I can not look up a PIN from this conversation. You can change it in a branch.",
+        "I can't look up a PIN from this conversation. You can change it in a branch.",
         "Never share your PIN with anyone, including Harborlight Bank staff.",
         "I do not have access to your PIN. Please call the number on the back of your card.",
     ):
-        assert validate_no_unsupported_action_claims(text, ()).valid, text
+        assert validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN).valid, text
+
+
+def test_a_safety_disclaimer_does_not_launder_a_disclosed_credential() -> None:
+    """The disclaimer does not unmake the disclosure; denial is tested per clause."""
+
+    for text in (
+        "Your PIN is 4821, but do not share it with anyone.",
+        "I have your PIN; never share it with anyone.",
+        "I found the current PIN in the account information, but I'm not able to change it.",
+        "Your current PIN is 4821. Do not share it.",
+    ):
+        result = validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN)
+        assert not result.valid, text
+
+
+def test_digit_free_retrieval_claims_are_rejected_on_a_live_conversation() -> None:
+    """A claim stating no number has nothing to check against, so it is not grounded."""
+
+    for text in (
+        "I looked up the transfer to River Consulting for you.",
+        "I checked your account and you have two cards.",
+        "Your account shows two open service cases.",
+        "We found your account and it is active.",
+        "I pulled up your standing order to the utility company.",
+    ):
+        result = validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN)
+        assert not result.valid, text
+
+
+def test_a_trailing_disclaimer_does_not_ground_a_retrieval_claim() -> None:
+    validation = validate_no_unsupported_action_claims(
+        "I checked your account and the balance is 1,240.00. Nothing has changed yet.",
+        (),
+        conversation=LIVE_TURN,
+    )
+
+    assert not validation.valid
+
+
+def test_stated_values_are_matched_as_whole_tokens_not_substrings() -> None:
+    conversation = ({"role": "assistant", "content": "Your card ending 6101 is active."},)
+
+    validation = validate_no_unsupported_action_claims(
+        "I checked your account and you have 1 card and 0 disputes.",
+        (),
+        conversation=conversation,
+    )
+
+    assert not validation.valid
 
 
 def test_retrieval_claims_split_across_sentences_are_still_rejected() -> None:
@@ -445,7 +501,8 @@ def test_retrieval_claims_split_across_sentences_are_still_rejected() -> None:
         "We found your account.",
         "I looked up the standing order to River Consulting.",
     ):
-        assert not validate_no_unsupported_action_claims(text, ()).valid, text
+        result = validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN)
+        assert not result.valid, text
 
 
 def test_values_already_stated_in_the_dialogue_are_not_fabrications() -> None:

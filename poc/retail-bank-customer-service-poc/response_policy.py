@@ -262,27 +262,27 @@ COMPLETED_ACTION_CLAIMS = re.compile(
 # can ever ground a claim to know one -- this rule runs before the evidence check.
 # Observed on the released v8 adapter, verbatim and reproducibly, with no tool call
 # in the turn: "I found the current PIN in the account information."
-_CREDENTIAL_NOUNS = (
-    r"(?:pin|passcode|password|security code|cvv|cvc|"
-    r"full (?:account|card) number|account number)"
-)
+_CREDENTIAL_NOUNS = r"(?:pin|passcode|password|security code|cvv|cvc|full (?:account|card) number)"
 CREDENTIAL_CLAIMS = re.compile(
     rf"(?:\b(?:I|we)(?:'ve| have)?\s+(?:found|have|know|see|checked|retrieved|located|"
-    rf"pulled up|pulled|looked up|verified|confirmed)\b[^.!?]*?\b{_CREDENTIAL_NOUNS}\b"
-    rf"|\b{_CREDENTIAL_NOUNS}\b[^.!?]*?\b(?:is|was|are)\b\s*(?:on file|\d))",
+    rf"pulled up|pulled|looked up|verified|confirmed)\b[^,;]*?\b{_CREDENTIAL_NOUNS}\b"
+    rf"|\b{_CREDENTIAL_NOUNS}\b[^,;]*?(?:\b(?:is|was|are|ends? in)\b|:)\s*(?:on file|\d))",
     re.IGNORECASE,
 )
 # Refusals and safety advice name the same nouns and must stay valid:
 # "I can't look up a PIN", "never share your PIN", "you can change your PIN in branch".
+# Tested per CLAUSE, never per sentence: "Your PIN is 4821, but do not share it."
+# must still be rejected -- the disclaimer does not unmake the disclosure.
 _DENIAL = re.compile(
-    r"(?:\bn't\b|\bnot\b|\bnothing\b|\bnever\b|\bcannot\b|\bcan not\b|\bunable\b|"
-    r"\bno access\b|\bdo not\b|\bwill not\b|\bonly asked\b|n’t\b)",
+    r"(?:n['’]t\b|\bnot\b|\bnothing\b|\bnever\b|\bcannot\b|\bcan not\b|"
+    r"\bunable\b|\bno access\b|\bdo not\b|\bwill not\b|\bonly asked\b)",
     re.IGNORECASE,
 )
 
 # Beyond credentials, a turn with no tool evidence must not claim to have READ
-# account data either. Checked over a two-sentence window because the claim and
-# the datum are routinely split ("I checked. Your balance is 1,240.").
+# account data either. The datum is routinely a sentence away from the claim
+# ("I checked. Your balance is 1,240."), so the noun is sought over a two-sentence
+# window while the denial test stays on the claim's own clause.
 RETRIEVAL_CLAIM_VERBS = re.compile(
     r"(?:\b(?:I|we)(?:'ve| have)?\s+(?:found|checked|looked up|pulled up|pulled|located|"
     r"retrieved|verified|confirmed|see)\b"
@@ -298,9 +298,8 @@ ACCOUNT_DATA_NOUNS = re.compile(
     re.IGNORECASE,
 )
 # Naming the dialogue as the source is legitimate grounding: the shipped corpus
-# clarifies with "I found two cards in our conversation." That is a reference to
-# what was already said, not a claim to have read a backend record. It is NOT an
-# escape hatch for credentials -- CREDENTIAL_CLAIMS is checked first and ignores it.
+# clarifies with "I found two cards in our conversation." It is NOT an escape hatch
+# for credentials -- CREDENTIAL_CLAIMS is checked first and ignores it.
 CONVERSATION_ATTRIBUTION = re.compile(
     r"\b(?:in (?:our|this) conversation|earlier in (?:our|this) (?:chat|conversation)|"
     r"you (?:mentioned|said|shared|told me)|from your (?:message|last message)|"
@@ -308,7 +307,14 @@ CONVERSATION_ATTRIBUTION = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_CLAIM_CLAUSE_SPLIT = re.compile(r"[;,]|\bbut\b|\bthough\b|\bhowever\b", re.IGNORECASE)
 _CLAIM_DIGITS = re.compile(r"\d[\d,.]*\d|\d")
+
+
+def _digit_tokens(text: str) -> set[str]:
+    """Numbers as whole tokens, so "1" does not match inside "6101"."""
+
+    return {token.strip(",.") for token in _CLAIM_DIGITS.findall(text) if token.strip(",.")}
 
 
 def _conversation_text(conversation: Sequence[Mapping[str, Any]]) -> str:
@@ -328,19 +334,20 @@ def _conversation_text(conversation: Sequence[Mapping[str, Any]]) -> str:
     return " ".join(parts)
 
 
-def _values_are_traceable(window: str, conversation_text: str) -> bool:
-    """Every number the claim states must already appear in the dialogue.
+def _values_are_traceable(window: str, conversation: Sequence[Mapping[str, Any]]) -> bool:
+    """Every number the claim states must already appear in the dialogue, as a token.
 
     This is what separates the shipped clarification "I found Harbor Everyday Debit
     ending in 6101 and Harbor Everyday Credit ending in 8101." -- whose last-4s were
-    listed in the turn before -- from an invented "Your balance is 1,240.00."
+    listed the turn before -- from an invented "Your balance is 1,240.00.".
+    A claim that states no number at all is NOT traceable: there is nothing to check
+    it against, so it stands or falls on the attribution test instead.
     """
 
-    digits = [d.strip(",.") for d in _CLAIM_DIGITS.findall(window)]
-    digits = [d for d in digits if d]
-    if not digits:
-        return bool(conversation_text.strip())
-    return all(digit in conversation_text for digit in digits)
+    stated = _digit_tokens(window)
+    if not stated:
+        return False
+    return stated <= _digit_tokens(_conversation_text(conversation))
 
 
 def validate_no_unsupported_action_claims(
@@ -363,17 +370,18 @@ def validate_no_unsupported_action_claims(
     if not isinstance(answer, str):
         return GroundingValidation(False, ("final answer is not text",))
     for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
-        if _DENIAL.search(sentence) is not None:
-            continue
-        credential = CREDENTIAL_CLAIMS.search(sentence)
-        if credential is not None:
-            return GroundingValidation(
-                False,
-                (
-                    f"answer claims knowledge of a credential ({credential.group(0)!r}); "
-                    "no tool can supply one",
-                ),
-            )
+        for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):
+            if _DENIAL.search(clause) is not None:
+                continue
+            credential = CREDENTIAL_CLAIMS.search(clause)
+            if credential is not None:
+                return GroundingValidation(
+                    False,
+                    (
+                        f"answer claims knowledge of a credential "
+                        f"({credential.group(0)!r}); no tool can supply one",
+                    ),
+                )
     has_prior_tool_evidence = any(
         isinstance(message, Mapping) and message.get("role") == "tool"
         for message in conversation
@@ -388,26 +396,27 @@ def validate_no_unsupported_action_claims(
         )
     sentences = _CLAIM_SENTENCE_SPLIT.split(answer)
     for index, sentence in enumerate(sentences):
-        verb = RETRIEVAL_CLAIM_VERBS.search(sentence)
-        if verb is None:
-            continue
         window = " ".join(sentences[index : index + 2])
-        if _DENIAL.search(window) is not None:
-            continue
-        noun = ACCOUNT_DATA_NOUNS.search(window)
-        if noun is None:
-            continue
-        if CONVERSATION_ATTRIBUTION.search(window) is not None:
-            continue
-        if _values_are_traceable(window, _conversation_text(conversation)):
-            continue
-        return GroundingValidation(
-            False,
-            (
-                f"answer claims retrieved account data ({verb.group(0)!r} \u2026 "
-                f"{noun.group(0)!r}) without tool evidence",
-            ),
-        )
+        for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):
+            verb = RETRIEVAL_CLAIM_VERBS.search(clause)
+            if verb is None:
+                continue
+            if _DENIAL.search(clause) is not None:
+                continue
+            noun = ACCOUNT_DATA_NOUNS.search(window)
+            if noun is None:
+                continue
+            if CONVERSATION_ATTRIBUTION.search(window) is not None:
+                continue
+            if _values_are_traceable(window, conversation):
+                continue
+            return GroundingValidation(
+                False,
+                (
+                    f"answer claims retrieved account data ({verb.group(0)!r} \u2026 "
+                    f"{noun.group(0)!r}) without tool evidence",
+                ),
+            )
     return GroundingValidation(True, ())
 
 
