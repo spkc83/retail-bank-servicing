@@ -587,3 +587,34 @@ fails immediately; a second miss raises `model selected unsupported tool: <name>
 critic-gated. Re-probe on scratch2: the retry fired and the adapter hallucinated a second nonexistent tool
 (`get_address_history`), so S5 still falls back — scratch2's long-context tool fidelity is a model defect the runtime cannot
 paper over. Remaining choices: (b) or (c).
+
+## v10 long-context tool fidelity (2026-08-23)
+
+User picked (b) plus three runtime items. Delivered so far:
+
+1. **Zero-tool claim guard** (`8c6f8e8` → `130e9f9` → `a42add3` → `3b75b4b`, three adversarial rounds). A turn with no tool
+   evidence may not claim to have retrieved account data; credentials are absolute (no tool returns a PIN, so no evidence can
+   ground one) and survive attribution, disclaimers and clause splitting; stated numbers must be traceable to the dialogue.
+   Motivated by the live v8 adapter answering "I want to change my PIN." with "I found the current PIN in the account
+   information." — zero tools called, reproduced verbatim 2/2. Zero rejections over all 4,079 finals in all six shipped splits.
+   Also wired into `run_policy_turn`, where `validate_policy_answer` accepts an invented credential and only the absence of a
+   PIN policy chunk was preventing exposure.
+2. **Long-context curriculum** (`048da40` + `4445797`): `_long_context_tool_fidelity(split)` adds 200 train / 24 validation rows,
+   10 decoy→correct-tool pairs covering all nine tools, 818–1311 rendered tokens (p50 1000, straddling the ~980 defect point).
+   Review caught two blockers before any spend: 44 tier-C rows demonstrated out-of-contract tool calls (the defect itself), and
+   ~112 finals contradicted their envelope. Both fixed with build-time invariants and tests; frozen artifacts byte-identical.
+   Dataset revision `@e9d67b3d` (a first publish attempt stripped the teacher realizations — caught by diffing the regenerated
+   tree against git, restored, republished).
+3. **v10 run** `6a8b2c327c5c7dd379236389`: 30m46s ⇒ **$1.41**, 2000 steps, epoch 2.31, train_loss 0.294. Dev gate 1.0/1.0/1.0,
+   shadow 1.0/1.0/1.0. Published `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38a`. Long-session sweep: pending.
+4. **Constrained tool-call prefill** (`34b7976` + `e4baa5e`): routed retries open the assistant turn with
+   `<tool_call>\n{"name": "<routed tool>", "arguments":` so the retry supplies arguments, not a name. Token-level review found
+   the original trailing space was off-distribution (the tokenizer merges the space into the first token of every value except a
+   bare number), and that traces were crediting the model with injected text. Both fixed. Note: a hallucinated second name is
+   **detected and named**, not structurally impossible — a completion that opens its own tag is parsed as written.
+5. **Space bf16**: no-op. `zero_gpu_runtime.py` has no quantization at all and `MODEL_DTYPE` already defaults to bf16; the nf4
+   path is local-only (12 GB TITAN V). The earlier "drop 4-bit on the Space" recommendation was wrong.
+
+Measured latency (local demo, v8): median 9 s/turn, two model passes, `corr(latency, input_tokens) = -0.29` and
+`corr(latency, answer length) = +0.67` — decode-bound, so prefix/KV caching is not worth building. Remaining speed levers are
+streaming status and speculative decoding, both Space-side.
