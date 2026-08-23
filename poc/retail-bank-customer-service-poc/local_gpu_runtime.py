@@ -201,8 +201,9 @@ class LocalGraniteRuntime:
             output_ids = model.generate(**inputs, **generation_kwargs)
         prompt_width = int(inputs["input_ids"].shape[-1])
         new_ids = output_ids[0, prompt_width:]
-        completion = str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
-        return f"{prefill}{completion}".strip() if prefill else completion
+        # Return only what the model produced; the caller joins it with the
+        # prefill for parsing, so traces never attribute injected text to the model.
+        return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
 
     def runtime_metadata(self) -> dict[str, str]:
         device = "unavailable" if self.model is None else str(_model_device(self.model))

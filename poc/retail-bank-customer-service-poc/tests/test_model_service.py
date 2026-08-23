@@ -50,9 +50,8 @@ class RecordingModel:
                 "prefill": prefill,
             }
         )
-        completion = self.outputs.pop(0)
-        # Mirror the real runtimes: a prefilled generation returns prefill + completion.
-        return f"{prefill}{completion}" if prefill else completion
+        # Mirror the real runtimes: they return only what the model produced.
+        return self.outputs.pop(0)
 
     def count_tokens(
         self,
@@ -421,13 +420,14 @@ def test_v4_execute_rejects_repeated_prose_without_executing_tool(
         "base",
         "required_tool_retry_1",
     ]
-    assert failure.value.model_passes[0].raw_output == "I replaced that card."
-    # The retry trace shows the prefix the model was given plus what it wrote, so
-    # diagnostics reflect exactly what was in context.
-    retry_output = failure.value.model_passes[1].raw_output
-    assert retry_output.startswith("<tool_call>")
-    assert '"name": "replace_card"' in retry_output
-    assert retry_output.endswith("The replacement is complete.")
+    assert [trace.raw_output for trace in failure.value.model_passes] == [
+        "I replaced that card.",
+        "The replacement is complete.",
+    ]
+    # The injected text is recorded separately, so the trace never credits the
+    # model with the tool name we handed it.
+    assert failure.value.model_passes[0].prefill == ""
+    assert '"name": "replace_card"' in failure.value.model_passes[1].prefill
     assert model.outputs == []
 
 
@@ -533,7 +533,99 @@ def test_a_routed_retry_prefills_the_tool_name_so_it_cannot_be_invented() -> Non
     prefill = model.calls[1].get("prefill", "")
     assert prefill.startswith("<tool_call>")
     assert '"name": "list_transactions"' in prefill
-    assert prefill.rstrip().endswith('"arguments":')
+    # No trailing space: the tokenizer merges the space into the first token of
+    # every argument value except a bare number, so ending on '":' is the only
+    # on-distribution prefix. Asserted exactly, not with rstrip.
+    assert prefill.endswith('"arguments":')
+    assert result.model_passes[1].prefill == prefill
+    assert result.model_passes[1].raw_output == '{"limit": 5}}\n</tool_call>' 
+
+
+def test_a_prefilled_retry_that_adds_prose_after_the_call_keeps_the_call() -> None:
+    """The closing tag goes at the end of the JSON, so trailing prose is dropped."""
+
+    model = RecordingModel(
+        [
+            "I will look that up for you.",
+            '{"limit": 5}} I will fetch those now.',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my five most recent transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+    assert result.tool_calls[0].arguments == {"limit": 5}
+
+
+def test_a_retry_that_reopens_its_own_tag_is_parsed_as_written() -> None:
+    """A model that ignores the prefill and writes a whole call is not nested."""
+
+    model = RecordingModel(
+        [
+            "I will look that up for you.",
+            '<tool_call>\n{"name": "list_transactions", "arguments": {"limit": 5}}\n</tool_call>',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my five most recent transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+
+
+def test_a_write_tool_is_never_executed_when_a_prefilled_retry_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = RecordingModel(
+        [
+            '<tool_call>{"name": "report_lost_card", "arguments": {}}</tool_call>',
+            "I am not able to do that.",
+        ]
+    )
+    registry = bank()
+    executed: list[str] = []
+
+    def record_execution(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        executed.append(str(args[2]))
+        return {"unexpected": True}
+
+    monkeypatch.setattr(registry, "execute", record_execution)
+    agent = ConversationalBankingAgent(bank=registry, model=model)
+
+    with pytest.raises(AgentExecutionError):
+        agent.run_turn(
+            username="alex.demo",
+            session_hash="session",
+            message="Replace the card ending in 4821.",
+            conversation=[],
+            router_result=v4_router_guidance(
+                action="execute_tool",
+                fine_intent="replace_card",
+            ),
+        )
+
+    assert executed == []
 
 
 def test_a_prefilled_retry_that_omits_the_closing_tag_still_parses() -> None:

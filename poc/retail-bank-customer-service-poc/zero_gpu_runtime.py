@@ -218,5 +218,6 @@ def generate_text(
     with torch.inference_mode():
         output_ids = model.generate(**inputs, **generation_kwargs)
     new_ids = output_ids[0, inputs["input_ids"].shape[-1] :]
-    completion = str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()
-    return f"{prefill}{completion}".strip() if prefill else completion
+    # Return only what the model produced; the caller joins it with the prefill
+    # for parsing, so traces never attribute injected text to the model.
+    return str(tokenizer.decode(new_ids, skip_special_tokens=True)).strip()

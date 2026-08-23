@@ -178,6 +178,9 @@ class ModelPassTrace:
     output_chars: int
     output_sha256: str
     raw_output: str
+    # Text injected before generation, kept apart from raw_output so a trace can
+    # never make the model look like it produced what we handed it.
+    prefill: str
     runtime_device: str
     cuda_device_name: str
 
@@ -415,9 +418,16 @@ class ConversationalBankingAgent:
                     raise AgentProtocolError(
                         "model returned an empty response when a tool call was required"
                     )
+                # A model that opens its own tag despite the prefill wrote a whole
+                # call; parse that rather than nesting it inside the injected one.
+                combined = (
+                    retry_output
+                    if retry_output.lstrip().startswith("<tool_call>")
+                    else f"{prefill}{retry_output}"
+                )
                 try:
                     return self.tool_adapter.parse_assistant(
-                        _close_tool_call(retry_output),
+                        _close_tool_call(combined),
                         turn_key=retry_trace.prompt_sha256,
                     )
                 except AgentProtocolError:
@@ -850,8 +860,14 @@ class ConversationalBankingAgent:
         prefill: str = "",
     ) -> tuple[str, ModelPassTrace]:
         input_tokens = self.model.count_tokens(messages, tools)
+        prompt_content: dict[str, Any] = {"messages": messages, "tools": tools}
+        if prefill:
+            # The prefill is part of the prompt actually sent, so it belongs in the
+            # digest and the token count; omitted when empty to keep older hashes.
+            prompt_content["prefill"] = prefill
+            input_tokens += len(prefill) // 4
         prompt_payload = json.dumps(
-            {"messages": messages, "tools": tools},
+            prompt_content,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -873,6 +889,7 @@ class ConversationalBankingAgent:
             output_chars=len(output),
             output_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
             raw_output=output,
+            prefill=prefill,
             runtime_device=str(metadata.get("runtime_device", "unavailable")),
             cuda_device_name=str(metadata.get("cuda_device_name", "unavailable")),
         )
@@ -1419,15 +1436,48 @@ def _tool_call_prefill(public_tools: list[dict[str, Any]]) -> str:
     """
 
     name = str(public_tools[0]["function"]["name"])
-    return '<tool_call>\n{"name": "' + name + '", "arguments": '
+    # No trailing space after the colon. The tokenizer merges the space into the
+    # first token of every argument value except a bare number ('": {"' is one
+    # token pair), so ending on '":' keeps the prefix on-distribution; ending on
+    # '": ' puts the model in the one state that predicts a digit, which is never
+    # a valid arguments value.
+    return '<tool_call>\n{"name": "' + name + '", "arguments":'
 
 
 def _close_tool_call(output: str) -> str:
-    """A prefilled generation may stop after the JSON, before the closing tag."""
+    """Close a prefilled call that stopped after the JSON, before the tag.
 
-    if "<tool_call>" in output and "</tool_call>" not in output:
-        return output + "\n</tool_call>"
-    return output
+    The tag is placed at the end of the first balanced JSON object rather than at
+    the end of the text, so trailing prose is left outside the call instead of
+    being swallowed into it. Anything after the tag is kept, so a second call the
+    model appended still reaches the arity check rather than being dropped.
+    """
+
+    if "<tool_call>" not in output or "</tool_call>" in output:
+        return output
+    start = output.index("<tool_call>") + len("<tool_call>")
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(output)):
+        character = output[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return output[: index + 1] + "\n</tool_call>" + output[index + 1 :]
+    return output + "\n</tool_call>"
 
 
 def _call_is_exposed(call: ToolCall, public_tools: list[dict[str, Any]]) -> bool:
@@ -1455,7 +1505,9 @@ def _wrong_tool_retry_system(
         "content": (
             f"{system['content']}\n\nWRONG TOOL: {wrong_name} is not an available tool "
             f"for this request. Call {tool_name}, the only available tool, with its "
-            "documented arguments. Do not describe, simulate, or claim the result before "
+            "documented arguments. The tool-call block has already been opened for you "
+            "and the tool name is already written: continue with the arguments object "
+            "only. Do not describe, simulate, or claim the result before "
             "the application returns the tool result."
         ),
     }
@@ -1471,7 +1523,9 @@ def _required_tool_retry_system(
         "content": (
             f"{system['content']}\n\nTOOL CALL REQUIRED: A tool call is required before "
             f"answering this customer-specific request. Call {tool_name}, the only "
-            "available tool. Do not describe, simulate, or claim the result before "
+            "available tool. The tool-call block has already been opened for you and "
+            "the tool name is already written: continue with the arguments object "
+            "only. Do not describe, simulate, or claim the result before "
             "the application returns the tool result."
         ),
     }
