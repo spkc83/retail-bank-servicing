@@ -568,6 +568,33 @@ def test_a_prefilled_retry_that_adds_prose_after_the_call_keeps_the_call() -> No
     assert result.tool_calls[0].arguments == {"limit": 5}
 
 
+def test_a_retry_that_only_echoes_the_tag_still_continues_the_prefill() -> None:
+    """Echoing the tag it just saw is not writing a call; the injected name stands."""
+
+    model = RecordingModel(
+        [
+            "I will look that up for you.",
+            '<tool_call>{"limit": 5}}',
+            "Here are your five most recent transactions.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="Show my five most recent transactions.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="execute_tool",
+            fine_intent="view_transactions",
+        ),
+    )
+
+    assert [call.name for call in result.tool_calls] == ["list_transactions"]
+    assert result.tool_calls[0].arguments == {"limit": 5}
+
+
 def test_a_retry_that_reopens_its_own_tag_is_parsed_as_written() -> None:
     """A model that ignores the prefill and writes a whole call is not nested."""
 

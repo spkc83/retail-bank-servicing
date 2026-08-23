@@ -412,6 +412,18 @@ def visible_conversation(
     return visible
 
 
+def _rendered_prefill(prefill: str) -> str:
+    """Show text injected before generation, so a trace never credits it to the model.
+
+    Tolerates a trace object without the field: this runs on the error path, where a
+    renderer crash would replace a real diagnostic with a rendering failure.
+    """
+
+    if not prefill:
+        return ""
+    return f"prefilled with:\n\n```text\n{prefill}\n```\n\n"
+
+
 def render_local_diagnostics(
     *,
     route: dict[str, Any],
@@ -455,7 +467,8 @@ def render_local_diagnostics(
                 f"- `{trace.label}` — input tokens `{trace.input_tokens}`, prompt SHA-256 "
                 f"`{trace.prompt_sha256}`, output SHA-256 `{trace.output_sha256}`, "
                 f"runtime `{trace.runtime_device}`, CUDA `{trace.cuda_device_name}`\n\n"
-                f"```text\n{trace.raw_output}\n```"
+                + _rendered_prefill(getattr(trace, "prefill", ""))
+                + f"```text\n{trace.raw_output}\n```"
             )
             for trace in model_passes
         )

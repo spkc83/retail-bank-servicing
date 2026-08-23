@@ -627,6 +627,18 @@ def _classifier_error_route(failure_type: str) -> dict[str, Any]:
     return route
 
 
+def _rendered_prefill(prefill: str) -> str:
+    """Show text injected before generation, so a trace never credits it to the model.
+
+    Tolerates a trace object without the field: this runs on the error path, where a
+    renderer crash would replace a real diagnostic with a rendering failure.
+    """
+
+    if not prefill:
+        return ""
+    return f"Prefilled with: <code>{html.escape(prefill)}</code>\n"
+
+
 def _render_diagnostics(
     route: dict[str, Any],
     calls: tuple[ToolCall, ...],
@@ -680,7 +692,8 @@ def _render_diagnostics(
                 f"`{item.output_chars}`, raw output SHA-256 `{item.output_sha256}`; "
                 f"Runtime device: `{item.runtime_device}`; CUDA device name: "
                 f"`{item.cuda_device_name}`\n"
-                f"<details><summary>Show {item.label} raw output</summary>"
+                + _rendered_prefill(getattr(item, "prefill", ""))
+                + f"<details><summary>Show {item.label} raw output</summary>"
                 f"<pre><code>{html.escape(item.raw_output)}</code></pre></details>"
             )
             for item in model_passes

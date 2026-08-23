@@ -418,13 +418,14 @@ class ConversationalBankingAgent:
                     raise AgentProtocolError(
                         "model returned an empty response when a tool call was required"
                     )
-                # A model that opens its own tag despite the prefill wrote a whole
-                # call; parse that rather than nesting it inside the injected one.
-                combined = (
-                    retry_output
-                    if retry_output.lstrip().startswith("<tool_call>")
-                    else f"{prefill}{retry_output}"
-                )
+                # A model that opens its own tag AND names a tool wrote a whole call;
+                # parse that rather than nesting it inside the injected one. A model
+                # that merely echoes the tag it just saw, with no name, is still
+                # continuing the prefill -- drop the echo and join.
+                if _COMPLETION_OPENS_ITS_OWN_CALL.search(retry_output) is not None:
+                    combined = retry_output
+                else:
+                    combined = f"{prefill}{_ECHOED_TOOL_CALL_TAG.sub('', retry_output, count=1)}"
                 try:
                     return self.tool_adapter.parse_assistant(
                         _close_tool_call(combined),
@@ -1427,12 +1428,19 @@ def _requires_tool_call(
     )
 
 
+# A completion that opens a block and names a tool wrote its own call; one that
+# only echoes the tag is still continuing ours.
+_COMPLETION_OPENS_ITS_OWN_CALL = re.compile(r'^\s*<tool_call>\s*\{[^{}]*"name"')
+_ECHOED_TOOL_CALL_TAG = re.compile(r"^\s*<tool_call>\s*")
+
+
 def _tool_call_prefill(public_tools: list[dict[str, Any]]) -> str:
-    """Open the tool call for the model so a retry cannot name a different tool.
+    """Open the tool call for the model so a retry need not choose a name.
 
     The router has already chosen the single exposed tool; leaving only the
-    arguments to generate makes a hallucinated name structurally impossible
-    rather than something to catch afterwards.
+    arguments to generate means a name cannot be invented *while continuing the
+    prefill*. A completion that opens its own block can still name a different
+    tool -- that is detected and reported by name, not prevented.
     """
 
     name = str(public_tools[0]["function"]["name"])
