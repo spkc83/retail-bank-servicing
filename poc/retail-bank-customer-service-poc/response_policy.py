@@ -266,7 +266,7 @@ _CREDENTIAL_NOUNS = r"(?:pin|passcode|password|security code|cvv|cvc|full (?:acc
 CREDENTIAL_CLAIMS = re.compile(
     rf"(?:\b(?:I|we)(?:'ve| have)?\s+(?:found|have|know|see|checked|retrieved|located|"
     rf"pulled up|pulled|looked up|verified|confirmed)\b[^,;]*?\b{_CREDENTIAL_NOUNS}\b"
-    rf"|\b{_CREDENTIAL_NOUNS}\b[^,;]*?(?:\b(?:is|was|are|ends? in)\b|:)\s*(?:on file|\d))",
+    rf"|\b{_CREDENTIAL_NOUNS}\b[^.!?]*?(?:\b(?:is|was|are|ends? in)\b|[:,])\s*(?:on file|\d))",
     re.IGNORECASE,
 )
 # Refusals and safety advice name the same nouns and must stay valid:
@@ -309,6 +309,27 @@ CONVERSATION_ATTRIBUTION = re.compile(
 _CLAIM_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _CLAIM_CLAUSE_SPLIT = re.compile(r"[;,]|\bbut\b|\bthough\b|\bhowever\b", re.IGNORECASE)
 _CLAIM_DIGITS = re.compile(r"\d[\d,.]*\d|\d")
+
+
+def _clauses_with_spans(sentence: str) -> list[tuple[int, int, str]]:
+    """Clause spans, so a denial can be tested against the clause a claim sits in."""
+
+    spans: list[tuple[int, int, str]] = []
+    cursor = 0
+    for separator in _CLAIM_CLAUSE_SPLIT.finditer(sentence):
+        spans.append((cursor, separator.start(), sentence[cursor : separator.start()]))
+        cursor = separator.end()
+    spans.append((cursor, len(sentence), sentence[cursor:]))
+    return spans
+
+
+def _claim_is_denied(sentence: str, position: int) -> bool:
+    """True when the clause containing ``position`` denies the claim."""
+
+    for start, end, clause in _clauses_with_spans(sentence):
+        if start <= position < end:
+            return _DENIAL.search(clause) is not None
+    return _DENIAL.search(sentence) is not None
 
 
 def _digit_tokens(text: str) -> set[str]:
@@ -370,18 +391,16 @@ def validate_no_unsupported_action_claims(
     if not isinstance(answer, str):
         return GroundingValidation(False, ("final answer is not text",))
     for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
-        for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):
-            if _DENIAL.search(clause) is not None:
+        for credential in CREDENTIAL_CLAIMS.finditer(sentence):
+            if _claim_is_denied(sentence, credential.start()):
                 continue
-            credential = CREDENTIAL_CLAIMS.search(clause)
-            if credential is not None:
-                return GroundingValidation(
-                    False,
-                    (
-                        f"answer claims knowledge of a credential "
-                        f"({credential.group(0)!r}); no tool can supply one",
-                    ),
-                )
+            return GroundingValidation(
+                False,
+                (
+                    f"answer claims knowledge of a credential "
+                    f"({credential.group(0)!r}); no tool can supply one",
+                ),
+            )
     has_prior_tool_evidence = any(
         isinstance(message, Mapping) and message.get("role") == "tool"
         for message in conversation
@@ -406,9 +425,13 @@ def validate_no_unsupported_action_claims(
             noun = ACCOUNT_DATA_NOUNS.search(window)
             if noun is None:
                 continue
-            if CONVERSATION_ATTRIBUTION.search(window) is not None:
-                continue
-            if _values_are_traceable(window, conversation):
+            stated = _digit_tokens(window)
+            if stated:
+                # Numbers decide it: "as you mentioned" cannot ground a value the
+                # dialogue never contained.
+                if stated <= _digit_tokens(_conversation_text(conversation)):
+                    continue
+            elif CONVERSATION_ATTRIBUTION.search(window) is not None:
                 continue
             return GroundingValidation(
                 False,

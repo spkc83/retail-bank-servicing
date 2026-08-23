@@ -456,6 +456,27 @@ def test_a_safety_disclaimer_does_not_launder_a_disclosed_credential() -> None:
         assert not result.valid, text
 
 
+def test_commas_do_not_split_a_credential_from_its_value() -> None:
+    for text in (
+        "The PIN, 4821, is on your account.",
+        "Your PIN, which I looked up, is 4821.",
+        "I looked it up; your PIN is 4821.",
+    ):
+        result = validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN)
+        assert not result.valid, text
+
+
+def test_attribution_cannot_ground_a_number_the_dialogue_never_contained() -> None:
+    """A phrase like 'as you mentioned' is cheap; the numbers decide the question."""
+
+    for text in (
+        "I checked your account and the balance is 1,240.00. You mentioned that earlier.",
+        "I checked your account and the balance is 1,240.00, as you mentioned.",
+    ):
+        result = validate_no_unsupported_action_claims(text, (), conversation=LIVE_TURN)
+        assert not result.valid, text
+
+
 def test_digit_free_retrieval_claims_are_rejected_on_a_live_conversation() -> None:
     """A claim stating no number has nothing to check against, so it is not grounded."""
 

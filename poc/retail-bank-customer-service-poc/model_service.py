@@ -652,6 +652,13 @@ class ConversationalBankingAgent:
         output = strip_realizer_filler(output) or output
         model_passes = [trace]
         validation = validate_policy_answer(output, policy_matches)
+        # The policy lane is a zero-tool turn too: validate_policy_answer checks the
+        # answer against the cited chunks but accepts an invented credential, so the
+        # claim guard runs here as well rather than relying on the policy corpus
+        # never containing a PIN chunk.
+        claim_check = validate_no_unsupported_action_claims(output, ())
+        if validation.valid and not claim_check.valid:
+            validation = claim_check
         response_path = "policy_grounded"
         if not validation.valid:
             repair_messages = build_customer_experience_repair_messages(
@@ -664,6 +671,9 @@ class ConversationalBankingAgent:
             output = strip_realizer_filler(output) or output
             model_passes.append(repair_trace)
             repaired_validation = validate_policy_answer(output, policy_matches)
+            repaired_claim_check = validate_no_unsupported_action_claims(output, ())
+            if repaired_validation.valid and not repaired_claim_check.valid:
+                repaired_validation = repaired_claim_check
             if not repaired_validation.valid:
                 raise AgentProtocolError(
                     "policy-answer repair failed validation: "
