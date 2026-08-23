@@ -257,6 +257,34 @@ COMPLETED_ACTION_CLAIMS = re.compile(
 )
 
 
+# A zero-tool turn carries no evidence at all, so it must not claim to have READ
+# anything either. Observed on the released v8 adapter, verbatim and reproducibly,
+# with no tool call in the turn: "I found the current PIN in the account
+# information. What new PIN should I use?" -- a fabricated credential lookup that
+# the completed-action patterns above do not match.
+RETRIEVAL_CLAIM_VERBS = re.compile(
+    r"(?:\bI(?:'ve| have)? (?:found|checked|looked up|pulled up|located|retrieved|"
+    r"verified|confirmed)\b|\byour (?:account|records|profile) (?:shows?|holds?|lists?|has)\b"
+    r"|\baccording to (?:your|our) (?:account|records)\b)",
+    re.IGNORECASE,
+)
+ACCOUNT_DATA_NOUNS = re.compile(
+    r"\b(?:pin|balances?|cards?|accounts?|transactions?|transfers?|service cases?|"
+    r"cases?|statements?|disputes?|address|limits?)\b",
+    re.IGNORECASE,
+)
+# Naming the dialogue as the source is legitimate grounding: the shipped corpus
+# clarifies with "I found two cards in our conversation." That is a reference to
+# what was already said, not a claim to have read a backend record.
+CONVERSATION_ATTRIBUTION = re.compile(
+    r"\b(?:in (?:our|this) conversation|earlier in (?:our|this) (?:chat|conversation)|"
+    r"you (?:mentioned|said|shared|told me)|from your (?:message|last message)|"
+    r"we discussed|(?:mentioned|shown|listed) (?:above|earlier))\b",
+    re.IGNORECASE,
+)
+_CLAIM_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
 def validate_no_unsupported_action_claims(
     answer: str,
     results: Sequence[Mapping[str, Any]],
@@ -278,12 +306,31 @@ def validate_no_unsupported_action_claims(
     if not isinstance(answer, str):
         return GroundingValidation(False, ("final answer is not text",))
     match = COMPLETED_ACTION_CLAIMS.search(answer)
-    if match is None:
-        return GroundingValidation(True, ())
-    return GroundingValidation(
-        False,
-        (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
-    )
+    if match is not None:
+        return GroundingValidation(
+            False,
+            (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
+        )
+    # Retrieval claims are checked per sentence: a lookup verb and the account-data
+    # noun it claims to have read must appear together, so offers to help ("I can
+    # help with cards"), clarifying questions and policy prose stay valid.
+    for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
+        verb = RETRIEVAL_CLAIM_VERBS.search(sentence)
+        if verb is None:
+            continue
+        noun = ACCOUNT_DATA_NOUNS.search(sentence)
+        if noun is None:
+            continue
+        if CONVERSATION_ATTRIBUTION.search(sentence) is not None:
+            continue
+        return GroundingValidation(
+            False,
+            (
+                f"answer claims retrieved account data ({verb.group(0)!r} … "
+                f"{noun.group(0)!r}) without tool evidence",
+            ),
+        )
+    return GroundingValidation(True, ())
 
 
 def strip_realizer_filler(text: str) -> str:

@@ -784,6 +784,34 @@ def test_converse_turn_claiming_an_action_is_repaired_or_rejected() -> None:
     assert len(model.calls) == 2  # draft + customer-experience repair
 
 
+def test_converse_turn_claiming_retrieved_account_data_is_repaired_or_rejected() -> None:
+    """The released v8 adapter produced the first string verbatim on a zero-tool turn."""
+
+    model = RecordingModel(
+        [
+            "I found the current PIN in the account information. What new PIN should I use?",
+            "I can’t look up a PIN from this conversation. You can change it in a branch "
+            "or by calling the number on the back of your card.",
+        ]
+    )
+    agent = ConversationalBankingAgent(bank=bank(), model=model)
+
+    result = agent.run_turn(
+        username="alex.demo",
+        session_hash="session",
+        message="I want to change my PIN.",
+        conversation=[],
+        router_result=v4_router_guidance(
+            action="converse",
+            fine_intent="freeze_card",
+            entity_resolution="not_required",
+        ),
+    )
+
+    assert "found the current PIN" not in result.response
+    assert len(model.calls) == 2  # draft + customer-experience repair
+
+
 def test_v4_uncertain_execution_prediction_does_not_expose_tool() -> None:
     model = RecordingModel(["Which card would you like help with?"])
     agent = ConversationalBankingAgent(bank=bank(), model=model)

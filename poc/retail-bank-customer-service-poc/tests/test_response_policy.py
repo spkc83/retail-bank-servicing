@@ -361,6 +361,82 @@ def test_zero_tool_answers_may_ask_and_describe_without_action_claims() -> None:
     assert neutral.valid
 
 
+def test_zero_tool_answers_must_not_claim_retrieved_account_data() -> None:
+    """The live v8 model produced the first string verbatim, twice, with no tool call."""
+
+    pin = validate_no_unsupported_action_claims(
+        "I found the current PIN in the account information. What new PIN should I use?", ()
+    )
+    balance = validate_no_unsupported_action_claims(
+        "I checked your account and the available balance is 1,240.00.", ()
+    )
+    shows = validate_no_unsupported_action_claims("Your account shows two open service cases.", ())
+    looked_up = validate_no_unsupported_action_claims(
+        "I looked up the transfer to River Consulting for you.", ()
+    )
+
+    assert not pin.valid
+    assert not balance.valid
+    assert not shows.valid
+    assert not looked_up.valid
+    assert any("without tool evidence" in error for error in pin.errors)
+
+
+def test_claims_attributed_to_the_conversation_are_not_retrieval_claims() -> None:
+    """The shipped corpus clarifies with this exact sentence (history_ambiguous_card_train-r000)."""
+
+    corpus = validate_no_unsupported_action_claims(
+        "I found two cards in our conversation. Which should I replace? "
+        "Please share the last four digits.",
+        (),
+    )
+    mentioned = validate_no_unsupported_action_claims(
+        "I found the card you mentioned earlier. Which one should I freeze?", ()
+    )
+
+    assert corpus.valid
+    assert mentioned.valid
+
+
+def test_retrieved_data_claims_are_allowed_when_tool_evidence_exists() -> None:
+    evidence = ({"ok": True, "result": {"account": {"available": "1240.00"}}},)
+    conversation = [
+        {"role": "tool", "tool_call_id": "call_1", "name": "list_accounts", "content": "{}"},
+    ]
+
+    with_results = validate_no_unsupported_action_claims(
+        "I checked your account and the available balance is 1,240.00.", evidence
+    )
+    with_history = validate_no_unsupported_action_claims(
+        "I checked your account and the available balance is 1,240.00.",
+        (),
+        conversation=conversation,
+    )
+
+    assert with_results.valid
+    assert with_history.valid
+
+
+def test_zero_tool_answers_may_clarify_offer_and_cite_policy() -> None:
+    clarify = validate_no_unsupported_action_claims(
+        "Which card should I replace? Please share its last four digits.", ()
+    )
+    offer = validate_no_unsupported_action_claims(
+        "I can help with accounts, cards, transactions, transfers and service cases. "
+        "What would you like to do?",
+        (),
+    )
+    policy = validate_no_unsupported_action_claims(
+        "Harborlight Bank may decline or return a transaction when available funds are "
+        "insufficient, and fees vary by account product.",
+        (),
+    )
+
+    assert clarify.valid
+    assert offer.valid
+    assert policy.valid
+
+
 def test_action_claims_are_allowed_when_any_tool_evidence_exists() -> None:
     evidence = ({"ok": True, "result": {"card": {"last4": "4821", "status": "frozen"}}},)
 
