@@ -613,6 +613,7 @@ def _train_records() -> list[dict[str, Any]]:
         *_missing_entity_records("train"),
         *_social_style_records("train"),
         *_granite_v7_examples("train"),
+        *_long_context_tool_fidelity("train"),
     ]
 
 
@@ -633,6 +634,7 @@ def _validation_records() -> list[dict[str, Any]]:
         *_missing_entity_records("validation"),
         *_social_style_records("validation"),
         *_granite_v7_examples("validation"),
+        *_long_context_tool_fidelity("validation"),
     ]
 
 
@@ -2256,6 +2258,886 @@ def _granite_v7_examples(split: str) -> list[dict[str, Any]]:
                     message["content"] = shadow_currents[str(record["record_id"])]
                     break
     return records
+
+
+# ---------------------------------------------------------------------------
+# Long-context tool fidelity.
+#
+# Measured V9 defect: once a session renders to roughly 980 tokens the adapter
+# answers a lexically misleading final user turn by inventing a tool that does not
+# exist -- list_addresses, get_statement, list_pin_requests, list_disputes --
+# instead of calling the one tool its contract exposes. Every row below puts a
+# misleading current turn at the end of an ordinary, long servicing session and
+# labels exactly one tool call, so generation_contract_for_record yields a
+# single-tool contract and the trainer renders exactly that one schema.
+# ---------------------------------------------------------------------------
+
+LONG_CONTEXT_FAMILY = "long_context_tool_fidelity"
+# Fresh, non-overlapping number bases so no synthetic entity collides with the
+# coreference curriculum (train 6100/8100, validation 2100/4100, shadow 3100/5100).
+LONG_CONTEXT_NUMBER_BASES = {"train": 7300, "validation": 9300}
+LONG_CONTEXT_TRAIN_HISTORY_BUNDLES = 5
+# Rendered-length guard. ToolWireAdapter._select_whole_chain_suffix silently drops
+# the earliest user chains once a row exceeds max_seq_len (2048 in the continuation
+# run). A row that lost its history would still train, on the wrong thing, so the
+# ceiling is asserted at build time.
+#
+# The trainer's own render needs the published tokenizer and the granite chat
+# template, which a pure data generator must not depend on, so the build asserts a
+# calibrated char proxy instead. Measured over all 224 rows of this curriculum with
+# the granite-4.1-8b tokenizer through ToolWireAdapter._render_messages (system
+# prompt + turn guidance + the one exposed tool schema + the full message chain),
+# the ratio of _long_context_prompt_chars to rendered tokens fell between 2.99 and
+# 3.51. The two constants below sit just outside that window, so dividing the char
+# count by them brackets the real render from both sides rather than estimating it.
+# tests/test_banking_servicing_alignment_data.py re-measures the exact rendered
+# lengths against the real tokenizer whenever it is available locally; the observed
+# distribution at the time of writing was 819 to 1292 tokens.
+LONG_CONTEXT_CHARS_PER_TOKEN_FLOOR = 2.95
+LONG_CONTEXT_CHARS_PER_TOKEN_CEILING = 3.55
+LONG_CONTEXT_MIN_RENDERED_TOKENS = 800
+LONG_CONTEXT_MAX_RENDERED_TOKENS = 1700
+# Deliberately steered away from SCREENSHOT_HELDOUT_CURRENTS and both shadow gates:
+# the 4-gram assertions are strict and this curriculum's nouns (address, statement,
+# transactions, money sent) sit right next to the held-out wordings.
+LONG_CONTEXT_CURRENT_FRAMES = (
+    "Before we wrap this up I still need you to {ask}",
+    "One last item and then I am done, so please {ask}",
+    "While we are both here I would like you to {ask}",
+    "There is one loose end left over, so go ahead and {ask}",
+)
+_LONGCTX_PLACE_STEMS = (
+    "Alder Row",
+    "Bright Quay",
+    "Cobble Lane",
+    "Dunmore",
+    "Elmfield",
+    "Foxglove",
+    "Garrick Wharf",
+    "Havenside",
+    "Ironbridge",
+    "Juniper Walk",
+)
+_LONGCTX_TRADES = (
+    "Grocers",
+    "Optics",
+    "Bakery",
+    "Hardware",
+    "Cycles",
+    "Florist",
+    "Bookbinders",
+    "Creamery",
+    "Outfitters",
+    "Stationers",
+    "Ceramics",
+    "Fishmongers",
+    "Ironworks",
+    "Herbalists",
+    "Tailors",
+    "Cobblers",
+    "Luthiers",
+    "Glassworks",
+    "Apothecary",
+    "Provisions",
+)
+_LONGCTX_RECIPIENTS = (
+    "Marchwood Utilities",
+    "Ferngate Landscaping",
+    "Oakhill Dental Care",
+    "Pinewharf Storage",
+    "Quarrybank Roofing",
+    "Redmoor Insurance",
+    "Saltmarsh Broadband",
+    "Thornbury Childcare",
+    "Uppermill Fitness",
+    "Vinegate Cleaning",
+    "Westhaven Removals",
+    "Yarrowfield Heating",
+)
+_LONGCTX_CARD_PRODUCTS = (
+    "Harborview",
+    "Stonebridge",
+    "Fairwater",
+    "Lantern Bay",
+    "Northgate",
+)
+_LONGCTX_CARD_TIERS = (
+    "Everyday Debit",
+    "Rewards Debit",
+    "Travel Debit",
+    "Cashback Debit",
+)
+# Ordinary servicing chatter. History turns are never loss-bearing and are not
+# checked for uniqueness (only the last user turn is), so the same filler can back
+# many rows; the per-row entities carry the variety instead. Keep every string clear
+# of TRAINABLE_TEXT_BANNED_WORDS.
+_LONGCTX_PLAIN_FILLERS = (
+    (
+        "Quick question before anything else. If a payment lands before my salary "
+        "does, what happens to the balance in the meantime?",
+        "If a payment posts before the credit arrives, the account moves into its "
+        "arranged overdraft rather than bouncing the payment. Interest accrues daily "
+        "on the overdrawn portion and is collected once a month, so a single day of "
+        "being short costs very little. I can switch on an alert that reaches you the "
+        "same day the balance goes below zero, which most people find is enough "
+        "warning to move something across. If the shortfall is going to run for more "
+        "than a few days, it is usually cheaper to move funds over from savings than "
+        "to sit in the overdraft. Either way the charge only ever applies to the "
+        "amount you are actually short by, never to the whole balance, and it stops "
+        "the moment the account is back in credit.",
+    ),
+    (
+        "And when does the salary credit normally reach me each month?",
+        "Incoming salary credits are normally applied on the last working day of the "
+        "month, as soon as the sending bank releases them. When that day falls on a "
+        "weekend the credit arrives on the Friday before instead, so the money is "
+        "already sitting there when the weekend payments run. Employers occasionally "
+        "release early in December, and when they do the credit still lands on the day "
+        "they send it rather than being held back until the usual date. Nothing on "
+        "your side has to change for any of that to work. If a credit ever fails to "
+        "arrive on the day you expected it, the sending employer is the right place "
+        "to start, and I can tell you exactly what has and has not reached us.",
+    ),
+    (
+        "I am heading abroad in a fortnight. Do I have to tell you before I travel?",
+        "There is no need to register a trip any more. Spending abroad is judged "
+        "against the ordinary pattern of the account rather than against a notice, so "
+        "most people travel without anything being queried at all. The one piece of "
+        "advice worth following is to carry a second means of payment, because if a "
+        "particular transaction does get held you will want something else in your "
+        "pocket while we sort it out. Cash withdrawals abroad carry a separate charge, "
+        "which is set out in the fee summary for the account. Payments in another "
+        "currency are converted at the rate applying on the day they settle rather "
+        "than the day you spend, so the two figures can differ a little.",
+    ),
+    (
+        "What is the ceiling on a contactless tap at the moment?",
+        "A single contactless payment goes through up to one hundred, and there is a "
+        "cumulative total across consecutive taps before the terminal asks for the PIN "
+        "again. Entering the PIN once clears that running total immediately, so the "
+        "next tap starts from zero. Some retailers set their own lower limit on the "
+        "terminal, and when that happens the ceiling you run into is theirs rather "
+        "than ours. Higher-value purchases always go through the chip, which is why a "
+        "large payment asks for the PIN even on the first attempt. If a tap is "
+        "refused for no obvious reason, inserting the card and entering the PIN once "
+        "normally clears whatever caused it and lets you carry on.",
+    ),
+    (
+        "If I wanted to add my partner to the account later on, is that a big job?",
+        "Adding a second holder means you both complete identity verification, and "
+        "after that each of you has your own card and your own sign-in. Existing "
+        "scheduled payments carry across untouched, so nothing has to be arranged a "
+        "second time. Both holders can see the full history from the day the account "
+        "opened rather than only from the day the second person joined, which "
+        "occasionally surprises people. Removing a holder later is a separate request "
+        "and needs agreement from both of you. Until the second holder is added "
+        "everything on the account stays under your name alone, so nothing you "
+        "arrange between now and then has to be undone afterwards.",
+    ),
+    (
+        "One thing I can never remember is when the savings interest actually posts.",
+        "Savings interest is worked out daily and paid on the first working day of "
+        "the following month. It arrives as a single credit line rather than a run of "
+        "small ones, which makes it easy to pick out when you look back over the "
+        "month. The rate applies to the whole balance rather than in bands, so you do "
+        "not have to work out where a threshold falls. If you move money out partway "
+        "through the month you still keep the interest earned on the days it was "
+        "sitting there. Interest is reported back to you once a year in a single "
+        "summary that covers every savings balance you hold with us rather than "
+        "each one separately.",
+    ),
+    (
+        "Is it still possible to book time with somebody in a branch?",
+        "Branch bookings can usually be made for the same week and run to about half "
+        "an hour. Bring one photographic identity document if the visit involves "
+        "changing anything held on the profile, and otherwise there is nothing you "
+        "need to prepare beforehand. Where the matter is something I can finish here, "
+        "it is normally quicker to deal with it in this conversation than to travel "
+        "in. If a written signature is genuinely required I will say so before you "
+        "book the slot. Whatever the two of us settle here is written into the "
+        "record straight away, so nobody in a branch would ask you to go over the "
+        "same ground a second time.",
+    ),
+    (
+        "Could I move my correspondence over to electronic delivery?",
+        "Correspondence can be switched to electronic delivery whenever you like, and "
+        "the change takes effect from the next cycle onward. Anything issued before "
+        "the switch stays available to download for seven years, so nothing is lost in "
+        "the move. Regulatory notices still arrive on paper where the rules require "
+        "it, and those are the only items that keep coming through the door. You can "
+        "switch back at any point and there is no charge either way. Delivery "
+        "preferences sit on the profile rather than on an individual account, so a "
+        "single change covers everything you hold with us today and anything you "
+        "open later.",
+    ),
+)
+# Bundle -> the plain fillers behind each row. Bundles 0-1 are the three-exchange
+# tier, 2-3 the four-exchange tier, and bundle 4 the four-exchange tier whose middle
+# two exchanges are tool-backed (see _long_context_history).
+_LONGCTX_HISTORY_BUNDLES = (
+    (0, 1),
+    (2, 3),
+    (4, 5, 6),
+    (7, 0, 3),
+    (5,),
+)
+_LONGCTX_TOOL_BACKED_BUNDLE = 4
+# 24 validation rows as (decoy, phrasing, bundle): ten tier-A, ten tier-B and four
+# tier-C rows covering all ten decoys, a strict subset of the train cross-product.
+_LONGCTX_VALIDATION_PLAN = (
+    (0, 0, 0),
+    (1, 1, 1),
+    (2, 2, 0),
+    (3, 3, 1),
+    (4, 0, 0),
+    (5, 1, 1),
+    (6, 2, 0),
+    (7, 3, 1),
+    (8, 0, 0),
+    (9, 1, 1),
+    (0, 2, 2),
+    (1, 3, 3),
+    (2, 0, 2),
+    (3, 1, 3),
+    (4, 2, 2),
+    (5, 3, 3),
+    (6, 0, 2),
+    (7, 1, 3),
+    (8, 2, 2),
+    (9, 3, 3),
+    (0, 1, 4),
+    (2, 3, 4),
+    (5, 0, 4),
+    (7, 2, 4),
+)
+
+
+def _long_context_entities(split: str, index: int) -> dict[str, str]:
+    reference = LONG_CONTEXT_NUMBER_BASES[split] + index
+    stem = _LONGCTX_PLACE_STEMS[index % len(_LONGCTX_PLACE_STEMS)]
+    trade = _LONGCTX_TRADES[(index // len(_LONGCTX_PLACE_STEMS)) % len(_LONGCTX_TRADES)]
+    product = _LONGCTX_CARD_PRODUCTS[index % len(_LONGCTX_CARD_PRODUCTS)]
+    tier = _LONGCTX_CARD_TIERS[(index // len(_LONGCTX_CARD_PRODUCTS)) % len(_LONGCTX_CARD_TIERS)]
+    return {
+        # Every current turn and every final carries this per-row reference, which
+        # makes both globally unique by construction without a phrasing pool.
+        "last4": f"{reference:04d}",
+        "case_ref": f"HB-{reference}",
+        "amount": f"{reference / 100:.2f}",
+        "merchant": f"{stem} {trade}",
+        "recipient": _LONGCTX_RECIPIENTS[index % len(_LONGCTX_RECIPIENTS)],
+        "card_name": f"{product} {tier}",
+    }
+
+
+def _long_context_decoys(entity: dict[str, str], suffix: str) -> tuple[dict[str, Any], ...]:
+    """Ten misleading-noun / correct-tool pairs covering all nine exposed tools.
+
+    The four write tools are in ENTITY_REQUIRED_TOOLS, so their contract asserts
+    entity_state="resolved". Each of those anchors therefore states the selector --
+    the last four digits, the merchant, the recipient -- in an earlier assistant
+    turn, so the row never teaches the model to guess one.
+    """
+
+    return (
+        {
+            "key": "address_case",
+            "decoy_tool": "list_addresses",
+            "tool": "list_service_cases",
+            "arguments": {},
+            "anchor": (
+                f"Remind me which service requests are still sitting open {suffix}.",
+                f"One request is open: {entity['case_ref']}, raised on 2026-07-02 to "
+                "confirm a change of mailing address. Nothing else is outstanding on "
+                "the profile, and the two requests before it were both closed off "
+                "earlier in the spring without needing anything from you.",
+            ),
+            "ask": f"pin down the mailing address entry filed under {entity['case_ref']}",
+            "final": (
+                f"Request {entity['case_ref']} is the only one still open. It was raised "
+                "on 2026-07-02 to confirm a change of mailing address, and no other "
+                "service request is waiting on you."
+            ),
+            "grounding": [
+                f"service_case.reference={entity['case_ref']}",
+                "service_case.status=open",
+                "service_case.created_at=2026-07-02T09:30:00Z",
+            ],
+            "envelope": _success_envelope(
+                service_cases=[
+                    {
+                        "case_type": "address_update",
+                        "reference": entity["case_ref"],
+                        "subject": "Confirm change of mailing address",
+                        "status": "open",
+                        "created_at": "2026-07-02T09:30:00Z",
+                    }
+                ]
+            ),
+        },
+        {
+            "key": "statement_lines",
+            "decoy_tool": "get_statement",
+            "tool": "list_transactions",
+            "arguments": {"limit": 6},
+            "anchor": (
+                f"Tell me what has hit the account since the month began {suffix}.",
+                f"Six items have posted since 2026-07-01. The largest of them is "
+                f"{entity['amount']} at {entity['merchant']}, and the rest are smaller "
+                "everyday purchases spread across the first fortnight. None of the six "
+                "is still pending, so what you can see is what has actually left the "
+                "account.",
+            ),
+            "ask": (
+                f"read out the monthly statement lines around the {entity['amount']} "
+                f"charge at {entity['merchant']}"
+            ),
+            "final": (
+                f"Six items are posted on the account. The largest is {entity['amount']} "
+                f"at {entity['merchant']} on 2026-07-14, and the five behind it are "
+                "smaller everyday purchases, all of them already settled."
+            ),
+            "grounding": [
+                f"transaction.description={entity['merchant']}",
+                f"transaction.amount={entity['amount']}",
+                "transaction.status=posted",
+            ],
+            "envelope": _success_envelope(
+                transactions=[
+                    {
+                        "description": entity["merchant"],
+                        "amount": entity["amount"],
+                        "posted_at": "2026-07-14",
+                        "status": "posted",
+                    },
+                    {
+                        "description": "Kingsford Transit",
+                        "amount": "18.40",
+                        "posted_at": "2026-07-12",
+                        "status": "posted",
+                    },
+                ]
+            ),
+        },
+        {
+            "key": "pin_reissue",
+            "decoy_tool": "list_pin_requests",
+            "tool": "list_cards",
+            "arguments": {},
+            "anchor": (
+                f"Which card am I actually holding on this profile {suffix}?",
+                f"You hold one active card, the {entity['card_name']} ending in "
+                f"{entity['last4']}. It has been active since 2026-03-11 and nothing is "
+                "blocking it. There is no second card on the profile, so anything you "
+                "ask me about a card refers to that one.",
+            ),
+            "ask": (
+                f"check whether a PIN reissue is showing against the "
+                f"{entity['card_name']} ending in {entity['last4']}"
+            ),
+            "final": (
+                f"Your {entity['card_name']} ending in {entity['last4']} is active and "
+                "carries no PIN reissue on it. It is the only card on the profile, so "
+                "nothing else is waiting on a new PIN."
+            ),
+            "grounding": [
+                f"card.last4={entity['last4']}",
+                "card.status=active",
+            ],
+            "envelope": _success_envelope(
+                cards=[
+                    {
+                        "name": entity["card_name"],
+                        "last4": entity["last4"],
+                        "status": "active",
+                        "opened_at": "2026-03-11",
+                    }
+                ]
+            ),
+        },
+        {
+            "key": "dispute_status",
+            "decoy_tool": "list_disputes",
+            "tool": "list_transactions",
+            "arguments": {"limit": 8},
+            "anchor": (
+                f"Read me back the card purchase I asked about earlier {suffix}.",
+                f"The purchase was {entity['amount']} at {entity['merchant']}, posted on "
+                "2026-07-09. It has settled and no claim has been raised against it. "
+                "The merchant took the money in one go rather than in parts, so there "
+                "is only the single entry to look at.",
+            ),
+            "ask": (
+                f"see where the dispute status sits for the {entity['amount']} charge at "
+                f"{entity['merchant']}"
+            ),
+            "final": (
+                f"The {entity['amount']} charge at {entity['merchant']} from 2026-07-09 "
+                "is still posted with no claim raised against it. Say the word and I "
+                "will open one for you."
+            ),
+            "grounding": [
+                f"transaction.description={entity['merchant']}",
+                f"transaction.amount={entity['amount']}",
+                "transaction.disputed=false",
+            ],
+            "envelope": _success_envelope(
+                transactions=[
+                    {
+                        "description": entity["merchant"],
+                        "amount": entity["amount"],
+                        "posted_at": "2026-07-09",
+                        "status": "posted",
+                        "disputed": False,
+                    }
+                ]
+            ),
+        },
+        {
+            "key": "standing_order",
+            "decoy_tool": "list_standing_orders",
+            "tool": "list_transfers",
+            "arguments": {},
+            "anchor": (
+                f"What money is queued to leave the account this month {suffix}?",
+                f"One payment is queued: {entity['amount']} to {entity['recipient']}, due "
+                "on the 28th. It is the only outgoing item that has not left yet. "
+                "Everything else you set up this month has already gone through and "
+                "settled at the receiving end.",
+            ),
+            "ask": (
+                f"confirm the standing order sending {entity['amount']} to "
+                f"{entity['recipient']} each month"
+            ),
+            "final": (
+                f"One scheduled payment of {entity['amount']} to {entity['recipient']} is "
+                "queued for the 28th, and it repeats monthly. Nothing else recurring is "
+                "set up on the account."
+            ),
+            "grounding": [
+                f"transfer.recipient={entity['recipient']}",
+                f"transfer.amount={entity['amount']}",
+                "transfer.status=pending",
+            ],
+            "envelope": _success_envelope(
+                transfers=[
+                    {
+                        "recipient": entity["recipient"],
+                        "amount": entity["amount"],
+                        "due_on": "2026-07-28",
+                        "status": "pending",
+                    }
+                ]
+            ),
+        },
+        {
+            "key": "balance_position",
+            "decoy_tool": "get_balance_sheet",
+            "tool": "list_accounts",
+            "arguments": {},
+            "anchor": (
+                f"Give me a rough idea of where I stand overall {suffix}.",
+                f"Your everyday account is holding {entity['amount']} available today, "
+                "and the savings behind it carries a smaller cushion. Neither of them is "
+                "overdrawn, and no charge is waiting to come off either balance in the "
+                "next few days.",
+            ),
+            "ask": (
+                f"walk me through the balance sheet position before I commit "
+                f"{entity['amount']} anywhere"
+            ),
+            "final": (
+                f"The everyday account holds {entity['amount']} available right now and "
+                "the linked savings holds a smaller cushion behind it. Neither balance "
+                "is overdrawn, so the money is there if you want it."
+            ),
+            "grounding": [
+                f"account.available={entity['amount']}",
+                "account.status=open",
+            ],
+            "envelope": _success_envelope(
+                accounts=[
+                    {
+                        "name": "Everyday Checking",
+                        "available": entity["amount"],
+                        "status": "open",
+                    },
+                    {
+                        "name": "Reserve Savings",
+                        "available": "412.66",
+                        "status": "open",
+                    },
+                ]
+            ),
+        },
+        {
+            "key": "lost_card",
+            "decoy_tool": "report_lost_card",
+            "tool": "freeze_card",
+            "arguments": {"last4": entity["last4"]},
+            "anchor": (
+                f"Which card is currently live on the profile {suffix}?",
+                f"The live card is your {entity['card_name']} ending in "
+                f"{entity['last4']}, active since 2026-03-11 with nothing held against "
+                "it. It is the only card issued on the profile, and no earlier card is "
+                "still open behind it.",
+            ),
+            "ask": (
+                "file the lost-card report, because I cannot find the "
+                f"{entity['card_name']} ending in {entity['last4']}"
+            ),
+            "final": (
+                f"Your {entity['card_name']} ending in {entity['last4']} is frozen now, "
+                "so nothing further can be charged to it while you look for it. Tell me "
+                "when it turns up and I will lift the freeze."
+            ),
+            "grounding": [
+                f"card.last4={entity['last4']}",
+                "card.status=frozen",
+            ],
+            "envelope": _success_envelope(
+                card={
+                    "name": entity["card_name"],
+                    "last4": entity["last4"],
+                    "status": "frozen",
+                }
+            ),
+        },
+        {
+            "key": "new_card_order",
+            "decoy_tool": "order_card",
+            "tool": "replace_card",
+            "arguments": {"last4": entity["last4"]},
+            "anchor": (
+                f"Confirm for me which card is worn out on the profile {suffix}.",
+                f"That is your {entity['card_name']} ending in {entity['last4']}. It is "
+                "still active, though the magnetic stripe has been failing at terminals. "
+                "Nothing else on the profile is in that condition, so it is the only "
+                "one worth doing anything about.",
+            ),
+            "ask": (
+                f"put through the new card order for the {entity['card_name']} ending in "
+                f"{entity['last4']}"
+            ),
+            "final": (
+                f"A replacement is on its way for your {entity['card_name']} ending in "
+                f"{entity['last4']}. The one you are holding keeps working until the new "
+                "card arrives and you activate it."
+            ),
+            "grounding": [
+                f"card.last4={entity['last4']}",
+                "card.status=replacement_pending",
+            ],
+            "envelope": _success_envelope(
+                card={
+                    "name": entity["card_name"],
+                    "last4": entity["last4"],
+                    "status": "replacement_pending",
+                }
+            ),
+        },
+        {
+            "key": "chargeback",
+            "decoy_tool": "open_chargeback",
+            "tool": "dispute_transaction",
+            "arguments": {"description": entity["merchant"]},
+            "anchor": (
+                f"Which purchase was it that I flagged earlier {suffix}?",
+                f"The one you flagged was {entity['amount']} at {entity['merchant']}, "
+                "posted on 2026-07-09 and already settled. It is the only entry from "
+                "that merchant in the period we looked at, so there is no risk of "
+                "picking up the wrong one.",
+            ),
+            "ask": (
+                f"start the chargeback on the {entity['amount']} charge at {entity['merchant']}"
+            ),
+            "final": (
+                f"I have raised a claim on the {entity['amount']} charge at "
+                f"{entity['merchant']}. It stays posted on the account while the claim "
+                "is reviewed, and you will hear the outcome in writing."
+            ),
+            "grounding": [
+                f"transaction.description={entity['merchant']}",
+                "transaction.disputed=true",
+            ],
+            "envelope": _success_envelope(
+                transaction={
+                    "description": entity["merchant"],
+                    "status": "posted",
+                    "disputed": True,
+                }
+            ),
+        },
+        {
+            "key": "stop_payment",
+            "decoy_tool": "stop_payment",
+            "tool": "cancel_transfer",
+            "arguments": {"recipient": entity["recipient"]},
+            "anchor": (
+                f"Remind me who the queued payment is going to {suffix}.",
+                f"It is going to {entity['recipient']}, {entity['amount']} due on the "
+                "28th, and it has not left the account yet. That is the only queued "
+                "payment on the account, so nothing else is waiting behind it to go "
+                "out.",
+            ),
+            "ask": (
+                f"place a stop payment on the {entity['amount']} heading out to "
+                f"{entity['recipient']}"
+            ),
+            "final": (
+                f"The pending payment of {entity['amount']} to {entity['recipient']} is "
+                "cancelled, so it will not leave the account on the 28th. Nothing else "
+                "outgoing is queued behind it."
+            ),
+            "grounding": [
+                f"transfer.recipient={entity['recipient']}",
+                "transfer.status=cancelled",
+            ],
+            "envelope": _success_envelope(
+                transfer={
+                    "recipient": entity["recipient"],
+                    "amount": entity["amount"],
+                    "status": "cancelled",
+                }
+            ),
+        },
+    )
+
+
+def _long_context_tool_filler(
+    record_id: str,
+    context_index: int,
+    entity: dict[str, str],
+    suffix: str,
+) -> list[dict[str, Any]]:
+    """One tool-backed prior exchange: user, context call, its result, a summary.
+
+    The call id is context_{record_id}_{n} with loss=False, content=None and index 0,
+    exactly as validate_records demands of a non-target call, and the tool result
+    follows it immediately so the correlation check stays satisfied.
+    """
+
+    if context_index == 0:
+        user_text = f"While we are on it, show me the position across everything I hold {suffix}."
+        tool_name = "list_accounts"
+        arguments: dict[str, Any] = {}
+        envelope = _success_envelope(
+            accounts=[
+                {
+                    "name": "Everyday Checking",
+                    "kind": "current",
+                    "available": entity["amount"],
+                    "currency": "GBP",
+                    "status": "open",
+                },
+                {
+                    "name": "Reserve Savings",
+                    "kind": "savings",
+                    "available": "412.66",
+                    "currency": "GBP",
+                    "status": "open",
+                },
+                {
+                    "name": "Holiday Pot",
+                    "kind": "savings",
+                    "available": "85.10",
+                    "currency": "GBP",
+                    "status": "open",
+                },
+            ]
+        )
+        summary = (
+            f"You hold three accounts. Everyday Checking has {entity['amount']} "
+            "available, Reserve Savings sits behind it with a little over four hundred, "
+            "and the Holiday Pot carries the smallest balance of the three. All three "
+            "are open and none of them is overdrawn, so there is nothing needing "
+            "attention on the balances themselves."
+        )
+    else:
+        user_text = "And put the recent card entries in front of me so I can see them together."
+        tool_name = "list_transactions"
+        arguments = {"limit": 6}
+        envelope = _success_envelope(
+            transactions=[
+                {
+                    "description": entity["merchant"],
+                    "amount": entity["amount"],
+                    "posted_at": "2026-07-14",
+                    "channel": "card",
+                    "status": "posted",
+                },
+                {
+                    "description": "Kingsford Transit",
+                    "amount": "18.40",
+                    "posted_at": "2026-07-12",
+                    "channel": "card",
+                    "status": "posted",
+                },
+                {
+                    "description": "Ravensworth Energy",
+                    "amount": "64.20",
+                    "posted_at": "2026-07-08",
+                    "channel": "direct debit",
+                    "status": "posted",
+                },
+                {
+                    "description": "Halewood Newsagent",
+                    "amount": "3.95",
+                    "posted_at": "2026-07-05",
+                    "channel": "card",
+                    "status": "posted",
+                },
+                {
+                    "description": "Bexley Lane Cafe",
+                    "amount": "11.75",
+                    "posted_at": "2026-07-03",
+                    "channel": "card",
+                    "status": "posted",
+                },
+                {
+                    "description": "Cranmore Water",
+                    "amount": "29.60",
+                    "posted_at": "2026-07-02",
+                    "channel": "direct debit",
+                    "status": "posted",
+                },
+            ]
+        )
+        summary = (
+            f"The six most recent entries begin with {entity['amount']} at "
+            f"{entity['merchant']} on the fourteenth, followed by Kingsford Transit, "
+            "Ravensworth Energy, Halewood Newsagent, Bexley Lane Cafe and Cranmore "
+            "Water. Two of those are collected by direct debit and the other four went "
+            "through on the card. Every one of them has settled."
+        )
+    call_id = f"context_{record_id}_{context_index}"
+    return [
+        _user(user_text),
+        {
+            "role": "assistant",
+            "content": None,
+            "loss": False,
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "index": 0,
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": dict(arguments)},
+                }
+            ],
+        },
+        _tool_result(call_id, tool_name, envelope=envelope),
+        _assistant(summary, loss=False),
+    ]
+
+
+def _long_context_history(
+    record_id: str,
+    decoy: Mapping[str, Any],
+    entity: dict[str, str],
+    suffix: str,
+    bundle: int,
+) -> list[dict[str, Any]]:
+    anchor_user, anchor_assistant = decoy["anchor"]
+    messages = [_user(anchor_user), _assistant(anchor_assistant, loss=False)]
+    if bundle == _LONGCTX_TOOL_BACKED_BUNDLE:
+        messages.extend(_long_context_tool_filler(record_id, 0, entity, suffix))
+        messages.extend(_long_context_tool_filler(record_id, 1, entity, suffix))
+    for filler_index in _LONGCTX_HISTORY_BUNDLES[bundle]:
+        filler_user, filler_assistant = _LONGCTX_PLAIN_FILLERS[filler_index]
+        messages.extend([_user(filler_user), _assistant(filler_assistant, loss=False)])
+    return messages
+
+
+def _long_context_prompt_chars(record: Mapping[str, Any]) -> int:
+    """Characters the chat template will render, minus its own scaffolding."""
+
+    total = 0
+    for message in record["messages"]:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+        elif content is not None:
+            total += len(json.dumps(content, ensure_ascii=False, sort_keys=True))
+        for call in message.get("tool_calls") or ():
+            total += len(json.dumps(call["function"], ensure_ascii=False, sort_keys=True))
+    return total
+
+
+def _long_context_rendered_token_bounds(record: Mapping[str, Any]) -> tuple[int, int]:
+    """Bracket the trainer's rendered token count without a tokenizer.
+
+    Returns (floor, ceiling); the real granite render sits between them for every
+    row of this curriculum. See the calibration note on the constants above.
+    """
+
+    chars = _long_context_prompt_chars(record)
+    return (
+        int(chars / LONG_CONTEXT_CHARS_PER_TOKEN_CEILING),
+        int(chars / LONG_CONTEXT_CHARS_PER_TOKEN_FLOOR) + 1,
+    )
+
+
+def _long_context_tool_fidelity(split: str) -> list[dict[str, Any]]:
+    """Long multi-turn sessions whose misleading final turn must still route right.
+
+    Train takes the whole 10 x 4 x 5 cross-product (200 rows); validation takes a
+    24-row subset of the same shape on a disjoint entity base. Never wired into
+    _test_records: the frozen 215-row composite digest must not move.
+    """
+
+    suffix = _suffix(split)
+    if split == "train":
+        plan = tuple(
+            (decoy_index, phrasing, bundle)
+            for decoy_index in range(10)
+            for phrasing in range(len(LONG_CONTEXT_CURRENT_FRAMES))
+            for bundle in range(LONG_CONTEXT_TRAIN_HISTORY_BUNDLES)
+        )
+    elif split == "validation":
+        plan = _LONGCTX_VALIDATION_PLAN
+    else:
+        raise ValueError(f"unsupported long-context split: {split}")
+    records: list[dict[str, Any]] = []
+    for index, (decoy_index, phrasing, bundle) in enumerate(plan):
+        entity = _long_context_entities(split, index)
+        decoy = _long_context_decoys(entity, suffix)[decoy_index]
+        record_id = f"longctx_{decoy['key']}_{split}_p{phrasing}b{bundle}"
+        current = LONG_CONTEXT_CURRENT_FRAMES[phrasing].format(ask=decoy["ask"]) + f" {suffix}."
+        records.append(
+            _record(
+                record_id=record_id,
+                split=split,
+                scenario_family=LONG_CONTEXT_FAMILY,
+                current=current,
+                final=decoy["final"],
+                tool_plan=[(decoy["tool"], dict(decoy["arguments"]))],
+                grounding_facts=decoy["grounding"],
+                path="multi_turn",
+                pre_messages=_long_context_history(record_id, decoy, entity, suffix, bundle),
+                tool_envelopes=[decoy["envelope"]],
+            )
+        )
+    _assert_long_context_render_budget(records)
+    return records
+
+
+def _assert_long_context_render_budget(records: Sequence[dict[str, Any]]) -> None:
+    over = []
+    short = []
+    for record in records:
+        floor, ceiling = _long_context_rendered_token_bounds(record)
+        if ceiling > LONG_CONTEXT_MAX_RENDERED_TOKENS:
+            over.append(str(record["record_id"]))
+        # The proxy floor is deliberately pessimistic, so it is compared against a
+        # relaxed target; the exact 800-token design floor is asserted in the tests
+        # against the real render.
+        if floor < LONG_CONTEXT_MIN_RENDERED_TOKENS - 120:
+            short.append(str(record["record_id"]))
+    if over:
+        raise ValueError(f"long-context rows may exceed the render budget: {over}")
+    if short:
+        raise ValueError(f"long-context rows are too short to reproduce the defect: {short}")
 
 
 def _heldout_regression_records() -> list[dict[str, Any]]:

@@ -4,7 +4,9 @@ import hashlib
 import importlib.util
 import json
 import re
+import sys
 from collections import Counter
+from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
@@ -66,8 +68,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 2426,
-        "validation": 218,
+        "train": 2626,
+        "validation": 242,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
@@ -105,6 +107,7 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "v7_selector_clarification": 3,
         "v7_tool_outcome": 2,
         "v7_list_transactions_limit": 20,
+        "long_context_tool_fidelity": 200,
     }
     service_case_records = [
         record
@@ -671,8 +674,10 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        "train": 2426,
-        "validation": 218,
+        # +200 train / +24 validation from _long_context_tool_fidelity; the test
+        # split is a closed list of five builders and stays frozen at 35.
+        "train": 2626,
+        "validation": 242,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
@@ -768,7 +773,7 @@ def _export_alignment_requests(tmp_path: Path, base_dir: Path) -> list[dict[str,
     rows = [
         json.loads(line) for line in requests.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert len(rows) == 2426 + 218
+    assert len(rows) == 2626 + 242
     return rows
 
 
@@ -1071,3 +1076,278 @@ def test_targeted_reference_families_widen_the_train_margin() -> None:
         for wrapper in wrappers:
             wrapped = wrapper.format(prompt=prompt)
             assert not alignment_data._word_ngrams(wrapped, size=4) & held_out_ngrams
+
+
+# The V9 adapter answered a lexically misleading turn at roughly 980 rendered tokens
+# by naming a tool that does not exist. _long_context_tool_fidelity is the curriculum
+# that corrects it, so these tests pin the three properties that make a row useful:
+# it is long, it labels exactly one call, and that call names the right real tool.
+LONG_CONTEXT_FAMILY = "long_context_tool_fidelity"
+# Independent restatement of the decoy -> correct-tool map, keyed on the record id
+# prefix, so a change to the curriculum's own table cannot silently agree with itself.
+LONG_CONTEXT_EXPECTED_TOOLS = {
+    "longctx_address_case": "list_service_cases",
+    "longctx_statement_lines": "list_transactions",
+    "longctx_pin_reissue": "list_cards",
+    "longctx_dispute_status": "list_transactions",
+    "longctx_standing_order": "list_transfers",
+    "longctx_balance_position": "list_accounts",
+    "longctx_lost_card": "freeze_card",
+    "longctx_new_card_order": "replace_card",
+    "longctx_chargeback": "dispute_transaction",
+    "longctx_stop_payment": "cancel_transfer",
+}
+LONG_CONTEXT_DECOY_TOOLS = (
+    "list_addresses",
+    "get_statement",
+    "list_pin_requests",
+    "list_disputes",
+    "list_standing_orders",
+    "get_balance_sheet",
+    "report_lost_card",
+    "order_card",
+    "open_chargeback",
+    "stop_payment",
+)
+LONG_CONTEXT_TRAINER_PATH = Path("scripts/retail_bank/cloud_train_tool_sft.py")
+LONG_CONTEXT_TOKENIZER = "ibm-granite/granite-4.1-8b"
+
+
+def _long_context_rows(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        record for record in records if record["metadata"]["scenario_family"] == LONG_CONTEXT_FAMILY
+    ]
+
+
+def _long_context_target_call(record: dict[str, Any]) -> dict[str, Any]:
+    calls = [
+        call
+        for message in record["messages"]
+        if message["role"] == "assistant" and message.get("loss") is True
+        for call in message.get("tool_calls") or ()
+    ]
+    assert len(calls) == 1, f"{record['record_id']} must label exactly one tool call"
+    return calls[0]
+
+
+def _real_rendered_tokens(records: Sequence[dict[str, Any]]) -> list[int] | None:
+    """Render exactly as the trainer does, or None when the tokenizer is unavailable."""
+
+    try:
+        from transformers import AutoTokenizer
+
+        from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
+        from hello_slm.banking_tool_wire import ToolWireAdapter
+
+        spec = importlib.util.spec_from_file_location(
+            "cloud_train_tool_sft_for_length", LONG_CONTEXT_TRAINER_PATH
+        )
+        assert spec is not None and spec.loader is not None
+        trainer = importlib.util.module_from_spec(spec)
+        # The worker declares frozen dataclasses, which resolve their annotations
+        # through sys.modules, so the module has to be registered before it executes.
+        sys.modules[spec.name] = trainer
+        spec.loader.exec_module(trainer)
+        tokenizer = AutoTokenizer.from_pretrained(LONG_CONTEXT_TOKENIZER, local_files_only=True)
+    except Exception:  # pragma: no cover - exercised only where the snapshot is absent
+        return None
+
+    adapter = ToolWireAdapter(
+        tokenizer,
+        family="granite",
+        public_tool_manifest=tool_sft_data.public_tool_manifest(),
+        pad_to_max_length=False,
+    )
+    lengths = []
+    for record in records:
+        rendered = adapter._render_messages(
+            messages_with_record_turn_guidance(record),
+            add_generation_prompt=False,
+            tools=trainer.training_tools_for_record(record, adapter),
+        )
+        lengths.append(len(adapter._encode(rendered)))
+    return lengths
+
+
+def test_long_context_curriculum_reaches_train_and_validation_only() -> None:
+    splits, report = build_servicing_alignment_splits()
+
+    assert len(_long_context_rows(splits["train"])) == 200
+    assert len(_long_context_rows(splits["validation"])) == 24
+    assert _long_context_rows(splits["test"]) == []
+    assert report["scenario_family_counts"]["test"].get(LONG_CONTEXT_FAMILY) is None
+
+    # The frozen gates are built from their own curricula and must stay clear of it.
+    assert _long_context_rows(build_coreference_shadow_gate()) == []
+    assert _long_context_rows(alignment_data.build_granite_v7_shadow_gate()) == []
+    fixture_ids = {str(row.get("record_id", "")) for row in build_screenshot_regression_fixture()}
+    assert not any(record_id.startswith("longctx_") for record_id in fixture_ids)
+
+    # No row may join the coreference dev-gate population.
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            assert "coreference_pair_id" not in record["metadata"]
+            assert record["expected"]["path"] == "multi_turn"
+
+
+def test_long_context_rows_label_exactly_one_call_naming_the_correct_tool() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    manifest_names = {tool["function"]["name"] for tool in tool_sft_data.public_tool_manifest()}
+    assert manifest_names.isdisjoint(LONG_CONTEXT_DECOY_TOOLS)
+
+    covered = set()
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            template_id = record["split_keys"]["template_id"]
+            expected_tool = LONG_CONTEXT_EXPECTED_TOOLS[template_id]
+            call = _long_context_target_call(record)
+            assert call["function"]["name"] == expected_tool
+            assert call["function"]["name"] in manifest_names
+            # A single-tool contract is the whole point: a record with more than one
+            # target tool falls back to all-tool rendering and teaches nothing here.
+            contract = record["expected"]["generation_contract"]
+            assert contract["mode"] == "execute_tool"
+            assert contract["tool_names"] == [expected_tool]
+            assert record["expected"]["tool_calls"] == [
+                {"name": expected_tool, "arguments": call["function"]["arguments"]}
+            ]
+            covered.add(expected_tool)
+
+    assert covered == set(LONG_CONTEXT_EXPECTED_TOOLS.values())
+    assert len(covered) == 9
+
+
+def test_long_context_write_tool_selectors_are_stated_in_the_history() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    write_tools = {"freeze_card", "replace_card", "dispute_transaction", "cancel_transfer"}
+
+    checked = 0
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            call = _long_context_target_call(record)
+            if call["function"]["name"] not in write_tools:
+                continue
+            selector = next(iter(call["function"]["arguments"].values()))
+            history = [
+                str(message["content"])
+                for message in record["messages"][: _long_context_current_index(record)]
+                if message["role"] == "assistant" and isinstance(message["content"], str)
+            ]
+            assert any(str(selector) in text for text in history), record["record_id"]
+            assert record["expected"]["generation_contract"]["entity_state"] == "resolved"
+            checked += 1
+
+    assert checked == 4 * 4 * 5 + 9
+
+
+def _long_context_current_index(record: dict[str, Any]) -> int:
+    return max(
+        index for index, message in enumerate(record["messages"]) if message["role"] == "user"
+    )
+
+
+def test_long_context_tool_call_ids_follow_the_stable_id_convention() -> None:
+    splits, _report = build_servicing_alignment_splits()
+
+    tiers = Counter()
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            record_id = record["record_id"]
+            context_ids = []
+            target_ids = []
+            for index, message in enumerate(record["messages"]):
+                calls = message.get("tool_calls") or ()
+                if not calls:
+                    continue
+                assert message["role"] == "assistant"
+                assert message["content"] is None
+                assert len(calls) == 1
+                call = calls[0]
+                assert call["index"] == 0
+                result = record["messages"][index + 1]
+                assert result["role"] == "tool"
+                assert result["tool_call_id"] == call["id"]
+                assert result["name"] == call["function"]["name"]
+                if message["loss"] is True:
+                    target_ids.append(call["id"])
+                else:
+                    context_ids.append(call["id"])
+            assert target_ids == [f"call_{record_id}_0"]
+            assert context_ids == [
+                f"context_{record_id}_{index}" for index in range(len(context_ids))
+            ]
+            tiers[len(context_ids)] += 1
+
+    # 20% of each split is the tier that carries two context tool-call pairs.
+    assert tiers == Counter({0: 160 + 20, 2: 40 + 4})
+
+
+def test_long_context_rows_sit_in_the_measured_defect_length_band() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    rows = _long_context_rows(splits["train"]) + _long_context_rows(splits["validation"])
+
+    # The char proxy brackets the render from both sides; the ceiling is the guard
+    # that matters, because ToolWireAdapter._select_whole_chain_suffix would silently
+    # drop the earliest chains above max_seq_len and train a truncated history.
+    for record in rows:
+        floor, ceiling = alignment_data._long_context_rendered_token_bounds(record)
+        assert ceiling <= alignment_data.LONG_CONTEXT_MAX_RENDERED_TOKENS, record["record_id"]
+        assert floor >= alignment_data.LONG_CONTEXT_MIN_RENDERED_TOKENS - 120
+
+    lengths = _real_rendered_tokens(rows)
+    if lengths is None:
+        pytest.skip("granite tokenizer snapshot is not available for an exact render")
+    assert min(lengths) > 800
+    assert max(lengths) < alignment_data.LONG_CONTEXT_MAX_RENDERED_TOKENS
+    # The measured defect sits near 980 tokens, so the curriculum must reach past it.
+    assert sum(1 for length in lengths if length > 1100) >= 1
+    for record, length in zip(rows, lengths, strict=True):
+        floor, ceiling = alignment_data._long_context_rendered_token_bounds(record)
+        assert floor <= length <= ceiling, record["record_id"]
+
+
+def test_long_context_currents_and_finals_are_globally_unique() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    every = [record for split in ("train", "validation", "test") for record in splits[split]]
+    new_ids = {
+        record["record_id"]
+        for split in ("train", "validation")
+        for record in _long_context_rows(splits[split])
+    }
+    assert len(new_ids) == 224
+
+    currents = Counter(_normalize(_last_user(record)) for record in every)
+    finals = Counter(_normalize(_long_context_final(record)) for record in every)
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            assert currents[_normalize(_last_user(record))] == 1, record["record_id"]
+            assert finals[_normalize(_long_context_final(record))] == 1
+
+
+def test_long_context_currents_share_no_long_ngram_with_the_held_out_fixtures() -> None:
+    splits, _report = build_servicing_alignment_splits()
+    heldout = set().union(
+        *(alignment_data._word_ngrams(text, size=4) for text in SCREENSHOT_HELDOUT_CURRENTS)
+    )
+    granite = set().union(
+        *(
+            alignment_data._word_ngrams(_last_user(record), size=4)
+            for record in alignment_data.build_granite_v7_shadow_gate()
+        )
+    )
+    shadow_prompts = {_normalize(_last_user(record)) for record in build_coreference_shadow_gate()}
+
+    for split in ("train", "validation"):
+        for record in _long_context_rows(splits[split]):
+            current = _last_user(record)
+            assert not alignment_data._word_ngrams(current, size=4) & heldout
+            assert not alignment_data._word_ngrams(current, size=4) & granite
+            assert _normalize(current) not in shadow_prompts
+            assert _normalize(current) not in tool_sft_data.POC_PRESET_KEYS
+
+
+def _long_context_final(record: dict[str, Any]) -> str:
+    for message in reversed(record["messages"]):
+        if message["role"] == "assistant" and not message.get("tool_calls"):
+            return str(message["content"])
+    raise AssertionError("missing final assistant message")

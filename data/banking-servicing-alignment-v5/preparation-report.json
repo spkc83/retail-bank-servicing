@@ -4,22 +4,22 @@
     "train": {
       "clarify": 964,
       "converse": 13,
-      "execute_tool": 1384,
+      "execute_tool": 1584,
       "refuse_ood": 32,
       "retrieve_policy": 33
     },
     "validation": {
       "clarify": 28,
       "converse": 5,
-      "execute_tool": 168,
+      "execute_tool": 192,
       "refuse_ood": 8,
       "retrieve_policy": 9
     }
   },
   "alignment_split_counts": {
     "test": 35,
-    "train": 2426,
-    "validation": 218
+    "train": 2626,
+    "validation": 242
   },
   "alignment_teacher_realization": {
     "model": "claude-opus-5",
@@ -48,14 +48,14 @@
     "train": {
       "clarify": 1000,
       "converse": 178,
-      "execute_tool": 1783,
+      "execute_tool": 1983,
       "refuse_ood": 58,
       "retrieve_policy": 248
     },
     "validation": {
       "clarify": 28,
       "converse": 44,
-      "execute_tool": 273,
+      "execute_tool": 297,
       "refuse_ood": 17,
       "retrieve_policy": 35
     }
@@ -72,7 +72,7 @@
     "train": {
       "clarification": 964,
       "conversation": 13,
-      "multi_turn": 1232,
+      "multi_turn": 1432,
       "ood": 32,
       "retrieval_grounded_policy": 33,
       "tool_error": 65,
@@ -81,7 +81,7 @@
     "validation": {
       "clarification": 28,
       "conversation": 5,
-      "multi_turn": 128,
+      "multi_turn": 152,
       "ood": 8,
       "retrieval_grounded_policy": 9,
       "tool_error": 17,
@@ -111,6 +111,7 @@
       "external_topic_shift": 32,
       "history_entity_action": 128,
       "history_entity_ambiguity": 32,
+      "long_context_tool_fidelity": 200,
       "missing_entity_clarification": 1,
       "natural_social_style": 12,
       "policy_detour": 32,
@@ -135,6 +136,7 @@
       "external_topic_shift": 8,
       "history_entity_action": 32,
       "history_entity_ambiguity": 8,
+      "long_context_tool_fidelity": 24,
       "missing_entity_clarification": 1,
       "natural_social_style": 4,
       "policy_detour": 8,
@@ -152,7 +154,7 @@
   },
   "split_counts": {
     "test": 215,
-    "train": 3267,
-    "validation": 397
+    "train": 3467,
+    "validation": 421
   }
 }
