@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from model_service import ToolCall
 from response_policy import (
     build_customer_experience_repair_messages,
@@ -379,7 +381,9 @@ def test_zero_tool_answers_must_not_claim_retrieved_account_data() -> None:
     assert not balance.valid
     assert not shows.valid
     assert not looked_up.valid
-    assert any("without tool evidence" in error for error in pin.errors)
+    # the PIN is caught by the stronger credential rule, which needs no evidence test
+    assert any("knowledge of a credential" in error for error in pin.errors)
+    assert any("without tool evidence" in error for error in balance.errors)
 
 
 def test_claims_attributed_to_the_conversation_are_not_retrieval_claims() -> None:
@@ -394,8 +398,83 @@ def test_claims_attributed_to_the_conversation_are_not_retrieval_claims() -> Non
         "I found the card you mentioned earlier. Which one should I freeze?", ()
     )
 
+    bypass = validate_no_unsupported_action_claims(
+        "I found the current PIN in our conversation.", ()
+    )
+
     assert corpus.valid
     assert mentioned.valid
+    assert not bypass.valid  # attribution never launders a credential claim
+
+
+def test_credential_claims_are_rejected_whatever_the_evidence() -> None:
+    """No published tool returns a PIN, so no evidence can ground knowing one."""
+
+    evidence = ({"ok": True, "result": {"card": {"last4": "4821"}}},)
+    conversation = [{"role": "tool", "tool_call_id": "c1", "name": "list_cards", "content": "{}"}]
+
+    for text in (
+        "I found the current PIN in the account information.",
+        "Your current PIN is 4821.",
+        "Your PIN is on file as 4821.",
+        "We have your passcode on file.",
+        "I checked and your account number is 12345678.",
+    ):
+        assert not validate_no_unsupported_action_claims(text, ()).valid, text
+        assert not validate_no_unsupported_action_claims(text, evidence).valid, text
+        assert not validate_no_unsupported_action_claims(
+            text, (), conversation=conversation
+        ).valid, text
+
+
+def test_credential_refusals_and_safety_advice_stay_valid() -> None:
+    for text in (
+        "I can not look up a PIN from this conversation. You can change it in a branch.",
+        "Never share your PIN with anyone, including Harborlight Bank staff.",
+        "I do not have access to your PIN. Please call the number on the back of your card.",
+    ):
+        assert validate_no_unsupported_action_claims(text, ()).valid, text
+
+
+def test_retrieval_claims_split_across_sentences_are_still_rejected() -> None:
+    """A period between the claim and the datum must not defeat the guard."""
+
+    for text in (
+        "I checked. Your balance is 1,240.00.",
+        "I've checked for you. The available balance is 1,240.00.",
+        "We found your account.",
+        "I looked up the standing order to River Consulting.",
+    ):
+        assert not validate_no_unsupported_action_claims(text, ()).valid, text
+
+
+def test_values_already_stated_in_the_dialogue_are_not_fabrications() -> None:
+    """The shipped coreference clarification names last-4s listed the turn before."""
+
+    conversation = [
+        {"role": "user", "content": "I need to replace a card."},
+        {
+            "role": "assistant",
+            "content": "You have Harbor Everyday Debit ending in 6101 and "
+            "Harbor Everyday Credit ending in 8101.",
+        },
+        {"role": "user", "content": "replace that card"},
+    ]
+
+    grounded = validate_no_unsupported_action_claims(
+        "I found Harbor Everyday Debit ending in 6101 and Harbor Everyday Credit "
+        "ending in 8101. Which card should I replace?",
+        (),
+        conversation=conversation,
+    )
+    invented = validate_no_unsupported_action_claims(
+        "I found Harbor Everyday Debit ending in 9999. Which card should I replace?",
+        (),
+        conversation=conversation,
+    )
+
+    assert grounded.valid
+    assert not invented.valid
 
 
 def test_retrieved_data_claims_are_allowed_when_tool_evidence_exists() -> None:
@@ -503,19 +582,25 @@ def test_explicit_denial_language_is_not_an_action_claim() -> None:
     assert validation.valid
 
 
-def test_guard_never_rejects_the_shipped_servicing_alignment_corpus() -> None:
-    train_path = REPO_ROOT / "data" / "banking-servicing-alignment-v5" / "train.jsonl"
+@pytest.mark.parametrize(
+    "corpus",
+    ["banking-servicing-alignment-v5", "banking-v5-tool-sft"],
+)
+@pytest.mark.parametrize("split", ["train", "validation", "test"])
+def test_guard_never_rejects_the_shipped_corpora(corpus: str, split: str) -> None:
+    """Every split, and stripped exactly as the runtime strips before validating."""
+
+    path = REPO_ROOT / "data" / corpus / f"{split}.jsonl"
     rejections: list[tuple[str, tuple[str, ...]]] = []
-    with train_path.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             record = json.loads(line)
             messages = record["messages"]
             final = messages[-1]
             if final.get("role") != "assistant" or not isinstance(final.get("content"), str):
                 continue
-            validation = validate_no_unsupported_action_claims(
-                final["content"], (), conversation=messages
-            )
+            answer = strip_realizer_filler(final["content"]) or final["content"]
+            validation = validate_no_unsupported_action_claims(answer, (), conversation=messages)
             if not validation.valid:
                 rejections.append((record.get("record_id"), validation.errors))
 

@@ -257,25 +257,50 @@ COMPLETED_ACTION_CLAIMS = re.compile(
 )
 
 
-# A zero-tool turn carries no evidence at all, so it must not claim to have READ
-# anything either. Observed on the released v8 adapter, verbatim and reproducibly,
-# with no tool call in the turn: "I found the current PIN in the account
-# information. What new PIN should I use?" -- a fabricated credential lookup that
-# the completed-action patterns above do not match.
+# Credentials are absolute. No tool in the published manifest returns a PIN,
+# passcode, password, security code or a full account/card number, so NO evidence
+# can ever ground a claim to know one -- this rule runs before the evidence check.
+# Observed on the released v8 adapter, verbatim and reproducibly, with no tool call
+# in the turn: "I found the current PIN in the account information."
+_CREDENTIAL_NOUNS = (
+    r"(?:pin|passcode|password|security code|cvv|cvc|"
+    r"full (?:account|card) number|account number)"
+)
+CREDENTIAL_CLAIMS = re.compile(
+    rf"(?:\b(?:I|we)(?:'ve| have)?\s+(?:found|have|know|see|checked|retrieved|located|"
+    rf"pulled up|pulled|looked up|verified|confirmed)\b[^.!?]*?\b{_CREDENTIAL_NOUNS}\b"
+    rf"|\b{_CREDENTIAL_NOUNS}\b[^.!?]*?\b(?:is|was|are)\b\s*(?:on file|\d))",
+    re.IGNORECASE,
+)
+# Refusals and safety advice name the same nouns and must stay valid:
+# "I can't look up a PIN", "never share your PIN", "you can change your PIN in branch".
+_DENIAL = re.compile(
+    r"(?:\bn't\b|\bnot\b|\bnothing\b|\bnever\b|\bcannot\b|\bcan not\b|\bunable\b|"
+    r"\bno access\b|\bdo not\b|\bwill not\b|\bonly asked\b|n’t\b)",
+    re.IGNORECASE,
+)
+
+# Beyond credentials, a turn with no tool evidence must not claim to have READ
+# account data either. Checked over a two-sentence window because the claim and
+# the datum are routinely split ("I checked. Your balance is 1,240.").
 RETRIEVAL_CLAIM_VERBS = re.compile(
-    r"(?:\bI(?:'ve| have)? (?:found|checked|looked up|pulled up|located|retrieved|"
-    r"verified|confirmed)\b|\byour (?:account|records|profile) (?:shows?|holds?|lists?|has)\b"
-    r"|\baccording to (?:your|our) (?:account|records)\b)",
+    r"(?:\b(?:I|we)(?:'ve| have)?\s+(?:found|checked|looked up|pulled up|pulled|located|"
+    r"retrieved|verified|confirmed|see)\b"
+    r"|\b(?:your|our)\s+(?:account|records|profile|file)\s+(?:shows?|holds?|lists?|has|have)\b"
+    r"|\baccording to (?:your|our) (?:account|records|file)\b"
+    r"|\b(?:looking at|based on) (?:your|the) (?:account|records|profile|file)\b)",
     re.IGNORECASE,
 )
 ACCOUNT_DATA_NOUNS = re.compile(
-    r"\b(?:pin|balances?|cards?|accounts?|transactions?|transfers?|service cases?|"
-    r"cases?|statements?|disputes?|address|limits?)\b",
+    r"\b(?:pin|balances?|cards?|accounts?|transactions?|transfers?|service cases?|cases?|"
+    r"statements?|disputes?|address|limits?|mortgages?|standing orders?|direct debits?|"
+    r"cheques?|overdrafts?|reward points?)\b",
     re.IGNORECASE,
 )
 # Naming the dialogue as the source is legitimate grounding: the shipped corpus
 # clarifies with "I found two cards in our conversation." That is a reference to
-# what was already said, not a claim to have read a backend record.
+# what was already said, not a claim to have read a backend record. It is NOT an
+# escape hatch for credentials -- CREDENTIAL_CLAIMS is checked first and ignores it.
 CONVERSATION_ATTRIBUTION = re.compile(
     r"\b(?:in (?:our|this) conversation|earlier in (?:our|this) (?:chat|conversation)|"
     r"you (?:mentioned|said|shared|told me)|from your (?:message|last message)|"
@@ -283,6 +308,39 @@ CONVERSATION_ATTRIBUTION = re.compile(
     re.IGNORECASE,
 )
 _CLAIM_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_CLAIM_DIGITS = re.compile(r"\d[\d,.]*\d|\d")
+
+
+def _conversation_text(conversation: Sequence[Mapping[str, Any]]) -> str:
+    """Everything the dialogue has already said, tool envelopes included."""
+
+    parts: list[str] = []
+    for message in conversation:
+        if not isinstance(message, Mapping):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif content is not None:
+            parts.append(json.dumps(content, sort_keys=True))
+        for call in message.get("tool_calls") or []:
+            parts.append(json.dumps(call, sort_keys=True, default=str))
+    return " ".join(parts)
+
+
+def _values_are_traceable(window: str, conversation_text: str) -> bool:
+    """Every number the claim states must already appear in the dialogue.
+
+    This is what separates the shipped clarification "I found Harbor Everyday Debit
+    ending in 6101 and Harbor Everyday Credit ending in 8101." -- whose last-4s were
+    listed in the turn before -- from an invented "Your balance is 1,240.00."
+    """
+
+    digits = [d.strip(",.") for d in _CLAIM_DIGITS.findall(window)]
+    digits = [d for d in digits if d]
+    if not digits:
+        return bool(conversation_text.strip())
+    return all(digit in conversation_text for digit in digits)
 
 
 def validate_no_unsupported_action_claims(
@@ -290,43 +348,63 @@ def validate_no_unsupported_action_claims(
     results: Sequence[Mapping[str, Any]],
     conversation: Sequence[Mapping[str, Any]] = (),
 ) -> GroundingValidation:
-    """Zero-tool turns must never assert a completed banking action or state change.
+    """Reject claims a turn cannot support: completed actions, retrieved account
+    data, and -- unconditionally -- knowledge of a credential.
 
-    Evidence is either a current-turn tool result in ``results`` or a prior
-    ``role == "tool"`` message anywhere in ``conversation`` — the same trusted
-    channel ``ground_servicing_decision`` consumes (entity_grounding.py).
+    Evidence for the first two is a current-turn tool result in ``results`` or a
+    prior ``role == "tool"`` message anywhere in ``conversation`` -- the same
+    trusted channel ``ground_servicing_decision`` consumes (entity_grounding.py).
+
+    Known limitation: that evidence test is per session, not per datum, so a
+    stale ``list_accounts`` result also clears a later claim about, say, cards.
+    Credentials are deliberately outside it, because no tool returns one.
     """
 
+    if not isinstance(answer, str):
+        return GroundingValidation(False, ("final answer is not text",))
+    for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
+        if _DENIAL.search(sentence) is not None:
+            continue
+        credential = CREDENTIAL_CLAIMS.search(sentence)
+        if credential is not None:
+            return GroundingValidation(
+                False,
+                (
+                    f"answer claims knowledge of a credential ({credential.group(0)!r}); "
+                    "no tool can supply one",
+                ),
+            )
     has_prior_tool_evidence = any(
         isinstance(message, Mapping) and message.get("role") == "tool"
         for message in conversation
     )
     if results or has_prior_tool_evidence:
         return GroundingValidation(True, ())
-    if not isinstance(answer, str):
-        return GroundingValidation(False, ("final answer is not text",))
     match = COMPLETED_ACTION_CLAIMS.search(answer)
     if match is not None:
         return GroundingValidation(
             False,
             (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
         )
-    # Retrieval claims are checked per sentence: a lookup verb and the account-data
-    # noun it claims to have read must appear together, so offers to help ("I can
-    # help with cards"), clarifying questions and policy prose stay valid.
-    for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
+    sentences = _CLAIM_SENTENCE_SPLIT.split(answer)
+    for index, sentence in enumerate(sentences):
         verb = RETRIEVAL_CLAIM_VERBS.search(sentence)
         if verb is None:
             continue
-        noun = ACCOUNT_DATA_NOUNS.search(sentence)
+        window = " ".join(sentences[index : index + 2])
+        if _DENIAL.search(window) is not None:
+            continue
+        noun = ACCOUNT_DATA_NOUNS.search(window)
         if noun is None:
             continue
-        if CONVERSATION_ATTRIBUTION.search(sentence) is not None:
+        if CONVERSATION_ATTRIBUTION.search(window) is not None:
+            continue
+        if _values_are_traceable(window, _conversation_text(conversation)):
             continue
         return GroundingValidation(
             False,
             (
-                f"answer claims retrieved account data ({verb.group(0)!r} … "
+                f"answer claims retrieved account data ({verb.group(0)!r} \u2026 "
                 f"{noun.group(0)!r}) without tool evidence",
             ),
         )
