@@ -14,9 +14,10 @@ contract, and run either interface.
 | Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |
-| Granite PEFT adapter | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
+| Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@bab5b2237b22814ede6a76c6c5ac2a1354097d44`; authenticated chat smoke pending |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@08f31b7b981805b15399dc8f8182c56134413701`; authenticated chat smoke pending |
 
 ## Read in This Order
 

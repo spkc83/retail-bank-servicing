@@ -14,7 +14,7 @@ artifact.
 | Local dataset | `data/banking-conversation-router-v8-first-turn-mutation` |
 | Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@bab5b2237b22814ede6a76c6c5ac2a1354097d44` |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@08f31b7b981805b15399dc8f8182c56134413701` |
 | ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
 
 ### Dataset files
@@ -48,7 +48,8 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 
 | Component | Identity |
 | --- | --- |
-| PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
+| PEFT release (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; adapter_config.json lives under `adapter/`, so the runtime needs `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |

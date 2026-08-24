@@ -14,8 +14,8 @@ bank data.
 | Component | Identity |
 | --- | --- |
 | Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
-| Granite adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
+| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e` |
+| Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10 publish nested `adapter_config.json`, and PEFT reads the repo root without it |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
@@ -164,29 +164,64 @@ response. The Gradio queue uses concurrency one for this low-traffic POC.
 Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
-ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
+ADAPTER_REVISION=055ce38af4595b1e139a9e9baea8e0c53cba7c2e
 ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
   --adapter-revision "$ADAPTER_REVISION" \
+  --adapter-subfolder adapter \
   --model-dtype bf16 \
   --router-id spkc83/retail-bank-conversation-router \
-  --router-revision "$ROUTER_REVISION"
+  --router-revision "$ROUTER_REVISION" \
+  --best-of-n 2
 ```
 
 Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`bab5b2237b22814ede6a76c6c5ac2a1354097d44`. The runtime is **RUNNING**. An
-authenticated chat smoke on a ZeroGPU RTX PRO 6000 worker using the pinned
-BF16 base-plus-adapter composition is pending.
+`08f31b7b981805b15399dc8f8182c56134413701`, deployed 2026-08-24. The runtime is **RUNNING** on `zero-a10g` and
+serves v10. Because `PeftModel.from_pretrained` runs at module scope, a missing
+or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than
+as a per-request failure. An authenticated chat smoke is still pending: the demo
+credentials live in the `DEMO_AUTH_JSON` Space secret, whose value the API does
+not expose, so `smoke_zero_gpu_space.py` cannot log in unattended.
+
+## Measuring the Live Agent
+
+Drive the agent in process rather than through the browser. One runtime load, a
+fresh session per case, no Streamlit session lifecycle to fight:
+
+```bash
+export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx
+export RETAIL_BANK_MODEL_REVISION=055ce38af4595b1e139a9e9baea8e0c53cba7c2e
+export RETAIL_BANK_ADAPTER_ID="$RETAIL_BANK_MODEL_ID"
+export RETAIL_BANK_ADAPTER_REVISION="$RETAIL_BANK_MODEL_REVISION"
+export RETAIL_BANK_ADAPTER_SUBFOLDER=adapter
+export RETAIL_BANK_BASE_MODEL_ID=spkc83/retail-bank-servicing-agent-9b
+export RETAIL_BANK_BASE_MODEL_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817
+export LOCAL_ROUTER_ARTIFACT_DIR=artifacts/banking-conversation-router-v8-first-turn-mutation
+export HF_TOKEN=$(cat ~/.cache/huggingface/token)
+
+uv run scripts/retail_bank/inproc_long_session_sweep.py v10 --out /tmp/sweeps
+```
+
+It calls `LocalBankingController.run_turn` directly and records the reply, the
+route, the executed tools, and the model-pass labels per case, so a run is
+inspectable afterwards instead of being scraped from the DOM. Budget roughly five
+minutes for the runtime load plus forty seconds per turn on the TITAN V.
+
+Read the results as two numbers, not one. "Protocol-clean" counts turns that
+avoided the fallback; it scores a fabricated answer as a success and an honest
+"I couldn't complete that request" as a failure. Always check the replies for
+substance alongside it -- v10 measured 8/8 protocol-clean while only 4/8 were
+substantively correct, and two of the eight were fabrications.
 
 ## Verify
 

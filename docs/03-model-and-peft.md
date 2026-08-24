@@ -178,7 +178,10 @@ The final PEFT release revision `cc95e446...` was the v7 inference identity.
 The bundle commit `b4269445...` proves which adapter files it contains;
 neither rejected merged checkpoint is an inference substitute. The current
 inference identity is the v8 adapter
-`spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation` at revision
+`spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx` at revision
+`055ce38af4595b1e139a9e9baea8e0c53cba7c2e`. Its `adapter_config.json` is published under `adapter/`, so both runtimes
+need `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`; PEFT reads the repo root otherwise and fails with a 404.
+The previously deployed adapter was `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation` at
 `badbc05ad1f861818ea244b462eda49bca6c6fca`.
 
 ## Rebuilding on New Infrastructure

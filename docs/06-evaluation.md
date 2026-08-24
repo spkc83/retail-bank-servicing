@@ -71,7 +71,11 @@ spkc83/retail-bank-servicing-alignment-sft
 9d7aed545604bb42fb02b7a0919427a0ed2b81e2
 ```
 
-The active evaluation composition is:
+The evaluated composition is v8. The deployed adapter is now
+`spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`,
+which has **not** been through this harness -- it was gated on the dev and shadow
+behavioural suites and on the long-session sweep only. Treat the numbers below as
+v8 numbers:
 
 ```text
 base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817

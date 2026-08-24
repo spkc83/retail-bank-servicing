@@ -18,7 +18,12 @@ Router release:
   spkc83/retail-bank-conversation-router
   dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
-Granite PEFT:
+Granite PEFT (deployed):
+  spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx
+  055ce38af4595b1e139a9e9baea8e0c53cba7c2e
+  adapter subfolder: adapter
+
+Granite PEFT (last evaluated):
   spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation
   badbc05ad1f861818ea244b462eda49bca6c6fca
 
@@ -134,6 +139,23 @@ PY
 
 The release selected epoch 2 and passed every gate.
 
+> **A rebuild at HEAD does not reproduce that result.** Retraining the router from
+> the current corpus fails five gates -- `in_domain_false_refusal_rate` 0.021,
+> `repair_false_refusal_rate` 0.024, and `heldout_regression_{route,intent,relation}`
+> 0.222 / 0.250 / 0.111, all of which the shipped artifact scores at 0.0. Bisected to
+> the coreference phrase-family commits (`b21589e` + `eca2e01`, 2026-08-21): they
+> expand the `deictic_replace_*` templates, the router inherits them through
+> `_row_from_sft_record`, and `_synthetic_generalization_rows` amplifies that into
+> +669 train rows, which pushes agent-repair turns below the in-domain threshold.
+> `LearnedConversationRouter.from_artifact_dir` refuses to load a gate-failing
+> artifact, so a rebuilt router cannot be used even accidentally. Until this is
+> resolved, keep using the shipped artifact and do not republish the router.
+> Reproduce with `bisect_at.sh <commit>` (see the plan note dated 2026-08-24).
+>
+> Excluding the deictic curricula is **not** the fix: it drops train to 16,483 and
+> `load_governed_data` then refuses outright, because the counterfactual
+> action/entity pairs every split requires come from that curriculum.
+
 ## 5. Publish the Router
 
 Publication requires the exact dataset revision:
@@ -177,27 +199,30 @@ exposed tool schema, model passes, and immutable revisions.
 ## 7. Plan and Execute ZeroGPU Deployment
 
 ```bash
-ADAPTER_REVISION=badbc05ad1f861818ea244b462eda49bca6c6fca
+ADAPTER_REVISION=055ce38af4595b1e139a9e9baea8e0c53cba7c2e
 ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
   --adapter-revision "$ADAPTER_REVISION" \
+  --adapter-subfolder adapter \
   --model-dtype bf16 \
   --router-id spkc83/retail-bank-conversation-router \
-  --router-revision "$ROUTER_REVISION"
+  --router-revision "$ROUTER_REVISION" \
+  --best-of-n 2
 ```
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source/pin deployment is
-`bab5b2237b22814ede6a76c6c5ac2a1354097d44`. The runtime is RUNNING with the
-pinned base, adapter, and router identities present in the returned
-diagnostics. Authenticated chat smoke on ZeroGPU is pending.
+`08f31b7b981805b15399dc8f8182c56134413701`, deployed 2026-08-24. The runtime is
+RUNNING on `zero-a10g` with the pinned base, adapter, and router identities.
+Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the
+`DEMO_AUTH_JSON` Space secret and are not readable through the API.
 
 ## Stop Conditions
 

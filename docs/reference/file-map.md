@@ -50,6 +50,7 @@ dd5ea26674a0f9808d42110a9ee51a9af6762a76
 | [`../../poc/retail-bank-customer-service-poc/mock_bank.py`](../../poc/retail-bank-customer-service-poc/mock_bank.py) | Fictional session-isolated bank state and action execution. |
 | [`../../scripts/retail_bank/deploy_zero_gpu_space.py`](../../scripts/retail_bank/deploy_zero_gpu_space.py) | Allowlisted Space upload, immutable runtime variables, and readiness wait. |
 | [`../../scripts/retail_bank/run_local_streamlit.py`](../../scripts/retail_bank/run_local_streamlit.py) | Pinned local launcher. |
+| [`../../scripts/retail_bank/inproc_long_session_sweep.py`](../../scripts/retail_bank/inproc_long_session_sweep.py) | In-process long-session sweep: drives `LocalBankingController.run_turn` directly, one runtime load, a fresh session per case, no browser. |
 
 ## Granite Data and Training
 
