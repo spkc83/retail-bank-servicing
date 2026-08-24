@@ -618,3 +618,78 @@ User picked (b) plus three runtime items. Delivered so far:
 Measured latency (local demo, v8): median 9 s/turn, two model passes, `corr(latency, input_tokens) = -0.29` and
 `corr(latency, answer length) = +0.67` — decode-bound, so prefix/KV caching is not worth building. Remaining speed levers are
 streaming status and speculative decoding, both Space-side.
+
+## v10 measured, and what it cost to measure (2026-08-24)
+
+**The v10 adapter was unloadable as published.** The publish wrote `adapter_config.json` only under `adapter/`, leaving a stray
+root `adapter_model.safetensors` with no config beside it; PEFT reads the root and 404s. The local demo therefore threw on every
+Streamlit rerun and re-entered the load — **1,894 load starts against v8's 3** — with no traceback in the log tail. Every earlier
+sweep failure blamed on Playwright, stale readiness gates or hot-reload was this. The adapter itself is intact (LoRA r=32,
+alpha=64, correct base, standard targets), so no retraining was needed. Fixed with an opt-in `RETAIL_BANK_ADAPTER_SUBFOLDER`
+(empty default keeps every pre-v10 adapter on the old path). Corollary: the "do not edit POC source while the demo runs"
+constraint was false — `run_local_streamlit.py` already passes `--server.fileWatcherType=none`.
+
+**Measurement moved in-process.** `inproc_sweep.py` drives `LocalBankingController.run_turn` directly: one runtime load, a fresh
+session hash per case, no browser and no Streamlit session lifecycle. Runtime ready in 499 s; the whole 8-case sweep then ran
+unattended. This is the harness to use for future sweeps.
+
+**v10 long-session sweep: 8/8 protocol-clean (v8 and v9-scratch2 were both 5/8) but 4/8 substantively correct.** No hallucinated
+tool name appeared anywhere — the prefill (item 4 above) is visibly working. But of the three cases v10 "fixed":
+
+| case | protocol | substance |
+|---|---|---|
+| requests | clean | correct (`list_service_cases`) |
+| statement | clean via `wrong_tool_retry_1` | **wrong tool** — answered a statement request with a transfers table |
+| pin | clean | **fabricated** — "Your PIN request is still pending", zero tool calls |
+| dispute | clean | **fabricated** — "No disputes are open on your account", zero tool calls |
+| scheduled | clean | **misleading** — "next week's transfers" over one cancelled and one completed transfer |
+
+v10 did not become more correct; it became more fluent at being wrong, and the fallback metric cannot see the difference.
+**Recommendation: do not repin the Space to v10** until the two items below land. Note the confound: this sweep ran at HEAD,
+which includes the prefill fix, while the 5/8 baselines predate it — v8-at-HEAD has not been run, so adapter credit and prefill
+credit are not yet separated.
+
+**Item 1 was incomplete.** The live `pin`/`dispute` replies pass `validate_no_unsupported_action_claims`: they carry no retrieval
+verb and no digits, so neither existing rule fires. Added `ACCOUNT_STATE_CLAIMS`, which rejects evidence-free assertions of
+account-object state ("Your standing order is active", "You have three open disputes") in the no-evidence branch only, gated on a
+closed set of state words so capability and refusal wording stays legal ("Your PIN can be changed in branch" passes). The
+`converse` and `clarify` turn guidance now also forbid stating the status of anything the turn was not shown, and `converse`
+must name what the assistant cannot do rather than promise it — applied to **both** copies, which
+`test_shared_and_standalone_poc_guidance_are_contract_equivalent` keeps byte-equal.
+
+## Router out-of-scope class: rows written, retrain blocked (2026-08-24)
+
+`other_banking` already exists in the taxonomy (`banking`/`other_banking`/`converse`, no tools) and already had 182 train rows —
+but its 91 distinct texts are ~55 credential-disclosure refusals and ~35 social pleasantries, with exactly one capability
+boundary. Its learned meaning is "someone is asking for their account number", so capability asks find no home. Measured on the
+shipped v8 router: **unsupported 2/19**, credential guard 5/5, in-scope controls 14/14.
+
+`_unsupported_capability_rows(split)` adds 80/26/26 rows over 8 families (statements, PIN, standing-order creation, personal
+details, account lifecycle, lending, money movement, misc services), half behind servicing history with `topic_shift` because the
+runtime failure appears at turn 5. Only mutation/creation phrasings: the service-cases fixture really does contain
+`| CS-104 | address change | closed |`, so "when was my mailing address changed?" → `view_service_cases` is correct and was left
+alone. Do-vs-ask contrast rows keep "How do standing orders work?" in `policy_knowledge`. Splits verified disjoint.
+
+**Blocked, and not by these rows.** A control build (HEAD with the generator stashed) showed HEAD already produces a
+gate-failing router: `in_domain_false_refusal_rate` 0.029, `repair_false_refusal_rate` 0.024, and
+`heldout_regression_{route,intent,relation}` 0.222/0.250/0.111 — where shipped v8 scores **0.0 on all five**, on the same 9
+held-out rows. `LearnedConversationRouter.from_artifact_dir` refuses to load a gate-failing artifact, so nothing can even be
+probed until this is fixed. The shipped router is unaffected; the defect is that rebuilding from HEAD yields a worse router.
+
+Two results worth recording, one of them a refuted hypothesis:
+
+- **SFT contamination is real but was not the cause.** The alignment corpus is shared with the 9B, so the 200
+  `long_context_tool_fidelity` rows entered the router corpus. Excluding them (`_SFT_ONLY_SCENARIO_FAMILIES`) removed 600 rows
+  and improved `in_domain_false_refusal_rate` 0.029 → 0.021 — but left the three held-out regression rates **byte-identical**.
+  The filter is worth keeping on its own merits; it is not the fix. The initial diagnosis ("my long-context rows destroyed OOD
+  detection") was wrong.
+- **The real failure is repair turns being false-refused.** By `banking_probability`, the two route misses are
+  "why are you repeating yourself" (0.411) and "I didn't ask about mortgage" (0.051), both of which must stay in-domain. The
+  weather row's *domain* call is correct; only its intent label is wrong. This matches `repair_false_refusal_rate` failing too.
+  Root cause is somewhere in the HEAD-vs-v8-build drift and is **not yet identified**.
+- **The new rows have a measured cost.** clean control (filter only) `in_domain_false_refusal_rate` 0.021067 vs clean treatment
+  (filter + rows) 0.028677. Teaching the router that many banking-shaped requests are `other_banking` costs in-domain
+  confidence. If these rows are revived, they need rebalancing.
+
+Next: bisect the router data pipeline between the v8 build and HEAD for the repair-turn regression. Until then item 4's router
+half cannot ship; its guidance half is landed and independent of routing.
