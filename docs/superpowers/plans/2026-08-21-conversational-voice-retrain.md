@@ -693,3 +693,75 @@ Two results worth recording, one of them a refuted hypothesis:
 
 Next: bisect the router data pipeline between the v8 build and HEAD for the repair-turn regression. Until then item 4's router
 half cannot ship; its guidance half is landed and independent of routing.
+
+## Guarded re-sweep: the fabrications are gone (2026-08-24)
+
+Same 8 cases, same adapter, with `ACCOUNT_STATE_CLAIMS` and the new turn guidance active
+(`inproc_v10guarded.jsonl`). Each layer caught a different case, which is what defence in depth is for.
+
+**`pin` was fixed at the prompt level and never fabricated at all.** Before: "Your PIN request is still pending."
+After: *"Your PIN request isn't something I can see from here, so I don't know whether it went through."* It passes the
+guard legitimately — the denial clause clears it — because there is no longer a claim to catch. This is the guidance
+working, not the validator.
+
+**`dispute` was caught by the guard** and collapsed to the honest fallback. The model still fabricated; the validator
+stopped it reaching the customer.
+
+| metric | v10 bare | v10 guarded |
+|---|---|---|
+| fabrications | 2/8 | **0/8** |
+| substantively acceptable | 4/8 | **6/8** |
+| protocol-clean | 8/8 | 7/8 |
+
+Protocol-clean falling to 7/8 is the intended direction: an honest "I couldn't complete that request" beats
+"No disputes are open on your account" invented from nothing, and the fallback metric scores it worse. Do not read that
+column as a regression.
+
+Replaying the guard over the eight pre-fix replies with production-shaped evidence (results present only where a tool
+actually ran): both zero-tool fabrications blocked, all six tool-grounded replies allowed — no false positives.
+
+Still wrong and **not** addressed by this fix: `statement` answers a statement request with a transfers table (routing,
+item 4) and `scheduled` summarises a cancelled and a completed transfer as "next week's transfers" (the `grounded_final`
+validator's business). The guard checks evidence, not correctness.
+
+## Router regression: root-caused (2026-08-24)
+
+Bisected in throwaway git worktrees, building the alignment corpus and the router corpus at each pinned commit into
+scratch directories; the shared `data/banking-servicing-alignment-v5` was never touched.
+
+| repo state | router train rows | gates |
+|---|---|---|
+| `ac56b8e` (2026-08-20 02:26, the state the shipped v8 dataset was built from) | 20,427 (v8 ships 20,439) | **release_eligible: true**, all rates 0.0 |
+| `eca2e01` (2026-08-21 09:16) | +669 vs v8 | fails 5 |
+| HEAD + long-context filter | +669 vs v8 | fails the same 5 |
+
+At `eca2e01` the failing rates are identical to HEAD's to every digit — `in_domain_false_refusal_rate` 0.021067,
+`repair_false_refusal_rate` 0.024390, held-out 0.222222 / 0.250000 / 0.111111. `git log eca2e01..HEAD` over
+`banking_conversation_router_data.py` and `banking_domain_taxonomy.py` shows only today's two commits, so nothing since
+`eca2e01` moved the needle.
+
+**Cause: the coreference phrase-family expansion** (`b21589e` "targeted list-reference phrase families" +
+`eca2e01` "shown-above and results phrase families"). Those commits rewrote and expanded the `deictic_replace_*`
+templates, which the router inherits through `_row_from_sft_record` and `_synthetic_generalization_rows` amplifies into
++669 train rows, concentrated in `banking_topic_shift` (+223), `external_topic_shift` (+223) and `visible_multiturn`
+(+101). The resulting boundary shift pushes agent-repair turns out of domain: "I didn't ask about mortgage" scores
+banking_probability 0.051 and "why are you repeating yourself" 0.411, both against a 0.5 in-domain threshold, and both
+must stay in-domain. Note the earlier reading of this as "OOD detection collapsed" was wrong — the weather row's domain
+call is correct; only its intent label is not.
+
+`0362239` and `b21589e` are **not independently buildable**: `0362239` added the banned-wording validator before the
+corpus was cleaned of "mobile app", so both abort in `validate_records`. `eca2e01` is the first buildable point that
+contains the expansion, which is why the bisect lands on a pair of commits rather than one.
+
+**Not a viable fix: excluding the deictic curricula from the router.** Tried it (extending
+`_SFT_ONLY_SCENARIO_FAMILIES`); it drops train from 20,439 to 16,483, and `load_governed_data` then refuses outright —
+"counterfactual action/entity pairs are required in every split", because those pairs come from that curriculum. The
+pipeline depends on it structurally.
+
+**The remaining fix is a judgement call, not a mechanical one:** cap or subsample the phrase-family expansion so the
+deictic-derived router rows return to their v8-era volume, while leaving the 9B's own supervision intact. That trades
+9B coreference breadth against router calibration, affects both models, and should be decided deliberately rather than
+patched unilaterally. Until then item 4's router half stays parked and
+`LearnedConversationRouter.from_artifact_dir` will keep refusing any router retrained at HEAD.
+
+Reproduction: `verify/bisect_at.sh <commit>` (worktree, scratch dirs, ~25 min including training).
