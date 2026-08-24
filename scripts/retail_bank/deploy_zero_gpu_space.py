@@ -42,6 +42,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-model-revision", default=DEFAULT_BASE_MODEL_REVISION)
     parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
     parser.add_argument("--adapter-revision", default=DEFAULT_ADAPTER_REVISION)
+    parser.add_argument(
+        "--adapter-subfolder",
+        default="",
+        help="Subdirectory holding adapter_config.json when the publish nested it "
+        "(v10 did); empty means the repo root, which is what earlier adapters use.",
+    )
     parser.add_argument("--merged-model-only", action="store_true")
     parser.add_argument("--model-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--router-id", required=True)
@@ -104,6 +110,9 @@ def runtime_pins(args: argparse.Namespace, *, space_commit: str | None = None) -
             exact_revision(str(adapter_revision), field="adapter revision")
             if adapter_revision
             else ""
+        ),
+        "RETAIL_BANK_ADAPTER_SUBFOLDER": (
+            "" if args.merged_model_only else str(getattr(args, "adapter_subfolder", "")).strip("/")
         ),
         "RETAIL_BANK_ROUTER_ID": str(args.router_id),
         "RETAIL_BANK_ROUTER_REVISION": exact_revision(

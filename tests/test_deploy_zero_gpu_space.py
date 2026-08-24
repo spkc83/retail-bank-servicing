@@ -54,7 +54,7 @@ class FakeApi:
 
 def _args(tmp_path: Path, *extra: str):
     source_dir = tmp_path / "space"
-    source_dir.mkdir()
+    source_dir.mkdir(parents=True)
     return deploy_module.parse_args(
         [
             "--space-id",
@@ -103,6 +103,7 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         "RETAIL_BANK_BASE_MODEL_REVISION": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
         "RETAIL_BANK_ADAPTER_ID": default_adapter_id,
         "RETAIL_BANK_ADAPTER_REVISION": "badbc05ad1f861818ea244b462eda49bca6c6fca",
+        "RETAIL_BANK_ADAPTER_SUBFOLDER": "",
         "RETAIL_BANK_ROUTER_ID": "spkc83/router",
         "RETAIL_BANK_ROUTER_REVISION": ROUTER_REVISION,
         "RETAIL_BANK_BEST_OF_N": "1",
@@ -169,3 +170,18 @@ def test_invalid_revision_is_rejected_before_upload(tmp_path: Path) -> None:
     args.model_revision = "main"
     with pytest.raises(deploy_module.DeployError, match="exact 40-character"):
         deploy_module.plan(args)
+
+
+def test_adapter_subfolder_is_pinned_and_defaults_to_the_repo_root(tmp_path: Path) -> None:
+    """v10 published adapter_config.json under adapter/; earlier adapters use the root."""
+
+    # _args mkdir()s tmp_path/"space", so each variant needs its own parent
+    default = deploy_module.runtime_pins(_args(tmp_path / "a"))
+    nested = deploy_module.runtime_pins(_args(tmp_path / "b", "--adapter-subfolder", "adapter"))
+    slashed = deploy_module.runtime_pins(_args(tmp_path / "c", "--adapter-subfolder", "/adapter/"))
+    merged = deploy_module.runtime_pins(_args(tmp_path / "d", "--merged-model-only"))
+
+    assert default["RETAIL_BANK_ADAPTER_SUBFOLDER"] == ""
+    assert nested["RETAIL_BANK_ADAPTER_SUBFOLDER"] == "adapter"
+    assert slashed["RETAIL_BANK_ADAPTER_SUBFOLDER"] == "adapter"
+    assert merged["RETAIL_BANK_ADAPTER_SUBFOLDER"] == ""
