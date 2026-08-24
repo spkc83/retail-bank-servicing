@@ -773,3 +773,84 @@ def test_policy_fallback_route_keeps_learned_decision_and_tags_diagnostics() -> 
     assert amended["constraint_diagnostics"] == ("constraint:example", POLICY_FALLBACK_NOTE)
     assert route["action"] == "retrieve_policy"
     assert route["constraint_diagnostics"] == ("constraint:example",)
+
+
+# Every string below was produced by the live v10 model on the long-session sweep,
+# on a turn that called no tool at all (response_path == "direct_answer").
+def test_zero_tool_answers_must_not_assert_account_object_state() -> None:
+    pin_status = validate_no_unsupported_action_claims(
+        "Your PIN request is still pending. I can’t see a date for the change, "
+        "so I don’t want to guess at one.",
+        (),
+        LIVE_TURN,
+    )
+    no_disputes = validate_no_unsupported_action_claims(
+        "No disputes are open on your account. Your recent transactions are "
+        "available to review, and I can pull them up for you.",
+        (),
+        LIVE_TURN,
+    )
+    standing_order = validate_no_unsupported_action_claims(
+        "Your standing order is active.", (), LIVE_TURN
+    )
+    counted = validate_no_unsupported_action_claims(
+        "You have three open disputes.", (), LIVE_TURN
+    )
+
+    assert not pin_status.valid
+    assert not no_disputes.valid
+    assert not standing_order.valid
+    assert not counted.valid
+    assert any("state" in error for error in pin_status.errors)
+
+
+def test_account_state_rule_does_not_block_capability_or_refusal_wording() -> None:
+    """These are the legitimate shapes a no-tool turn actually uses."""
+
+    refusal = validate_no_unsupported_action_claims(
+        "I cannot look up a PIN for you.", (), LIVE_TURN
+    )
+    boundary = validate_no_unsupported_action_claims(
+        "I am not able to change a PIN here. You can do that at any branch.",
+        (),
+        LIVE_TURN,
+    )
+    modal = validate_no_unsupported_action_claims(
+        "Your PIN can be changed in branch or at an ATM.", (), LIVE_TURN
+    )
+    question = validate_no_unsupported_action_claims(
+        "Which of your cards is the one you mean?", (), LIVE_TURN
+    )
+    greeting = validate_no_unsupported_action_claims(
+        "Hi, I’m Harbor. How can I help with your banking today?", (), LIVE_TURN
+    )
+    policy = validate_no_unsupported_action_claims(
+        "A dispute is normally reviewed within 30 days of being raised.",
+        (),
+        LIVE_TURN,
+    )
+
+    assert refusal.valid
+    assert boundary.valid
+    assert modal.valid
+    assert question.valid
+    assert greeting.valid
+    assert policy.valid
+
+
+def test_account_state_rule_yields_to_real_tool_evidence() -> None:
+    """With a tool result in hand the same sentence is grounded and must pass."""
+
+    grounded = validate_no_unsupported_action_claims(
+        "No disputes are open on your account.",
+        ({"tool": "list_transactions", "content": "{}"},),
+        LIVE_TURN,
+    )
+    prior_turn = validate_no_unsupported_action_claims(
+        "Your standing order is active.",
+        (),
+        (*LIVE_TURN, {"role": "tool", "content": "{}"}),
+    )
+
+    assert grounded.valid
+    assert prior_turn.valid

@@ -291,10 +291,33 @@ RETRIEVAL_CLAIM_VERBS = re.compile(
     r"|\b(?:looking at|based on) (?:your|the) (?:account|records|profile|file)\b)",
     re.IGNORECASE,
 )
-ACCOUNT_DATA_NOUNS = re.compile(
-    r"\b(?:pin|balances?|cards?|accounts?|transactions?|transfers?|service cases?|cases?|"
+_ACCOUNT_NOUNS = (
+    r"(?:pin|balances?|cards?|accounts?|transactions?|transfers?|service cases?|cases?|"
     r"statements?|disputes?|address|limits?|mortgages?|standing orders?|direct debits?|"
-    r"cheques?|overdrafts?|reward points?)\b",
+    r"cheques?|overdrafts?|reward points?)"
+)
+ACCOUNT_DATA_NOUNS = re.compile(rf"\b{_ACCOUNT_NOUNS}\b", re.IGNORECASE)
+
+# A no-evidence turn must not assert the STATE of an account object either. These
+# sentences carry no retrieval verb -- RETRIEVAL_CLAIM_VERBS never sees them -- yet
+# they are exactly as unfounded. All four shapes below were produced verbatim by the
+# live v10 adapter on turns that called no tool at all:
+#   "Your PIN request is still pending."   "No disputes are open on your account."
+# Gated on a CLOSED set of state words, so capability and modal wording stays legal:
+# "Your PIN can be changed in branch" asserts nothing about this customer's account.
+_STATE_WORDS = (
+    r"(?:pending|active|open|closed|cancelled|canceled|completed|frozen|blocked|"
+    r"approved|declined|rejected|processed|posted|settled|inactive|expired|overdue|"
+    r"suspended|locked|unlocked|disabled|on hold|in progress|under review)"
+)
+_QUANTIFIERS = r"(?:no|zero|\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|a few)"
+ACCOUNT_STATE_CLAIMS = re.compile(
+    rf"(?:\byour\s+(?:\w+\s+){{0,2}}{_ACCOUNT_NOUNS}\b[^.!?]*?"
+    rf"\b(?:is|are|was|were|remains?)\b\s+(?:still\s+|now\s+|currently\s+)?{_STATE_WORDS}\b"
+    rf"|\b{_QUANTIFIERS}\s+(?:\w+\s+){{0,2}}{_ACCOUNT_NOUNS}\b[^.!?]*?"
+    rf"\b(?:is|are|were|remains?)\b\s+(?:still\s+|now\s+|currently\s+)?{_STATE_WORDS}\b"
+    rf"|\byou\s+have\s+{_QUANTIFIERS}\s+(?:\w+\s+){{0,2}}{_ACCOUNT_NOUNS}\b"
+    rf"|\bthere\s+(?:is|are)\s+{_QUANTIFIERS}\s+(?:\w+\s+){{0,2}}{_ACCOUNT_NOUNS}\b)",
     re.IGNORECASE,
 )
 # Naming the dialogue as the source is legitimate grounding: the shipped corpus
@@ -414,6 +437,22 @@ def validate_no_unsupported_action_claims(
             (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
         )
     sentences = _CLAIM_SENTENCE_SPLIT.split(answer)
+    for sentence in sentences:
+        for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):
+            state = ACCOUNT_STATE_CLAIMS.search(clause)
+            if state is None:
+                continue
+            if _DENIAL.search(clause) is not None:
+                continue
+            if CONVERSATION_ATTRIBUTION.search(clause) is not None:
+                continue
+            return GroundingValidation(
+                False,
+                (
+                    f"answer asserts account state ({state.group(0)!r}) "
+                    f"without tool evidence",
+                ),
+            )
     for index, sentence in enumerate(sentences):
         window = " ".join(sentences[index : index + 2])
         for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):
