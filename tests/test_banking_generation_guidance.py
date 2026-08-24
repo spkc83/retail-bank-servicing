@@ -116,3 +116,31 @@ def test_poc_realizer_filler_copies_match_the_training_realizer_pools() -> None:
 
     assert set(REALIZER_FILLER_PREFIXES) == set(filter(None, REALIZER_FINAL_PREFIXES))
     assert set(REALIZER_FILLER_CLOSERS) == set(filter(None, REALIZER_FINAL_CLOSERS))
+
+
+def test_no_tool_modes_forbid_asserting_account_state() -> None:
+    """The live v10 adapter answered a no-tool turn with "Your PIN request is still
+    pending." Nothing in the converse or clarify guidance told it not to."""
+
+    converse = render_turn_guidance(
+        {
+            "mode": "converse",
+            "entity_state": "not_required",
+            "tool_names": [],
+            "argument_constraints": {},
+        }
+    )
+    clarify = render_turn_guidance(
+        {
+            "mode": "clarify",
+            "entity_state": "missing",
+            "tool_names": [],
+            "argument_constraints": {},
+        }
+    )
+
+    for guidance in (converse, clarify):
+        assert "status" in guidance.lower()
+        assert "have not been shown" in guidance.lower()
+    # converse also has to stop the assistant promising a capability it lacks
+    assert "cannot" in converse.lower()

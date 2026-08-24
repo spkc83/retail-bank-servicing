@@ -58,7 +58,8 @@ def render_turn_guidance(contract: Mapping[str, Any]) -> str:
             raise ValueError("clarify requires a missing, ambiguous, or ineligible entity state")
         return (
             f"Ask exactly one concise, natural clarification question that helps the customer "
-            f"{detail}. Do not claim that an action was completed."
+            f"{detail}. Do not claim that an action was completed. Never state the status of an "
+            f"account, card, payment, dispute or request you have not been shown."
         )
     if entity_state != "not_required":
         raise ValueError(f"{mode} requires entity_state='not_required'")
@@ -66,7 +67,10 @@ def render_turn_guidance(contract: Mapping[str, Any]) -> str:
         return (
             "Respond naturally and concisely without looking up customer records or performing "
             "a banking action. Never infer distress, trouble, or a failed banking event from a "
-            "neutral greeting or social message."
+            "neutral greeting or social message. If the customer asked for something this "
+            "assistant cannot do, say so plainly and name what you can help with instead; never "
+            "promise to do it or ask for details you cannot use. Never state the status of an "
+            "account, card, payment, dispute or request you have not been shown."
         )
     if mode == "retrieve_policy":
         return (
