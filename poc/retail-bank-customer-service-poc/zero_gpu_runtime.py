@@ -28,6 +28,10 @@ ADAPTER_REVISION = os.environ.get(
     "badbc05ad1f861818ea244b462eda49bca6c6fca",
 ).strip()
 MODEL_DTYPE = os.environ.get("RETAIL_BANK_MODEL_DTYPE", "bf16").strip().lower()
+# Some published adapters nest adapter_config.json under a subdirectory instead of the
+# repo root; PEFT only looks at the root unless told otherwise. Empty means root, which
+# is what every adapter published before v10 uses. Mirrors local_gpu_runtime.py.
+ADAPTER_SUBFOLDER = os.environ.get("RETAIL_BANK_ADAPTER_SUBFOLDER", "").strip().strip("/")
 SKIP_MODEL_LOAD = os.environ.get("POC_SKIP_MODEL_LOAD") == "1"
 
 
@@ -100,6 +104,7 @@ else:
             revision=ADAPTER_REVISION,
             torch_device="cpu",
             autocast_adapter_dtype=False,
+            **({"subfolder": ADAPTER_SUBFOLDER} if ADAPTER_SUBFOLDER else {}),
         )
         if USE_PEFT_ADAPTER
         else base_model
