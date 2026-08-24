@@ -265,6 +265,17 @@ def rows_sha256(rows: Sequence[dict[str, Any]]) -> str:
     return hashlib.sha256(rows_jsonl_bytes(rows)).hexdigest()
 
 
+# The alignment corpus is shared with the 9B tool model, so every curriculum added
+# for that model otherwise lands in the router's training set too. Long-context tool
+# fidelity is deliberately built as "a long servicing history ending in a MISLEADING
+# turn" -- excellent supervision for tool selection, and directly destructive to the
+# router, which learns from it to hold a banking intent through a topic shift. With
+# those rows in, a retrained router answers "what about the weather there?" with
+# view_cards and the held-out regression gate fails (route 0.222, intent 0.250).
+# Curricula listed here train the generator only and never reach the router.
+_SFT_ONLY_SCENARIO_FAMILIES = frozenset({"long_context_tool_fidelity"})
+
+
 def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] | None:
     messages = record.get("messages")
     if not isinstance(messages, list):
@@ -284,6 +295,8 @@ def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] |
     metadata = record.get("metadata")
     if not isinstance(metadata, Mapping):
         metadata = {}
+    if str(metadata.get("scenario_family", "")) in _SFT_ONLY_SCENARIO_FAMILIES:
+        return None
     source = (
         "self-authored-coreference-shadow"
         if metadata.get("trainable") is False and metadata.get("coreference_pair_id")
