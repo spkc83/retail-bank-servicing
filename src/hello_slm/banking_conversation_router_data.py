@@ -205,6 +205,7 @@ def build_conversation_router_splits(
     for split in ROUTER_SPLITS:
         splits[split].extend(_first_turn_mutation_opener_rows(split))
         splits[split].extend(_retrospective_status_rows(split))
+        splits[split].extend(_unsupported_capability_rows(split))
     splits["test"].extend(_held_out_regression_rows())
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
@@ -2123,6 +2124,258 @@ def _first_turn_mutation_opener_rows(split: str) -> list[dict[str, Any]]:
                 group_id=f"ft-mutation|{split}|{intent}|{index}",
                 action=action,
                 entity_resolution=entity_resolution,
+            )
+        )
+    return rows
+
+
+# Unsupported banking capabilities: requests that are in-domain banking but have no
+# tool behind them. The shipped ``other_banking`` rows only ever meant "customer asked
+# for a private identifier", so capability asks fell through to the nearest confident
+# servicing neighbour -- including ``freeze_card`` for a PIN reset. Only the mutation
+# and creation phrasings live here: retrospective status questions ("when was my
+# address changed") stay with ``view_service_cases``, which really can answer them.
+_UNSUPPORTED_CAPABILITY_PROMPTS = {
+    "train": (
+        ("statement_artifact", (
+            "Email me my January statement.",
+            "I need a PDF of my account statement.",
+            "Download my statements for the last quarter.",
+            "Post a paper statement to my address.",
+            "Export my statement as a PDF.",
+            "Send me a copy of last month's statement.",
+        )),
+        ("pin_management", (
+            "I want to change my card PIN.",
+            "Reset the PIN on my debit card.",
+            "Set a new PIN for my card.",
+            "Unblock my PIN.",
+            "I forgot my PIN, please reset it.",
+            "Choose a new PIN for this card.",
+        )),
+        ("standing_order_setup", (
+            "Set up a standing order for my rent.",
+            "I want to create a monthly standing order.",
+            "Change the amount on my standing order.",
+            "Create a recurring payment to my landlord.",
+            "Set up a direct debit for my utilities.",
+            "Amend my existing standing order amount.",
+        )),
+        ("personal_details", (
+            "Update my address on file.",
+            "Change my registered phone number.",
+            "I moved, please update my address.",
+            "Update the email address on my account.",
+            "Change my name on the account.",
+            "Correct my date of birth on file.",
+        )),
+        ("account_lifecycle", (
+            "Open a new savings account for me.",
+            "Close my current account.",
+            "I want to open a joint account.",
+            "Can you open an ISA for me?",
+            "Please close my savings account.",
+            "Open a second current account.",
+        )),
+        ("lending", (
+            "Apply for an overdraft on my current account.",
+            "I want to increase my credit limit.",
+            "Apply for a personal loan.",
+            "Raise my overdraft limit.",
+            "Approve a loan for me.",
+            "Increase the limit on my credit card.",
+        )),
+        ("money_movement", (
+            "Send fifty pounds to my mum.",
+            "Make a payment to my landlord today.",
+            "Transfer money into my savings account.",
+            "Pay my credit card bill now.",
+            "Move funds between my accounts.",
+            "Send a wire transfer abroad.",
+        )),
+        ("misc_services", (
+            "Order a new cheque book.",
+            "I am travelling next week, add a travel notice.",
+            "Add a new payee to my account.",
+            "Register my trip abroad for card use.",
+            "Remove a saved payee.",
+            "Order a replacement cheque book.",
+        )),
+    ),
+    "validation": (
+        ("statement_artifact", (
+            "Mail me my quarterly statement.",
+            "I want a printed copy of my statement.",
+        )),
+        ("pin_management", (
+            "Change the PIN on my credit card.",
+            "Give this card a different PIN.",
+        )),
+        ("standing_order_setup", (
+            "Create a standing order for my gym membership.",
+            "Increase my monthly direct debit.",
+        )),
+        ("personal_details", (
+            "Please change my postal address.",
+            "Update my contact number.",
+        )),
+        ("account_lifecycle", (
+            "I want to open a new checking account.",
+            "Close the account I no longer use.",
+        )),
+        ("lending", (
+            "Apply for a mortgage in principle.",
+            "I want a bigger overdraft.",
+        )),
+        ("money_movement", (
+            "Pay two hundred pounds to my brother.",
+            "Transfer funds to my other account.",
+        )),
+        ("misc_services", (
+            "Set up a travel notification.",
+            "Add my landlord as a payee.",
+        )),
+    ),
+    "test": (
+        ("statement_artifact", (
+            "Send my annual statement as a document.",
+            "Generate a statement PDF for me.",
+        )),
+        ("pin_management", (
+            "I need a new PIN for my debit card.",
+            "Reset my card PIN now.",
+        )),
+        ("standing_order_setup", (
+            "Set up a repeating monthly payment.",
+            "Change the date of my standing order.",
+        )),
+        ("personal_details", (
+            "I need to change my mailing address.",
+            "Update my email on the account.",
+        )),
+        ("account_lifecycle", (
+            "Open a business account for me.",
+            "Please shut down this account.",
+        )),
+        ("lending", (
+            "Request a credit limit increase.",
+            "Apply for a car loan.",
+        )),
+        ("money_movement", (
+            "Send money to my friend's account.",
+            "Make an international payment.",
+        )),
+        ("misc_services", (
+            "Order more cheques.",
+            "Delete a payee from my list.",
+        )),
+    ),
+}
+
+# Asking *about* an unsupported capability is a policy question and must stay one;
+# only asking the assistant to *perform* it is out of scope.
+_CAPABILITY_POLICY_CONTRASTS = {
+    "train": (
+        "How do standing orders work?",
+        "What are the rules for choosing a PIN?",
+        "How long does it take to open a savings account?",
+        "What is an overdraft?",
+        "What is the difference between a standing order and a direct debit?",
+        "What are the fees for international payments?",
+        "How is a cheque book request normally handled?",
+        "What does the bank require to change a registered address?",
+    ),
+    "validation": (
+        "What is a direct debit?",
+        "How does overdraft interest work?",
+    ),
+    "test": (
+        "What does opening an ISA involve?",
+        "How do travel notifications work in general?",
+    ),
+}
+
+# The runtime failure shows up mid-session, after servicing history is on screen, so
+# half of these rows carry a servicing exchange the capability ask must survive.
+_UNSUPPORTED_CAPABILITY_HISTORIES = {
+    "train": (
+        ("cards_train", "List the debit cards on my profile.",
+         "Your active debit card ends in 4821."),
+        ("transfers_train", "Bring up my outgoing bank transfers.",
+         "I found two completed transfers and one scheduled transfer."),
+    ),
+    "validation": (
+        ("accounts_validation", "Display my deposit accounts.",
+         "Pioneer Checking and Meadow Savings are active."),
+    ),
+    "test": (
+        ("cases_test", "Show my open service cases.",
+         "Case CS-219 for card delivery is still open."),
+    ),
+}
+
+
+def _unsupported_capability_rows(split: str) -> list[dict[str, Any]]:
+    """Teach in-domain banking asks that no exposed tool can perform."""
+
+    rows: list[dict[str, Any]] = []
+    histories = _UNSUPPORTED_CAPABILITY_HISTORIES[split]
+    index = 0
+    for family, prompts in _UNSUPPORTED_CAPABILITY_PROMPTS[split]:
+        for prompt in prompts:
+            rows.append(
+                _make_row(
+                    current=prompt,
+                    history=[],
+                    domain_label=1,
+                    intent="other_banking",
+                    relation_names=[],
+                    example_kind="unsupported_capability",
+                    source="self-authored-router-v9-unsupported-capability",
+                    source_split=split,
+                    group_id=f"unsupported|{split}|{family}|{index}",
+                    action="converse",
+                    entity_resolution="not_required",
+                )
+            )
+            # Every other prompt is repeated behind servicing history, so the class
+            # survives a topic shift instead of losing to the on-screen intent.
+            if index % 2 == 0:
+                history_key, user_turn, assistant_turn = histories[index % len(histories)]
+                rows.append(
+                    _make_row(
+                        current=prompt,
+                        history=[
+                            {"role": "user", "content": user_turn},
+                            {"role": "assistant", "content": assistant_turn},
+                        ],
+                        domain_label=1,
+                        intent="other_banking",
+                        relation_names=["topic_shift"],
+                        example_kind="unsupported_capability_topic_shift",
+                        source="self-authored-router-v9-unsupported-capability",
+                        source_split=split,
+                        group_id=f"unsupported-shift|{split}|{family}|{history_key}|{index}",
+                        action="converse",
+                        entity_resolution="not_required",
+                    )
+                )
+            index += 1
+
+    for offset, prompt in enumerate(_CAPABILITY_POLICY_CONTRASTS[split]):
+        rows.append(
+            _make_row(
+                current=prompt,
+                history=[],
+                domain_label=1,
+                intent="policy_knowledge",
+                relation_names=[],
+                example_kind="unsupported_capability_policy_contrast",
+                source="self-authored-router-v9-unsupported-capability",
+                source_split=split,
+                group_id=f"unsupported-policy|{split}|{offset}",
+                action="retrieve_policy",
+                entity_resolution="not_required",
             )
         )
     return rows
