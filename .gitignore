@@ -4,7 +4,18 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
-.omx/
+
+# Agent-harness operational state. Per-machine, per-session scratch that hooks
+# rewrite on every tool call, so a tracked one dirties the working tree constantly
+# and can block a branch switch (it did: it blocked the checkout for this merge).
+# Contents are excluded rather than the directory itself, so a deliberate exception
+# can still be re-included -- .omc/skills/ is the documented committable one.
+**/.omc/*
+!**/.omc/skills/
+**/.omx/*
+**/.claude/*
+**/.superpowers/*
+
 build/
 dist/
 artifacts/
