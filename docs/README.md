@@ -17,7 +17,7 @@ contract, and run either interface.
 | Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@08f31b7b981805b15399dc8f8182c56134413701`; authenticated chat smoke pending |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d`; authenticated chat smoke pending |
 
 ## Read in This Order
 

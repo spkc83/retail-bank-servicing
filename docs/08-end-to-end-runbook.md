@@ -219,7 +219,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source/pin deployment is
-`08f31b7b981805b15399dc8f8182c56134413701`, deployed 2026-08-24. The runtime is
+`a227df8d40934e6d3c1be31d49a49c4f20dcc81d`, deployed 2026-08-24. The runtime is
 RUNNING on `zero-a10g` with the pinned base, adapter, and router identities.
 Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the
 `DEMO_AUTH_JSON` Space secret and are not readable through the API.

@@ -14,7 +14,7 @@ artifact.
 | Local dataset | `data/banking-conversation-router-v8-first-turn-mutation` |
 | Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@08f31b7b981805b15399dc8f8182c56134413701` |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d` |
 | ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
 
 ### Dataset files

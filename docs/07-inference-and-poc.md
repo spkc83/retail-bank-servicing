@@ -186,7 +186,7 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`08f31b7b981805b15399dc8f8182c56134413701`, deployed 2026-08-24. The runtime is **RUNNING** on `zero-a10g` and
+`a227df8d40934e6d3c1be31d49a49c4f20dcc81d`, deployed 2026-08-24. The runtime is **RUNNING** on `zero-a10g` and
 serves v10. Because `PeftModel.from_pretrained` runs at module scope, a missing
 or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than
 as a per-request failure. An authenticated chat smoke is still pending: the demo
