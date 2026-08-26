@@ -854,3 +854,67 @@ def test_account_state_rule_yields_to_real_tool_evidence() -> None:
 
     assert grounded.valid
     assert prior_turn.valid
+
+
+# Live failure, 2026-08-25 screenshots: maya.demo's transactions include a merchant
+# literally named "Rail Europe Demo", and her open case is "ATM retained demo card".
+# The internal-term rule banned "demo", so every faithful answer failed validation,
+# the repair pass could not help (it must also name the merchant), and the turn
+# collapsed to the fallback -- deterministically. Data quoted from the turn's own
+# evidence is not internal language.
+MAYA_TRANSACTIONS = (
+    {
+        "tool": "list_transactions",
+        "content": '{"transactions": [{"description": "Rail Europe Demo", '
+        '"amount": "-USD 68.40", "status": "posted"}, '
+        '{"description": "Atlas Hotel", "amount": "-USD 221.35", "status": "posted"}]}',
+    },
+)
+MAYA_CASES = (
+    {
+        "tool": "list_service_cases",
+        "content": '{"cases": [{"subject": "ATM retained demo card", "status": "open"}]}',
+    },
+)
+
+
+def test_banned_terms_quoted_from_tool_evidence_are_not_internal_language() -> None:
+    from response_policy import validate_customer_facing_answer
+
+    table = (
+        "Here are your recent transactions.\n\n"
+        "| Description | Amount | Status |\n| --- | --- | --- |\n"
+        "| Rail Europe Demo | -USD 68.40 | posted |\n"
+        "| Atlas Hotel | -USD 221.35 | posted |"
+    )
+    case = "Your open case is ATM retained demo card, opened last week."
+
+    assert validate_customer_facing_answer(table, MAYA_TRANSACTIONS).valid
+    assert validate_customer_facing_answer(case, MAYA_CASES).valid
+
+
+def test_banned_terms_without_evidence_are_still_banned() -> None:
+    from response_policy import validate_customer_facing_answer
+
+    bare = validate_customer_facing_answer("| Rail Europe Demo | posted |")
+    assert not bare.valid
+    assert any("demo" in error for error in bare.errors)
+
+
+def test_evidence_does_not_launder_prose_about_the_demo() -> None:
+    """A demo-named merchant existing in the data must not unmute the word
+    everywhere: talking ABOUT a demo is still internal language."""
+
+    from response_policy import validate_customer_facing_answer
+
+    prose = validate_customer_facing_answer(
+        "This is just a demo environment, so the numbers are not real.",
+        MAYA_TRANSACTIONS,
+    )
+    other_terms = validate_customer_facing_answer(
+        "The model chose Rail Europe Demo from the tool result.",
+        MAYA_TRANSACTIONS,
+    )
+
+    assert not prose.valid
+    assert not other_terms.valid  # "model" and "tool" have no evidence exemption here

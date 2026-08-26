@@ -75,15 +75,87 @@ class GroundingValidation:
     errors: tuple[str, ...]
 
 
-def validate_customer_facing_answer(answer: str) -> GroundingValidation:
-    """Reject implementation vocabulary that belongs in diagnostics, not chat."""
+def _evidence_leaf_strings(evidence: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """Every string datum inside the turn's tool evidence, one entry per leaf.
+
+    Leaves are collected individually -- never the raw JSON blob -- so adjacency
+    across fields ("...Demo", "amount"...) cannot exempt answer text that no single
+    datum actually contains.
+    """
+
+    leaves: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                leaves.append(value)
+                return
+            if isinstance(parsed, dict | list):
+                walk(parsed)
+            else:
+                leaves.append(value)
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list | tuple):
+            for item in value:
+                walk(item)
+
+    walk(list(evidence))
+    return tuple(leaves)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _match_quotes_evidence(answer: str, match: re.Match[str], leaves: Sequence[str]) -> bool:
+    """True when the flagged term was lifted verbatim from one evidence datum.
+
+    The exemption requires the term TOGETHER WITH an adjacent word to appear inside
+    a single leaf, so a demo-named merchant exempts "Europe Demo" but never unmutes
+    prose about "a demo environment" merely because that merchant exists.
+    """
+
+    if not leaves:
+        return False
+    previous = re.search(r"([A-Za-z0-9][\w-]*)\W*$", answer[: match.start()])
+    following = re.match(r"\W*([A-Za-z0-9][\w-]*)", answer[match.end() :])
+    bigrams = [
+        _squash(f"{previous.group(1)}{match.group(0)}") if previous else None,
+        _squash(f"{match.group(0)}{following.group(1)}") if following else None,
+    ]
+    squashed_leaves = [_squash(leaf) for leaf in leaves]
+    return any(
+        bigram and any(bigram in leaf for leaf in squashed_leaves)
+        for bigram in bigrams
+    )
+
+
+def validate_customer_facing_answer(
+    answer: str,
+    evidence: Sequence[Mapping[str, Any]] = (),
+) -> GroundingValidation:
+    """Reject implementation vocabulary that belongs in diagnostics, not chat.
+
+    A term quoted from the turn's own tool evidence is customer data, not internal
+    language: maya.demo's transactions include a merchant literally named
+    "Rail Europe Demo", and banning the word outright made every faithful answer --
+    and every faithful repair -- fail, collapsing the turn to the fallback.
+    """
 
     if not isinstance(answer, str) or not answer.strip():
         return GroundingValidation(False, ("customer-facing answer is empty",))
+    leaves = _evidence_leaf_strings(evidence)
     errors = tuple(
         f"answer contains internal term: {label}"
         for label, pattern in INTERNAL_LANGUAGE_PATTERNS.items()
-        if pattern.search(answer)
+        if any(
+            not _match_quotes_evidence(answer, found, leaves)
+            for found in pattern.finditer(answer)
+        )
     )
     return GroundingValidation(not errors, errors)
 

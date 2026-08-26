@@ -571,7 +571,7 @@ class ConversationalBankingAgent:
                     if not validate_grounded_answer(candidate, all_calls, results).valid:
                         return False
                     stripped = strip_realizer_filler(candidate) or candidate
-                    if not validate_customer_facing_answer(stripped).valid:
+                    if not validate_customer_facing_answer(stripped, results).valid:
                         return False
                     return validate_no_unsupported_action_claims(
                         stripped, tuple(results), conversation=()
@@ -787,7 +787,7 @@ class ConversationalBankingAgent:
         conversation: Sequence[Mapping[str, Any]] = (),
     ) -> tuple[str, str]:
         draft = strip_realizer_filler(draft) or draft
-        validation = validate_customer_facing_answer(draft)
+        validation = validate_customer_facing_answer(draft, authoritative_evidence)
         action_validation = validate_no_unsupported_action_claims(
             draft, tuple(authoritative_evidence), conversation=conversation
         )
@@ -804,7 +804,7 @@ class ConversationalBankingAgent:
             "customer_experience_repair_1", repair_messages, None
         )
         model_passes.append(repair_trace)
-        repaired_validation = validate_customer_facing_answer(repaired)
+        repaired_validation = validate_customer_facing_answer(repaired, authoritative_evidence)
         repaired_action_validation = validate_no_unsupported_action_claims(
             repaired, tuple(authoritative_evidence), conversation=conversation
         )
