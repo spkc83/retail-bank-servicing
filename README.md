@@ -80,14 +80,14 @@ Read these in order:
 2. [Data generation](docs/02-data-generation.md)
 3. [Granite and PEFT](docs/03-model-and-peft.md)
 4. [Training and recovery](docs/04-training-and-recovery.md)
-5. [Hierarchical router](docs/05-dual-head-router.md)
+5. [Hierarchical router](docs/05-hierarchical-router.md)
 6. [Evaluation](docs/06-evaluation.md)
 7. [Inference and POC](docs/07-inference-and-poc.md)
 8. [End-to-end runbook](docs/08-end-to-end-runbook.md)
 9. [Router architecture deep dive](docs/09-conversation-router-v4.md)
 10. [File map](docs/reference/file-map.md)
 
-The filenames `05-dual-head-router.md` and `09-conversation-router-v4.md` are
+The filenames `05-hierarchical-router.md` and `09-conversation-router-v4.md` are
 retained for stable links. Their content documents the active V6 router.
 
 ## Reproduce the Router

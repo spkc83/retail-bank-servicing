@@ -12,7 +12,7 @@ CANONICAL_DOCS = (
     "docs/02-data-generation.md",
     "docs/03-model-and-peft.md",
     "docs/04-training-and-recovery.md",
-    "docs/05-dual-head-router.md",
+    "docs/05-hierarchical-router.md",
     "docs/06-evaluation.md",
     "docs/07-inference-and-poc.md",
     "docs/08-end-to-end-runbook.md",

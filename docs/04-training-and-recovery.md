@@ -1,7 +1,7 @@
 # Granite V5 Training and Recovery
 
 This runbook covers the guarded V5 Granite continuation job. The CPU router is
-trained separately and is documented in [05-dual-head-router.md](05-dual-head-router.md).
+trained separately and is documented in [05-hierarchical-router.md](05-hierarchical-router.md).
 
 ## Current Job
 

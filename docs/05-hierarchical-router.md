@@ -1,8 +1,9 @@
 # V6 Hierarchical Seven-Head Router
 
-The filename is retained for stable links. The active router is neither dual
-head nor three head. It is a DistilBERT cross-encoder with seven output heads
-and a constrained joint decoder.
+The active router is a DistilBERT cross-encoder with seven output heads and a
+constrained joint decoder. (This file was previously named
+`05-dual-head-router.md`; the dual-head design it described is retired and its
+legacy code lives in `banking_dual_head_router.py` / `train_dual_head_router.py`.)
 
 ## Artifact Identity
 

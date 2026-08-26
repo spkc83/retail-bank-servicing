@@ -67,6 +67,6 @@ Fine intents cover nine servicing operations plus `policy_knowledge`,
 `agent_repair`, `topic_shift`, `clarification_answer`, and
 `resume_previous_service`.
 
-See [`docs/05-dual-head-router.md`](../docs/05-dual-head-router.md) for the
+See [`docs/05-hierarchical-router.md`](../docs/05-hierarchical-router.md) for the
 complete architecture, transitions, calibration, data-generation strategy, and
 reproduction commands.

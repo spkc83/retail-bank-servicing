@@ -9,7 +9,7 @@ The project has three evaluation layers:
 The hierarchical router is published at
 `dd5ea26674a0f9808d42110a9ee51a9af6762a76` from data revision
 `b33c27170e27cdb11783704ede14f7d25f70625e` and passed the router gates reported
-in [05-dual-head-router.md](05-dual-head-router.md#held-out-results). Granite
+in [05-hierarchical-router.md](05-hierarchical-router.md#held-out-results). Granite
 PEFT evaluation job `6a7f89edc97db76cbdf31893` ran from source
 `42c89ae6d6b6792268b36e2162c4b19688e4e617` and failed strict gates. Five
 credential-request findings were evaluator false positives caused by the safe
@@ -55,7 +55,7 @@ The router trainer evaluates the immutable V6 test split and persists
 - held-out screenshot route, intent, and relation errors.
 
 The released local artifact passed with no gate failures. See
-[05-dual-head-router.md](05-dual-head-router.md#held-out-results) for exact
+[05-hierarchical-router.md](05-hierarchical-router.md#held-out-results) for exact
 results and the immutable published router revision.
 
 ## 3. Frozen Granite Evaluation

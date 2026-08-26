@@ -25,7 +25,7 @@ contract, and run either interface.
 2. [Data generation](02-data-generation.md)
 3. [Granite and PEFT](03-model-and-peft.md)
 4. [Training and recovery](04-training-and-recovery.md)
-5. [V6 hierarchical router](05-dual-head-router.md)
+5. [V6 hierarchical router](05-hierarchical-router.md)
 6. [Evaluation](06-evaluation.md)
 7. [Inference and POC](07-inference-and-poc.md)
 8. [End-to-end runbook](08-end-to-end-runbook.md)
