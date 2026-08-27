@@ -49,6 +49,7 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | Component | Identity |
 | --- | --- |
 | PEFT release (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; adapter_config.json lives under `adapter/`, so the runtime needs `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| PEFT candidate (not deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` — v11 policy-alignment retrain (job `6a908078`, dev and shadow gates 1.0, dataset `@b5ec0489`, source `6e53ebf`); same `adapter/` subfolder convention |
 | PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
