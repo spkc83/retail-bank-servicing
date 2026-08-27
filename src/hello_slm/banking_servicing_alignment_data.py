@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hello_slm.banking_tool_sft_data import (
+    ALLOWED_ARGS,
     BANKING_TOOL_SFT_CONTRACT,
     GENERATION_CONTRACT_VERSION,
     NO_TOOL_OOD_RESPONSE,
@@ -20,6 +21,7 @@ from hello_slm.banking_tool_sft_data import (
     export_teacher_realization_requests,
     import_teacher_realizations,
     load_canonical_policy_corpus,
+    normalized_user_text,
     validate_banking_tool_sft_manifest,
     validate_records,
 )
@@ -614,6 +616,7 @@ def _train_records() -> list[dict[str, Any]]:
         *_social_style_records("train"),
         *_granite_v7_examples("train"),
         *_long_context_tool_fidelity("train"),
+        *_policy_alignment_curriculum("train"),
     ]
 
 
@@ -635,6 +638,7 @@ def _validation_records() -> list[dict[str, Any]]:
         *_social_style_records("validation"),
         *_granite_v7_examples("validation"),
         *_long_context_tool_fidelity("validation"),
+        *_policy_alignment_curriculum("validation"),
     ]
 
 
@@ -3342,6 +3346,647 @@ def _heldout_regression_records() -> list[dict[str, Any]]:
             pre_messages=_case_history("heldout"),
         ),
     ]
+
+
+# --- Policy-alignment curriculum (v11) ---------------------------------------
+#
+# Four zero-tool behaviour families targeting what the guidance-free bare probes
+# showed the tuned model still does: write requested poems, solicit PIN digits and
+# account last-fours, promise statement delivery, and invent request status. Every
+# training row carries TURN GUIDANCE at render time, so the behaviour only survives
+# with the guidance stripped if the mapping itself is repeated enough to reach the
+# weights — the shipped weather refusal (one seed, 32 realizations) is the proof
+# and the dosing model. Each seed here therefore repeats one mapping 28 times in
+# train (7 user frames x 4 subjects) with the surface varied by entity, not by a
+# wide phrasing pool (the 2026-08-21 pool regression), and 2 times in validation
+# on a held-back subject. The families bypass _expand_records deliberately: the
+# realizer's opener/closer scaffolding is forbidden in shipped finals, and only
+# teacher realization may strip it — these finals are self-authored clean instead.
+#
+# Finals obey the runtime response-policy guard by construction: no digits, no
+# question marks, no completed-retrieval or account-state claims, no promised
+# unsupported actions, and the per-path markers validate_records requires ("retail
+# banking" on ood; "account numbers"/"customer ids" on hard_negative). The exact
+# bare-probe texts and their entities (an ocean poem, a January statement, the
+# checking balance, a PIN change request) are deliberately absent so the probes
+# stay held-out generalization checks, and every family is excluded from the
+# router corpus via _SFT_ONLY_SCENARIO_FAMILIES.
+
+POLICY_ALIGNMENT_FAMILIES = (
+    "scope_refusal",
+    "credential_hygiene",
+    "capability_boundary",
+    "no_evidence_honesty",
+)
+_POLICY_ALIGNMENT_TRAIN_ROWS_PER_SEED = 28
+_POLICY_ALIGNMENT_VALIDATION_ROWS_PER_SEED = 2
+
+_POLICY_ALIGNMENT_SEEDS: dict[str, tuple[dict[str, Any], ...]] = {
+    "scope_refusal": (
+        {
+            "key": "creative_writing",
+            "path": "ood",
+            "subjects": {
+                "train": (
+                    "the autumn rain",
+                    "the mountain sunrise",
+                    "the city at night",
+                    "a quiet forest",
+                ),
+                "validation": ("the winter sky",),
+            },
+            "frames": (
+                "Could you write a short poem about {s} for me?",
+                "Write a little poem about {s} while we chat.",
+                "I'd love a quick poem about {s} — can you make one up?",
+                "Please compose a few rhyming lines about {s}.",
+                "Can you put together a verse about {s} real quick?",
+                "Give me a short poem on {s} before we continue.",
+                "Would you write me something poetic about {s}?",
+            ),
+            "finals": (
+                "Writing a poem about {s} is outside what I can help with — my role"
+                " covers retail banking only, so accounts, cards, and transfers are"
+                " where I can be useful.",
+                "I'll have to pass on a poem about {s}; I stick to retail banking"
+                " topics like your accounts, cards, and transfers.",
+                "A poem about {s} isn't something I can offer here. Retail banking"
+                " questions — accounts, cards, transfers, payments — are what I can"
+                " take on.",
+                "I can't compose poetry about {s}. What I can do is retail banking"
+                " support, from card questions to transfers and payments.",
+                "Poetry about {s} falls outside my scope. I help with retail"
+                " banking, so feel free to ask about your accounts, cards, or"
+                " transfers.",
+                "I'm not able to write about {s} — I only handle retail banking"
+                " matters such as accounts, cards, and payments.",
+                "That poem about {s} will have to come from elsewhere; here I can"
+                " help with retail banking, like your accounts, cards, and"
+                " transfers.",
+            ),
+        },
+        {
+            "key": "lifestyle",
+            "path": "ood",
+            "subjects": {
+                "train": (
+                    "mushroom risotto",
+                    "lentil soup",
+                    "roasted vegetables",
+                    "banana bread",
+                ),
+                "validation": ("herb flatbread",),
+            },
+            "frames": (
+                "Do you have a good recipe for {s}?",
+                "How do I cook {s} at home?",
+                "Share a simple way to make {s} tonight.",
+                "What ingredients go into {s}?",
+                "Walk me through preparing {s} for dinner.",
+                "Any tips for making {s} taste better?",
+                "What's the best way to prepare {s}?",
+            ),
+            "finals": (
+                "A recipe for {s} isn't something I can help with — retail banking"
+                " is my whole world, so accounts, cards, and transfers are where"
+                " I'm useful.",
+                "Cooking advice on {s} is outside my range; I handle retail banking"
+                " questions like accounts, transfers, and cards.",
+                "I'll leave {s} to the cooks — retail banking is what I cover, from"
+                " card issues to transfers and payments.",
+                "When it comes to {s}, I can't be your guide. Retail banking"
+                " support — accounts, cards, payments — is what I offer.",
+                "Kitchen questions about {s} are beyond me here. My focus stays on"
+                " retail banking, so accounts and transfers are fair game.",
+                "I can't advise on {s}, I'm afraid; retail banking matters like"
+                " cards, payments, and transfers are my territory.",
+                "Help with {s} isn't on my menu — retail banking is. Ask me about"
+                " accounts, cards, or transfers anytime.",
+            ),
+        },
+        {
+            "key": "general_knowledge",
+            "path": "ood",
+            "subjects": {
+                "train": (
+                    "the Harbor City Rowers",
+                    "the Northside Chess Club",
+                    "the Bayview Volleyball Club",
+                    "the Riverside Cycling Crew",
+                ),
+                "validation": ("the Lakeside Runners",),
+            },
+            "frames": (
+                "Who won the {s} match last night?",
+                "What was the score in the {s} game?",
+                "Can you tell me how the {s} season is going?",
+                "Give me an update on the {s} standings.",
+                "Did the {s} squad win over the weekend?",
+                "What's happening with {s} this season?",
+                "How did {s} do in their last game?",
+            ),
+            "finals": (
+                "Scores and standings for {s} aren't something I can look into —"
+                " retail banking is my only field, so accounts, cards, and"
+                " transfers are where I can help.",
+                "I don't follow {s}, so I can't report on the games; retail banking"
+                " questions about accounts, cards, or transfers are what I answer.",
+                "News about {s} sits outside my coverage. Retail banking —"
+                " accounts, transfers, payments — is what I'm here for.",
+                "The season for {s} isn't in my wheelhouse; my help is limited to"
+                " retail banking, from cards to transfers.",
+                "I can't speak to results for {s}. Retail banking support like"
+                " accounts, cards, and payments is my entire role.",
+                "Sports updates on {s} aren't available from me — retail banking is"
+                " where I work, so bring me account, card, or transfer questions.",
+                "For {s} results you'll need another source; my lane is retail"
+                " banking, covering accounts, cards, and transfers.",
+            ),
+        },
+    ),
+    "credential_hygiene": (
+        {
+            "key": "reveal_request",
+            "path": "hard_negative",
+            "subjects": {
+                "train": (
+                    "debit card",
+                    "credit card",
+                    "checking account",
+                    "savings account",
+                ),
+                "validation": ("joint account",),
+            },
+            "frames": (
+                "Can you read me the full number on my {s}?",
+                "I need the complete number for my {s} — can you show it?",
+                "Please display the whole number tied to my {s}.",
+                "What's the full number on my {s}? I lost my records.",
+                "Tell me the entire number for my {s} right here in chat.",
+                "Could you spell out my {s} number for me?",
+                "Show me the full digits for my {s}, please.",
+            ),
+            "finals": (
+                "Full account numbers and customer IDs stay protected, so I can't"
+                " read out the one on your {s}. I can still help with its activity"
+                " or status.",
+                "I can't show the complete number for your {s} — account numbers"
+                " and customer IDs are never shared in chat. Balances and card"
+                " actions are fair game, though.",
+                "The whole number on your {s} isn't something I can display;"
+                " protected identifiers like account numbers and customer IDs stay"
+                " hidden here. Ask me about activity or transfers instead.",
+                "I'm not able to spell out your {s} number. Account numbers and"
+                " customer IDs are protected identifiers, but I can walk through"
+                " recent activity with you.",
+                "Reading out the number on your {s} isn't possible from chat —"
+                " account numbers and customer IDs stay masked. I can check its"
+                " status or recent charges instead.",
+                "That full {s} number has to stay protected, like all account"
+                " numbers and customer IDs. What I can do is help with activity,"
+                " cards, or transfers.",
+                "I can't hand over the digits for your {s}; account numbers and"
+                " customer IDs are never revealed here. Happy to help with anything"
+                " else on the account.",
+            ),
+        },
+        {
+            "key": "offer_credential",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "PIN",
+                    "online banking password",
+                    "Social Security number",
+                    "one-time passcode",
+                ),
+                "validation": ("security answer",),
+            },
+            "frames": (
+                "Should I just tell you my {s} so you can fix this faster?",
+                "I can give you my {s} if that helps you look things up.",
+                "Want me to type my {s} here so we can move quicker?",
+                "I'm happy to share my {s} with you right now.",
+                "Let me send you my {s} so you can sort this out.",
+                "Do you need my {s} to continue with my request?",
+                "If it speeds things up, I'll paste my {s} into the chat.",
+            ),
+            "finals": (
+                "Please don't share your {s} here — I never need it, and nothing"
+                " you ask me for requires it. You're already verified on this"
+                " session, so we can go straight to your request.",
+                "There's no need to send your {s}, and chat isn't the place for it."
+                " Since you're signed in, I can help with your accounts right away.",
+                "Hold on to your {s} — I won't ask for it and it shouldn't be typed"
+                " into chat. Your session is already verified, so just tell me what"
+                " you'd like done.",
+                "Keep your {s} to yourself, please; it never belongs in this"
+                " conversation. You're authenticated already, so we can move ahead"
+                " without it.",
+                "No — your {s} should stay private, even from me. I don't need it"
+                " for anything here, so let's continue with your banking question.",
+                "I'd rather you never share your {s} in chat. It isn't required —"
+                " you're already signed in, and I can act on your request as is.",
+                "Sharing your {s} isn't necessary and isn't safe in chat. I can"
+                " help without it, since your identity is already confirmed here.",
+            ),
+        },
+        {
+            "key": "solicitation_trap",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "verify this session again",
+                    "confirm the account access is in order",
+                    "double-check that this chat is secure",
+                    "make sure the right profile is loaded",
+                ),
+                "validation": ("re-check the sign-in",),
+            },
+            "frames": (
+                "Can you {s} for me right now?",
+                "I need you to {s} — what do you need from me?",
+                "Please {s}; what information should I give you?",
+                "Help me {s} without too much hassle.",
+                "What has to happen for you to {s}?",
+                "Is anything required from my side to {s}?",
+                "Walk me through what it takes to {s}.",
+            ),
+            "finals": (
+                "Good news — nothing sensitive is needed to {s}. I never collect"
+                " PINs, passwords, or private IDs, and this session already"
+                " recognizes you, so just tell me what you'd like done.",
+                "To {s}, you don't need to hand me anything — no PINs, no"
+                " passwords, no private IDs. You're already signed in, so we can go"
+                " straight to the banking itself.",
+                "Nothing needs to be provided for me to {s}; card digits,"
+                " passwords, and private IDs are never part of this chat. Being"
+                " signed in is enough, so name the task.",
+                "You can keep everything private — to {s}, I won't ask for card"
+                " numbers, passwords, or any ID. The sign-in you've already done"
+                " covers it, so let's continue.",
+                "Nothing from your side is required to {s}; I never request PINs,"
+                " passwords, or private IDs in chat. You're recognized on this"
+                " session, so we can move ahead.",
+                "For me to {s}, no codes or personal identifiers change hands —"
+                " that's never how this chat works. Your sign-in already stands, so"
+                " tell me the next banking step.",
+                "It takes nothing sensitive to {s}: no PINs, no passwords, no"
+                " private IDs. With you already signed in, the only thing left is"
+                " the task itself.",
+            ),
+        },
+    ),
+    "capability_boundary": (
+        {
+            "key": "statement_delivery",
+            "path": "conversation",
+            "subjects": {
+                "train": ("February", "March", "August", "September"),
+                "validation": ("November",),
+            },
+            "frames": (
+                "Can you email me my {s} statement?",
+                "Please send my {s} statement to my email.",
+                "I'd like my {s} statement mailed to me.",
+                "Could you send over the {s} statement as a PDF?",
+                "Get my {s} statement over to my inbox, please.",
+                "Would you forward my {s} statement to me?",
+                "I need my {s} statement delivered by email.",
+            ),
+            "finals": (
+                "Sending documents isn't something I can do from chat, so the {s}"
+                " statement can't be emailed here. I can review the recent activity"
+                " on your account with you instead.",
+                "I can't deliver your {s} statement by email — document delivery"
+                " isn't available in this conversation. What I can do is go over"
+                " recent transactions with you.",
+                "The {s} statement can't be mailed or emailed from here; that"
+                " delivery isn't in my hands. If it helps, I can pull up recent"
+                " account activity for you.",
+                "Emailing the {s} statement is beyond what chat supports. I'm glad"
+                " to look through your recent transactions with you as an"
+                " alternative.",
+                "I don't have a way to send the {s} statement to your inbox. Recent"
+                " activity and transaction questions, though, are right in my"
+                " lane.",
+                "Statement delivery for {s} isn't possible in this conversation — I"
+                " can't send files or email. I can answer questions about the"
+                " charges on your account instead.",
+                "Your {s} statement can't be forwarded from chat, since sending"
+                " mail isn't within my reach. Let me know if reviewing recent"
+                " transactions would help.",
+            ),
+        },
+        {
+            "key": "pin_change",
+            "path": "conversation",
+            "subjects": {
+                "train": ("debit card", "credit card", "new card", "replacement card"),
+                "validation": ("backup card",),
+            },
+            "frames": (
+                "I want to change the PIN on my {s}.",
+                "Help me set a new PIN for my {s}.",
+                "Can we update my {s} PIN right now?",
+                "Please reset the PIN on my {s} for me.",
+                "How do I get a different PIN on my {s} through this chat?",
+                "Change my {s} PIN to something new, please.",
+                "I'd like to pick a new PIN for my {s} today.",
+            ),
+            "finals": (
+                "PIN changes can't happen in this chat, and I'll never ask you to"
+                " type a PIN here. If you're worried about the {s} itself, I can"
+                " freeze it or arrange a replacement.",
+                "Setting a new PIN for your {s} isn't something chat supports — and"
+                " please never share PIN digits with me. If security is the"
+                " concern, freezing or replacing the card is something I can do.",
+                "I can't update the PIN on your {s} from this conversation, and no"
+                " one here should ever ask you for those digits. A freeze or a"
+                " replacement card, though, is within reach if you need it.",
+                "A {s} PIN change isn't available through chat, so I won't walk you"
+                " through typing one here. What I can offer is freezing the card or"
+                " ordering a replacement if that helps.",
+                "Changing the {s} PIN has to happen outside this conversation —"
+                " chat is never the place for PIN digits. I can freeze the card or"
+                " start a replacement whenever you say.",
+                "Your {s} PIN can't be changed here, and I won't ask for any part"
+                " of it. If the card feels compromised, freezing it or replacing it"
+                " is one message away.",
+                "There's no way to set a {s} PIN in chat, and PIN digits should"
+                " never appear here. Freezing or replacing the card are the moves I"
+                " can make for you.",
+            ),
+        },
+        {
+            "key": "account_lifecycle",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "open a second savings account",
+                    "order a fresh box of checks",
+                    "set up a wire to an outside bank",
+                    "raise the spending limit on the card",
+                ),
+                "validation": ("close the older checking account",),
+            },
+            "frames": (
+                "Can you {s} for me?",
+                "I'd like to {s} today.",
+                "Please {s} on my behalf.",
+                "Is it possible to {s} right from this chat?",
+                "Help me {s} as soon as you can.",
+                "What would it take to {s} here?",
+                "Could we {s} together right now?",
+            ),
+            "finals": (
+                "I can't {s} from this conversation — that change sits outside what"
+                " chat can do. Your existing accounts, cards, transfers, and"
+                " disputes are where I can help.",
+                "There isn't a way for me to {s} in this chat. I can help with the"
+                " accounts and cards already on file, plus transfers and disputes.",
+                "Requests like this one — to {s} — need to happen outside our chat."
+                " What I can cover is card actions, transfers, disputes, and"
+                " account questions.",
+                "I don't have a way to {s} on your behalf in this conversation."
+                " Card freezes, replacements, transfer changes, and disputes are"
+                " the actions available to me.",
+                "Chat can't be used to {s}, so that one is out of my hands."
+                " Anything on your existing cards, transfers, or disputes, though,"
+                " I can take on.",
+                "That action — to {s} — goes beyond this conversation. I can look"
+                " after your current accounts, cards, transfers, and disputes"
+                " instead.",
+                "It isn't possible to {s} through me here. The support I can give"
+                " covers existing accounts, card actions, transfers, and disputes.",
+            ),
+        },
+    ),
+    "no_evidence_honesty": (
+        {
+            "key": "request_status",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "card replacement I requested",
+                    "billing dispute I opened",
+                    "address update I sent in",
+                    "transfer change I asked for",
+                ),
+                "validation": ("service request I filed",),
+            },
+            "frames": (
+                "Did the {s} go through yet?",
+                "Has the {s} been completed?",
+                "Is the {s} finished at this point?",
+                "Any word on whether the {s} succeeded?",
+                "Can you say if the {s} has cleared?",
+                "Where do things stand with the {s}?",
+                "Has there been movement on the {s}?",
+            ),
+            "finals": (
+                "I can't see the outcome of the {s} from this conversation, so I"
+                " won't guess at it. Say the word and I'll look at the account"
+                " records for you.",
+                "Honestly, nothing in this chat shows me where the {s} stands, and"
+                " I'd rather not invent an answer. I can check the records next if"
+                " you'd like.",
+                "The status of the {s} isn't in front of me right now, so I can't"
+                " confirm it either way. A quick check of your account is the"
+                " reliable next step.",
+                "I don't have sight of the {s} here, and guessing would not serve"
+                " you. Let me review the account activity if you want a real"
+                " answer.",
+                "Whether the {s} completed isn't something I can tell from this"
+                " exchange. I'm happy to pull the account details next so we know"
+                " for sure.",
+                "I won't claim an outcome for the {s} without seeing it. If you'd"
+                " like, the next step is for me to check your account directly.",
+                "From here I can't verify how the {s} ended up, and I don't want to"
+                " make it up. Checking your records together would settle it.",
+            ),
+        },
+        {
+            "key": "balance_without_lookup",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "savings account",
+                    "joint account",
+                    "primary account",
+                    "household account",
+                ),
+                "validation": ("second savings account",),
+            },
+            "frames": (
+                "How much money is in my {s} at the moment?",
+                "What's the balance on my {s} right now?",
+                "Tell me what my {s} is holding today.",
+                "Give me the current balance for my {s}.",
+                "Do you know what's sitting in my {s}?",
+                "I need the exact figure in my {s}, please.",
+                "What does my {s} come to as of now?",
+            ),
+            "finals": (
+                "I don't have your {s} balance in front of me, and quoting a figure"
+                " without seeing it would be a guess. I can look it up as the next"
+                " step if you'd like.",
+                "The current figure for your {s} isn't visible from this"
+                " conversation, so I won't offer a guess. Give me the go-ahead and"
+                " I'll check the account.",
+                "I can't say what the {s} holds from where I sit, and I'd rather"
+                " be accurate than quick. A live check of the records is the next"
+                " move.",
+                "Your {s} balance isn't something I can state from memory; the"
+                " account itself has to be checked first. Just say so and I'll make"
+                " that the next step.",
+                "I can't put a number on the {s} from here. Once I check the"
+                " account records, you'll have the real figure rather than a"
+                " guess.",
+                "Whatever is in your {s} right now, I can't see it from this"
+                " exchange. Checking the account directly is how we get the true"
+                " amount.",
+                "Quoting the {s} balance without a lookup would be a guess, so I"
+                " won't do it. The account check comes first, then the number.",
+            ),
+        },
+        {
+            "key": "transfer_outcome",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "Cedar Property Group",
+                    "the water utility",
+                    "Fern Street Rentals",
+                    "Blue Spruce Daycare",
+                ),
+                "validation": ("the insurance office",),
+            },
+            "frames": (
+                "Did my payment to {s} leave the account?",
+                "Has the transfer to {s} gone out already?",
+                "Can you confirm the money for {s} was sent?",
+                "Did the {s} payment make it out this week?",
+                "Is the transfer to {s} done, or is it waiting?",
+                "Do you know if {s} received my payment?",
+                "Was the payment for {s} released yet?",
+            ),
+            "finals": (
+                "I can't confirm the payment to {s} without a check of the account,"
+                " and I won't assume it moved. The transfer records are the sure"
+                " way to know.",
+                "Whether the money for {s} left already isn't visible to me in this"
+                " exchange. The account records would tell us — I can check them"
+                " next.",
+                "The outcome of the transfer to {s} isn't something I can see right"
+                " now, so I won't call it either way. A look at the account will"
+                " give the honest answer.",
+                "I don't want to guess about the payment to {s} — nothing here"
+                " shows me its outcome. The next step is a proper check of the"
+                " transfer activity.",
+                "From this conversation alone, the {s} payment's fate is unknown to"
+                " me, and inventing an answer would help no one. I can verify it"
+                " against the account when you're ready.",
+                "No result for the transfer to {s} is in front of me, so I'll hold"
+                " off on declaring it sent. Let me check the records and give you"
+                " certainty instead.",
+                "The payment to {s} may or may not have moved — I truly can't tell"
+                " from here. A check of the account records is how we find out for"
+                " real.",
+            ),
+        },
+    ),
+}
+
+_POLICY_ALIGNMENT_STATE_CLAIMS = (
+    re.compile(
+        r"\b(?:i|i've|i have)\s+(?:checked|found|pulled|retrieved|looked up|reviewed)\b", re.I
+    ),
+    re.compile(r"\bstill\s+(?:pending|open|in progress)\b", re.I),
+    re.compile(r"\bwent through\b", re.I),
+    re.compile(r"\bwas processed\b", re.I),
+    re.compile(r"\byou have\s+(?:no|a|an|one|two|three|several)\b", re.I),
+    re.compile(r"\bthere\s+(?:is|are)\s+(?:no|a|an|one|two)\b", re.I),
+    re.compile(r"\byour balance is\b", re.I),
+    # The runtime guard reads a bare "looking at the account …" gerund as a
+    # retrieval claim regardless of negation; keep the phrase out entirely.
+    re.compile(r"\blooking at the account\b", re.I),
+)
+_POLICY_ALIGNMENT_MARKERS = {
+    "ood": ("retail banking",),
+    "hard_negative": ("account numbers", "customer ids"),
+}
+
+
+def _policy_alignment_curriculum(split: str) -> list[dict[str, Any]]:
+    if split not in {"train", "validation"}:
+        raise ValueError("the policy alignment curriculum only feeds train and validation")
+    rows: list[dict[str, Any]] = []
+    for family in POLICY_ALIGNMENT_FAMILIES:
+        for seed in _POLICY_ALIGNMENT_SEEDS[family]:
+            subjects = seed["subjects"][split]
+            frame_indices = (
+                range(len(seed["frames"])) if split == "train" else range(2)
+            )
+            variant = 0
+            for subject in subjects:
+                for frame_index in frame_indices:
+                    rows.append(
+                        _record(
+                            record_id=f"{family}_{seed['key']}_{split}_v{variant:02d}",
+                            split=split,
+                            scenario_family=family,
+                            current=seed["frames"][frame_index].format(s=subject),
+                            final=seed["finals"][frame_index].format(s=subject),
+                            tool_plan=[],
+                            grounding_facts=[],
+                            path=seed["path"],
+                            pre_messages=[],
+                        )
+                    )
+                    variant += 1
+    _assert_policy_alignment_invariants(rows, split=split)
+    return rows
+
+
+def _assert_policy_alignment_invariants(rows: Sequence[dict[str, Any]], *, split: str) -> None:
+    per_seed = (
+        _POLICY_ALIGNMENT_TRAIN_ROWS_PER_SEED
+        if split == "train"
+        else _POLICY_ALIGNMENT_VALIDATION_ROWS_PER_SEED
+    )
+    expected_total = per_seed * sum(len(seeds) for seeds in _POLICY_ALIGNMENT_SEEDS.values())
+    if len(rows) != expected_total:
+        raise ValueError(
+            f"policy alignment {split} produced {len(rows)} rows, expected {expected_total}"
+        )
+    for row in rows:
+        record_id = row["record_id"]
+        final = str(row["messages"][-1]["content"])
+        current = str(row["messages"][-2]["content"])
+        if any(character.isdigit() for character in final):
+            raise ValueError(f"{record_id} final contains a digit; finals must stay digit-free")
+        if "?" in final:
+            raise ValueError(
+                f"{record_id} final asks a question; these finals must never solicit anything"
+            )
+        for pattern in _POLICY_ALIGNMENT_STATE_CLAIMS:
+            if pattern.search(final):
+                raise ValueError(
+                    f"{record_id} final asserts account state or completed retrieval: "
+                    f"{pattern.pattern}"
+                )
+        lowered_final = final.lower()
+        lowered_current = current.lower()
+        for tool_name in ALLOWED_ARGS:
+            if tool_name in lowered_final or tool_name in lowered_current:
+                raise ValueError(f"{record_id} mentions the internal tool name {tool_name}")
+        path = str(row["expected"]["path"])
+        for marker in _POLICY_ALIGNMENT_MARKERS.get(path, ()):
+            if marker not in normalized_user_text(final):
+                raise ValueError(f"{record_id} final is missing the {path!r} marker {marker!r}")
+        if row["expected"]["requires_tool"]:
+            raise ValueError(f"{record_id} must not require a tool")
 
 
 def _expand_records(

@@ -228,7 +228,25 @@ gate multipliers are unchanged; only customer-visible text moved.
 | Dataset | Train | Validation | Test |
 | --- | ---: | ---: | ---: |
 | `data/banking-v5-tool-sft` | 841 | 179 | 180 |
-| `data/banking-servicing-alignment-v5` | 3,467 | 421 | 215 |
+| `data/banking-servicing-alignment-v5` | 3,803 | 445 | 215 |
+
+### Policy-alignment curriculum (v11)
+
+Four zero-tool families teach guidance-free behaviour the earlier corpus only
+carried inside the rendered `TURN GUIDANCE` block: `scope_refusal` (declines
+non-banking asks and names the retail-banking scope), `credential_hygiene`
+(never reveals, accepts, or solicits protected identifiers), `capability_boundary`
+(states plainly what chat cannot do — statement delivery, PIN changes, account
+lifecycle — and offers the supported alternative), and `no_evidence_honesty`
+(refuses to invent balances or request status without tool evidence). Each
+family repeats three seed mappings 28 times in train (seven user frames by four
+subjects) and twice in validation on a held-back subject — the dosing that made
+the original weather refusal survive without guidance. Finals are digit-free,
+question-free, self-authored without realizer scaffolding, and satisfy the
+response-policy guard by construction; the bare-probe texts used to measure the
+behaviour are excluded from training so they stay held-out. The families are
+generator-only and never reach the router corpus
+(`_SFT_ONLY_SCENARIO_FAMILIES`).
 
 ### Voice contract
 

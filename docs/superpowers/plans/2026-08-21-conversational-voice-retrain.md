@@ -765,3 +765,32 @@ patched unilaterally. Until then item 4's router half stays parked and
 `LearnedConversationRouter.from_artifact_dir` will keep refusing any router retrained at HEAD.
 
 Reproduction: `verify/bisect_at.sh <commit>` (worktree, scratch dirs, ~25 min including training).
+
+## v11 policy-alignment curriculum (2026-08-27)
+
+The guidance-free bare probes (no harness, no router, no TURN GUIDANCE) showed the v10
+adapter still writes a requested poem, solicits new PIN digits and account last-fours,
+promises statement delivery, and invents request status. A fresh-context review of the
+first curriculum draft surfaced the governing mechanism: every training row renders with
+TURN GUIDANCE appended to its system message, so those behaviours had only ever been
+supervised with the rule present in the prompt — the bare probes strip it. The one
+behaviour that does survive guidance-free — the weather refusal — came from a single seed
+realized 32 times, which makes repetition of one mapping, not breadth of coverage, the
+demonstrated way to move policy from the prompt into the weights.
+
+Delivered: four generator-only families in `_policy_alignment_curriculum`
+(`scope_refusal`, `credential_hygiene`, `capability_boundary`, `no_evidence_honesty`),
+three seed mappings each, every seed repeated 28x in train (7 user frames x 4 subjects)
+and 2x in validation on a held-back subject — 336 train / 24 validation rows, alignment
+splits 2962/266/35, composite 3803/445/215. Finals are self-authored (no realizer
+scaffolding, no teacher pass), digit-free, question-free, satisfy the per-path markers
+("retail banking" on ood; "account numbers"/"customer ids" on hard_negative), never name
+a tool, and pass the runtime response-policy guard over the whole shipped corpus (two
+finals initially tripped the guard's "looking at the account" retrieval-claim reading and
+were rewritten; the phrase is now a build-time invariant). The bare-probe texts and their
+signature entities (an ocean poem, a January statement, the checking-account balance, a
+PIN change request) are excluded from training and pinned by test so the probes stay
+held-out generalization checks. All four families are in `_SFT_ONLY_SCENARIO_FAMILIES`;
+the parked router corpus is unchanged. Frozen artifacts byte-identical: test.jsonl (215),
+coreference-shadow (32), granite-v7-shadow (13), screenshot-regression (9), and
+`data/banking-v5-tool-sft/**`.

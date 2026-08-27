@@ -274,7 +274,19 @@ def rows_sha256(rows: Sequence[dict[str, Any]]) -> str:
 # those rows in, a retrained router answers "what about the weather there?" with
 # view_cards and the held-out regression gate fails (route 0.222, intent 0.250).
 # Curricula listed here train the generator only and never reach the router.
-_SFT_ONLY_SCENARIO_FAMILIES = frozenset({"long_context_tool_fidelity"})
+# The v11 policy-alignment families are generator supervision for guidance-free
+# refusal/boundary/honesty voice; the router already owns those decisions through
+# its own OOD and unsupported-capability curricula, and its corpus is pinned while
+# the coreference regression stays parked.
+_SFT_ONLY_SCENARIO_FAMILIES = frozenset(
+    {
+        "long_context_tool_fidelity",
+        "scope_refusal",
+        "credential_hygiene",
+        "capability_boundary",
+        "no_evidence_honesty",
+    }
+)
 
 
 def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] | None:
