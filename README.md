@@ -24,7 +24,7 @@ fictional. The POC does not connect to a real bank.
 | Artifact format | 4 |
 | Release gate | `release_eligible: true`; no failures |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d`; runtime running |
-| Deployed Granite adapter | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e` (subfolder `adapter`) |
+| Deployed Granite adapter | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` (subfolder `adapter`) |
 
 The Space is running with the exact base, adapter, and router revisions
 above. Authenticated chat smoke is pending.

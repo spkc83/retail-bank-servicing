@@ -14,8 +14,8 @@ bank data.
 | Component | Identity |
 | --- | --- |
 | Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e` |
-| Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10 publish nested `adapter_config.json`, and PEFT reads the repo root without it |
+| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` |
+| Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10 and v11 publishes nest `adapter_config.json`, and PEFT reads the repo root without it |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
@@ -164,16 +164,16 @@ response. The Gradio queue uses concurrency one for this low-traffic POC.
 Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
-ADAPTER_REVISION=055ce38af4595b1e139a9e9baea8e0c53cba7c2e
+ADAPTER_REVISION=03a7b44633fadab7ad672b009925cc68b52494d4
 ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
   --adapter-revision "$ADAPTER_REVISION" \
   --adapter-subfolder adapter \
   --model-dtype bf16 \
@@ -199,8 +199,8 @@ Drive the agent in process rather than through the browser. One runtime load, a
 fresh session per case, no Streamlit session lifecycle to fight:
 
 ```bash
-export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx
-export RETAIL_BANK_MODEL_REVISION=055ce38af4595b1e139a9e9baea8e0c53cba7c2e
+export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment
+export RETAIL_BANK_MODEL_REVISION=03a7b44633fadab7ad672b009925cc68b52494d4
 export RETAIL_BANK_ADAPTER_ID="$RETAIL_BANK_MODEL_ID"
 export RETAIL_BANK_ADAPTER_REVISION="$RETAIL_BANK_MODEL_REVISION"
 export RETAIL_BANK_ADAPTER_SUBFOLDER=adapter

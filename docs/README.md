@@ -13,8 +13,8 @@ contract, and run either interface.
 | Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
 | Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
-| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a78bed17db8c56099a32f835832b9878a895a602` |
-| Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` |
+| Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d`; authenticated chat smoke pending |
@@ -50,17 +50,17 @@ the pages themselves describe V6 format 4 and its seven heads.
 
 ### Granite SFT dataset digests
 
-Current local digests after the conversational-voice regeneration
-([details](02-data-generation.md#granite-sft-corpora)). This is a local
-regeneration, not yet published; the Hub SFT dataset revision stays
-`a78bed17db8c56099a32f835832b9878a895a602`.
+Current shipped digests after the v11 policy-alignment iteration
+([details](02-data-generation.md#granite-sft-corpora)), published to the Hub at
+`b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` — the revision the deployed v11
+adapter was trained on.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
 | `data/banking-v5-tool-sft/train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
 | `data/banking-v5-tool-sft/validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
-| `data/banking-servicing-alignment-v5/train.jsonl` | 3,267 | `9ec916e0dfc1fbd52d7f091a9ca7cb82f1b5038566bd649e9b9d92a6809e7c34` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 397 | `3cf683aed3432a2632187cbc71079cf61b5092687b421cee6dacc0f54818dbda` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,803 | `a2b7b5b383ef8fb61974e2c5d7c784c6e515ea5dea7163aec061ca0cf709d662` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 445 | `f0488f1cf3af50cb5d9ff114bc0e4bf8e26bd23e208b9a2da6559570260586a6` |
 
 ## Safe Local Checks
 
