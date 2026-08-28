@@ -278,6 +278,9 @@ def rows_sha256(rows: Sequence[dict[str, Any]]) -> str:
 # refusal/boundary/honesty voice; the router already owns those decisions through
 # its own OOD and unsupported-capability curricula, and its corpus is pinned while
 # the coreference regression stays parked.
+# The v12 deictic-replace reinforcement families deepen a generator mapping the
+# router already supervises through the original deictic curriculum; keeping
+# them out preserves the pinned router corpus byte for byte.
 _SFT_ONLY_SCENARIO_FAMILIES = frozenset(
     {
         "long_context_tool_fidelity",
@@ -285,6 +288,8 @@ _SFT_ONLY_SCENARIO_FAMILIES = frozenset(
         "credential_hygiene",
         "capability_boundary",
         "no_evidence_honesty",
+        "deictic_replace_reinforcement_action",
+        "deictic_replace_reinforcement_ambiguity",
     }
 )
 

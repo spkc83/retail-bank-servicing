@@ -228,7 +228,7 @@ gate multipliers are unchanged; only customer-visible text moved.
 | Dataset | Train | Validation | Test |
 | --- | ---: | ---: | ---: |
 | `data/banking-v5-tool-sft` | 841 | 179 | 180 |
-| `data/banking-servicing-alignment-v5` | 3,803 | 445 | 215 |
+| `data/banking-servicing-alignment-v5` | 3,959 | 447 | 215 |
 
 ### Policy-alignment curriculum (v11)
 
@@ -247,6 +247,22 @@ response-policy guard by construction; the bare-probe texts used to measure the
 behaviour are excluded from training so they stay held-out. The families are
 generator-only and never reach the router corpus
 (`_SFT_ONLY_SCENARIO_FAMILIES`).
+
+### v12 additions: access-claim honesty and status-context replace
+
+The v12 iteration closes the two residuals the v11 bare probes and deictic
+suite left open. `no_evidence_honesty` gained a fourth seed,
+`balance_visibility`, teaching the denial of standing access — being signed in
+does not place an account in front of the assistant — because the v11 miss was
+an availability claim, not a quoting failure; "checking account" is deliberately
+left untrained so the bare probe keeps measuring generalization of the claim
+shape. `_deictic_replace_reinforcement_curriculum` adds 64 action/ambiguity
+pairs whose sole-card histories are status answers rather than card lists: the
+one deictic probe v11 failed follows a card-status turn, a history shape the
+original curriculum never covered. The reinforcement families are also
+generator-only (`_SFT_ONLY_SCENARIO_FAMILIES`), so the pinned router corpus
+ingests nothing new, and the ambiguity side keeps the gate-proven clarify
+template verbatim.
 
 ### Voice contract
 

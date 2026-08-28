@@ -75,8 +75,8 @@ the deployed v11 adapter was trained on.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 3,803 | `a2b7b5b383ef8fb61974e2c5d7c784c6e515ea5dea7163aec061ca0cf709d662` |
-| `validation.jsonl` | 445 | `f0488f1cf3af50cb5d9ff114bc0e4bf8e26bd23e208b9a2da6559570260586a6` |
+| `train.jsonl` | 3,959 | `128502f39f359dc07dc7b3da74127fa11b3e9a536d329336c9d01c9636c02a41` |
+| `validation.jsonl` | 447 | `a0f2cd9941240232a24a93cb9eadc7dfe0d96dc249a81a6b539c8536d43267a3` |
 | `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 
 The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,

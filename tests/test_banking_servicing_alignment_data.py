@@ -68,12 +68,12 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
 
     validate_servicing_alignment_splits(splits)
     assert report["split_counts"] == {
-        "train": 2962,
-        "validation": 266,
+        "train": 3118,
+        "validation": 268,
         "test": 35,
     }
     assert report["coreference_pair_counts"] == {
-        "train": 784,
+        "train": 848,
         "validation": 16,
         "test": 0,
     }
@@ -96,6 +96,8 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "tool_outcome_consistency": 128,
         "deictic_replace_action": 784,
         "deictic_replace_ambiguity": 784,
+        "deictic_replace_reinforcement_action": 64,
+        "deictic_replace_reinforcement_ambiguity": 64,
         "deictic_ineligible_clarification": 72,
         "deictic_missing_clarification": 72,
         "natural_social_style": 12,
@@ -111,7 +113,7 @@ def test_servicing_alignment_records_validate_and_cover_failure_modes() -> None:
         "scope_refusal": 84,
         "credential_hygiene": 84,
         "capability_boundary": 84,
-        "no_evidence_honesty": 84,
+        "no_evidence_honesty": 112,
     }
     service_case_records = [
         record
@@ -409,7 +411,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         for split in ("train", "validation")
     }
 
-    assert len(curricula["train"]) == 1568
+    assert len(curricula["train"]) == 1696
     assert len(curricula["validation"]) == 32
     for split, rows in curricula.items():
         action = [row for row in rows if row["expected"]["path"] == "multi_turn"]
@@ -449,7 +451,7 @@ def test_coreference_curriculum_is_diverse_matched_and_split_disjoint() -> None:
         pairs: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             pairs.setdefault(row["metadata"]["coreference_pair_id"], []).append(row)
-        assert len(pairs) == (784 if split == "train" else 16)
+        assert len(pairs) == (848 if split == "train" else 16)
         for pair_rows in pairs.values():
             assert len(pair_rows) == 2
             assert {_last_user(row) for row in pair_rows} == {_last_user(pair_rows[0])}
@@ -678,11 +680,12 @@ def test_writer_outputs_manifest_and_governed_splits(tmp_path: Path) -> None:
     )
     assert manifest["report"]["generation_contract_counts"]["test"] == {}
     assert manifest["report"]["alignment_split_counts"] == {
-        # +200 train / +24 validation from _long_context_tool_fidelity and
-        # +336 train / +24 validation from _policy_alignment_curriculum; the test
+        # +200 train / +24 validation from _long_context_tool_fidelity,
+        # +364 train / +26 validation from _policy_alignment_curriculum, and
+        # +128 train from _deictic_replace_reinforcement_curriculum; the test
         # split is a closed list of five builders and stays frozen at 35.
-        "train": 2962,
-        "validation": 266,
+        "train": 3118,
+        "validation": 268,
         "test": 35,
     }
     base_counts = manifest["report"]["base_split_counts"]
@@ -778,7 +781,7 @@ def _export_alignment_requests(tmp_path: Path, base_dir: Path) -> list[dict[str,
     rows = [
         json.loads(line) for line in requests.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert len(rows) == 2962 + 266
+    assert len(rows) == 3118 + 268
     return rows
 
 
@@ -1539,14 +1542,19 @@ def test_policy_alignment_reaches_train_and_validation_only() -> None:
 
     train_rows = _policy_alignment_rows(splits["train"])
     validation_rows = _policy_alignment_rows(splits["validation"])
-    assert len(train_rows) == 336
-    assert len(validation_rows) == 24
+    assert len(train_rows) == 364
+    assert len(validation_rows) == 26
     assert _policy_alignment_rows(splits["test"]) == []
     train_families = Counter(row["metadata"]["scenario_family"] for row in train_rows)
     validation_families = Counter(row["metadata"]["scenario_family"] for row in validation_rows)
+    # Three seeds per family at 28 train / 2 validation rows each, except
+    # no_evidence_honesty, which gained the v12 balance_visibility seed.
     for family in alignment_data.POLICY_ALIGNMENT_FAMILIES:
-        assert train_families[family] == 84
-        assert validation_families[family] == 6
+        expected_train, expected_validation = (
+            (112, 8) if family == "no_evidence_honesty" else (84, 6)
+        )
+        assert train_families[family] == expected_train
+        assert validation_families[family] == expected_validation
         assert report["scenario_family_counts"]["test"].get(family) is None
 
     assert _policy_alignment_rows(build_coreference_shadow_gate()) == []

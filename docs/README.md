@@ -59,8 +59,8 @@ adapter was trained on.
 | --- | ---: | --- |
 | `data/banking-v5-tool-sft/train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
 | `data/banking-v5-tool-sft/validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
-| `data/banking-servicing-alignment-v5/train.jsonl` | 3,803 | `a2b7b5b383ef8fb61974e2c5d7c784c6e515ea5dea7163aec061ca0cf709d662` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 445 | `f0488f1cf3af50cb5d9ff114bc0e4bf8e26bd23e208b9a2da6559570260586a6` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,959 | `128502f39f359dc07dc7b3da74127fa11b3e9a536d329336c9d01c9636c02a41` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 447 | `a0f2cd9941240232a24a93cb9eadc7dfe0d96dc249a81a6b539c8536d43267a3` |
 
 ## Safe Local Checks
 

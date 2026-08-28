@@ -611,6 +611,7 @@ def _train_records() -> list[dict[str, Any]]:
     return [
         *_expand_records(records, split="train"),
         *_deictic_replace_curriculum("train"),
+        *_deictic_replace_reinforcement_curriculum("train"),
         *_deictic_ineligible_curriculum("train"),
         *_missing_entity_records("train"),
         *_social_style_records("train"),
@@ -1411,6 +1412,195 @@ def _deictic_replace_curriculum(split: str) -> list[dict[str, Any]]:
                     }
                 )
             records.extend((action, ambiguity))
+    return records
+
+
+def _deictic_replace_reinforcement_curriculum(split: str) -> list[dict[str, Any]]:
+    """Train-only sole-card replace reinforcement in the STATUS-ANSWER context.
+
+    The v11 adapter regressed on exactly one deictic probe: after answering a
+    card-status question about the customer's single card, "Please replace that
+    one." decoded a fresh list plus the clarify template instead of the
+    replacement. Every sole-card history `_deictic_replace_curriculum` trains is
+    list-shaped ("Cards on this profile: ...", "Card results: ..."), so the
+    failing context — a status answer — was uncovered, and the model fell back
+    to its most-repeated trained final (the pinned clarify template). This
+    builder covers that context directly: same paired action/ambiguity contrast,
+    same pinned clarify template on the ambiguity side, but the sole-card and
+    two-card histories are status answers. It is a separate builder (modeled on
+    `_deictic_ineligible_curriculum` below) rather than extra parent specs
+    because the parent assigns products by ``index % len(products)`` — growing
+    its spec list would silently reshuffle card names across every existing
+    deictic row. The scenario families are new and registered SFT-only, so the
+    parked router corpus ingests nothing from here. The frozen validation and
+    shadow gates are not extended.
+    """
+    if split != "train":
+        raise ValueError(f"unsupported deictic reinforcement split: {split}")
+    prompt_forms = (
+        "{prompt}",
+        "please {prompt}",
+        "{prompt} please",
+        "yes {prompt}",
+    )
+    sole_card_history_forms = (
+        "Your {card_name} ending in {card_last4} is active and available for use.",
+        "The {card_name} ending in {card_last4} is currently active.",
+        "Status check: {card_name} ending in {card_last4} is active.",
+        "Your {card_name} ending in {card_last4} shows an active status.",
+    )
+    multiple_card_history_forms = (
+        (
+            "Your {card_name} ending in {card_last4} and your {other_card_name} "
+            "ending in {other_card_last4} are both active."
+        ),
+        (
+            "The {card_name} ending in {card_last4} is active; the "
+            "{other_card_name} ending in {other_card_last4} is active as well."
+        ),
+        (
+            "Status check: {card_name} ending in {card_last4} active, "
+            "{other_card_name} ending in {other_card_last4} active."
+        ),
+        (
+            "Your {card_name} ending in {card_last4} shows active, and your "
+            "{other_card_name} ending in {other_card_last4} shows active too."
+        ),
+    )
+    tiers = ("Everyday Debit", "Rewards Debit", "Travel Debit", "Cashback Debit")
+    specs = (
+        {"phrase_family": "one-shown-status", "prompt": "replace the one you showed"},
+        {"phrase_family": "need-replaced-status", "prompt": "i need that card replaced"},
+        {"phrase_family": "order-new-status", "prompt": "order a new card to replace it"},
+        {
+            "phrase_family": "needs-replacement-status",
+            "prompt": "that card needs a replacement",
+        },
+    )
+    # A pool wider than the spec list, decoupled from it: every family's sixteen
+    # combos walk the full pool, matching the parent curriculum's per-family
+    # product diversity. All names are unused by any other curriculum.
+    products = (
+        "Tarn",
+        "Frost",
+        "Glen",
+        "Wren",
+        "Heath",
+        "Crag",
+        "Fen",
+        "Loch",
+        "Gorse",
+        "Knoll",
+        "Cairn",
+        "Firth",
+    )
+    number_base = 6900
+    other_number_base = 8900
+    history_user = "Check the status of my card."
+    records: list[dict[str, Any]] = []
+    pair_index = 0
+    for family_index, spec in enumerate(specs):
+        for prompt_index in range(len(prompt_forms)):
+            for history_form in range(len(sole_card_history_forms)):
+                pair_index += 1
+                family = spec["phrase_family"]
+                prompt = prompt_forms[prompt_index].format(prompt=spec["prompt"])
+                product = products[
+                    (family_index + (3 * prompt_index) + (5 * history_form))
+                    % len(products)
+                ]
+                tier = tiers[(family_index + prompt_index + history_form) % len(tiers)]
+                realization_key = f"{prompt_index}-{history_form}"
+                card_name = f"{product} {tier}"
+                other_card_name = f"{product} {tier.replace('Debit', 'Credit')}"
+                card_last4 = f"{number_base + pair_index:04d}"
+                other_card_last4 = f"{other_number_base + pair_index:04d}"
+                pair_id = f"coreference-reinforce-{split}-{family}-{realization_key}"
+                history_values = {
+                    "card_name": card_name,
+                    "card_last4": card_last4,
+                    "other_card_name": other_card_name,
+                    "other_card_last4": other_card_last4,
+                }
+                sole_card_history = sole_card_history_forms[history_form].format(
+                    **history_values
+                )
+                multiple_card_history = multiple_card_history_forms[history_form].format(
+                    **history_values
+                )
+                action_final = (
+                    f"{card_name} ending in {card_last4} now has replacement pending."
+                )
+                action = _record(
+                    record_id=f"deictic_replace_{family}_{split}_{realization_key}",
+                    split=split,
+                    scenario_family="deictic_replace_reinforcement_action",
+                    current=prompt,
+                    final=action_final,
+                    tool_plan=[("replace_card", {"last4": card_last4})],
+                    grounding_facts=[
+                        f"card.last4={card_last4}",
+                        "card.status=replacement_pending",
+                    ],
+                    path="multi_turn",
+                    pre_messages=[
+                        _user(history_user),
+                        _assistant(sole_card_history, loss=False),
+                    ],
+                    tool_envelopes=[
+                        _success_envelope(
+                            card={
+                                "name": card_name,
+                                "last4": card_last4,
+                                "status": "replacement_pending",
+                            }
+                        )
+                    ],
+                )
+                # The pinned clarify template, verbatim: the 2026-08-21 v9 run
+                # proved any rephrasing of it collapses the ambiguity gate.
+                ambiguity_final = (
+                    f"I found {card_name} ending in {card_last4} and {other_card_name} "
+                    f"ending in {other_card_last4}. Which card should I replace? Please "
+                    "share its last four digits."
+                )
+                ambiguity = _record(
+                    record_id=f"deictic_ambiguous_{family}_{split}_{realization_key}",
+                    split=split,
+                    scenario_family="deictic_replace_reinforcement_ambiguity",
+                    current=prompt,
+                    final=ambiguity_final,
+                    tool_plan=[],
+                    grounding_facts=[],
+                    path="clarification",
+                    pre_messages=[
+                        _user(history_user),
+                        _assistant(multiple_card_history, loss=False),
+                    ],
+                )
+                entity_keys = (
+                    f"{card_name}|{card_last4}",
+                    f"{other_card_name}|{other_card_last4}",
+                )
+                for record, target, actionable_card_count in (
+                    (action, "replace_card", 1),
+                    (ambiguity, "clarification", 2),
+                ):
+                    record["metadata"].update(
+                        {
+                            "coreference_pair_id": pair_id,
+                            "coreference_phrase_family": family,
+                            "coreference_prompt": prompt,
+                            "coreference_prompt_form": prompt_index,
+                            "coreference_history_form": history_form,
+                            "coreference_product": product,
+                            "coreference_tier": tier,
+                            "coreference_entity_keys": entity_keys,
+                            "coreference_target": target,
+                            "actionable_card_count": actionable_card_count,
+                        }
+                    )
+                records.extend((action, ambiguity))
     return records
 
 
@@ -3893,6 +4083,59 @@ _POLICY_ALIGNMENT_SEEDS: dict[str, tuple[dict[str, Any], ...]] = {
                 "The payment to {s} may or may not have moved — I truly can't tell"
                 " from here. A check of the account records is how we find out for"
                 " real.",
+            ),
+        },
+        # The v11 bare-probe residual: asked for a balance with no tools in
+        # reach, the adapter answered "your checking account balance is always
+        # available to me, since you're authenticated" — an availability claim
+        # no trained final covers. `balance_without_lookup` above teaches the
+        # refusal to QUOTE a figure; this seed teaches the denial of STANDING
+        # ACCESS (being signed in does not place the account in front of the
+        # assistant). "checking account" stays deliberately untrained so the
+        # bare probe keeps measuring generalization of the claim shape, not
+        # entity memorization.
+        {
+            "key": "balance_visibility",
+            "path": "conversation",
+            "subjects": {
+                "train": (
+                    "everyday account",
+                    "current account",
+                    "main spending account",
+                    "personal account",
+                ),
+                "validation": ("day-to-day account",),
+            },
+            "frames": (
+                "You can see what's in my {s}, right?",
+                "Since I'm signed in, just read me what my {s} holds.",
+                "You must have my {s} on your screen already.",
+                "Isn't my {s} right there in front of you?",
+                "Just read the figure from my {s} back to me.",
+                "You're the bank, so surely you can see into my {s}.",
+                "My {s} should be visible to you while I'm logged in.",
+            ),
+            "finals": (
+                "Being signed in protects your access, but it doesn't put your"
+                " {s} in front of me. No figure reaches me until a proper account"
+                " lookup runs, and I'm glad to make that the next step.",
+                "I don't actually have a live view of your {s} in this"
+                " conversation. The honest route is a direct account check, which"
+                " I can start whenever you like.",
+                "Nothing from your {s} is on my side of this chat, signed in or"
+                " not. A real lookup against the account is what produces the"
+                " true number.",
+                "I can't read your {s} from here, and pretending otherwise would"
+                " be a disservice. Once the account itself is checked, you'll"
+                " have the genuine figure.",
+                "The contents of your {s} stay out of my sight until an actual"
+                " account check happens. Say the word and that check becomes the"
+                " next step.",
+                "Even with you logged in, your {s} isn't displayed to me in this"
+                " exchange. The dependable way to the number is a lookup of the"
+                " account itself.",
+                "I won't quote your {s} without truly seeing it, and right now I"
+                " don't. A direct check of the account gets us the real amount.",
             ),
         },
     ),
