@@ -53,15 +53,15 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` |
+| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@8494c94f9da4ada0a26de988781b88cc2ec58c53` (v12 corpus; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
 ### Granite SFT dataset files
 
-Digests below are the shipped corpora as of the v11 policy-alignment iteration
-described in [Granite SFT corpora](../02-data-generation.md#granite-sft-corpora),
-published to the Hub at `b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` — the revision
-the deployed v11 adapter was trained on.
+Digests below are the shipped corpora as of the v12 iteration (access-claim
+honesty seed plus status-context replace reinforcement) described in
+[Granite SFT corpora](../02-data-generation.md#granite-sft-corpora), published
+to the Hub at `8494c94f9da4ada0a26de988781b88cc2ec58c53`.
 
 `data/banking-v5-tool-sft`
 
