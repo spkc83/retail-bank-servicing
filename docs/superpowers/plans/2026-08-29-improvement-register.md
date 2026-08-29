@@ -92,6 +92,24 @@ the release process treats them as making.
 - ASR consent/PII-review attestations are caller-set booleans re-emitted as verified facts under `validation`. Must be resolved before any real-transcript use. `banking_asr_sft_data.py:221-228,279-289` · M
 - `tests/test_repository_documentation.py` does existence/link checks only — zero value checks, so it caught none of the doc errors fixed at `2a43086`. · M
 
+## Fixed after the audit
+
+- **P0 #1 — from-scratch training now seeds** (`abad022`). `seed_training(TRAINING_SEED)` runs
+  before the configs are built, and `SFTConfig` carries `seed=`/`data_seed=`. Two tests assert
+  the wiring rather than the constant and were checked by mutation; a second, source-level test
+  pins the same wiring where TRL's absence cannot make it skip.
+- **P0 #4 and #5 (partial) — three PII gates can now fire** (`428bcb6`). The tool-SFT generator
+  raises on any message carrying an email, SSN or long digit run (every message, not just the
+  trainable pair); the router raises instead of reporting; and the shared card-number pattern's
+  upper bound is gone in all five copies — `{12,19}\b` could not match a 22-digit run, so padding
+  a card number evaded the gate. `tests/test_detector_injection.py` plants each violation and
+  asserts rejection. The digit-run hole surfaced *because* the test was written first and failed.
+
+Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
+behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
+reworking the per-split templates, which is a corpus change, not a gate change), and injection
+coverage for the remaining leakage detectors.
+
 ## Already fixed during this audit
 
 - Bare-probe gate rewritten (`cbda8ac`): failed open on all 10 evasion shapes and rejected 110 of
