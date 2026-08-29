@@ -49,6 +49,7 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | Component | Identity |
 | --- | --- |
 | PEFT release (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` — v11 policy-alignment retrain (job `6a908078`, dev and shadow gates 1.0, dataset `@b5ec0489`, source `6e53ebf`); adapter_config.json lives under `adapter/`, so the runtime needs `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| PEFT candidate (trained, NOT deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v12-honesty@30ea0fd2d11ad457905a22a3b4968fe894d0b0a5` — v12 retrain on dataset `@8494c94f` (job `6a921641`, dev and shadow gates 1.0) that FAILED bare-probe acceptance: the poem refusal regressed and the balance availability claim persisted, so v11 stays deployed. The job gates cover coreference behaviour only; bare-probe behaviours are ungated in the training lane and churn between runs |
 | PEFT release (previously deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; same `adapter/` subfolder convention |
 | PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
