@@ -800,6 +800,37 @@ def _validate_generation_contract(
             raise BankingToolSftDataError(f"{record_id} has non-exact argument constraints")
 
 
+#: Private-identifier shapes that must never appear in any message of any
+#: split. The alignment generator has raised on these since v5; this generator
+#: -- the larger of the two -- had no PII check at all, so a final containing a
+#: full card number and a customer id validated cleanly. Kept identical to
+#: ``banking_servicing_alignment_data.PII_PATTERNS`` so the two corpora cannot
+#: drift apart on what counts as a leak.
+PII_PATTERNS = (
+    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(r"\b(?:\d[ -]?){12,}\b"),
+)
+
+
+def _assert_no_private_identifiers(record: Mapping[str, Any], record_id: str) -> None:
+    """Reject any message carrying an email, SSN, or long card-number run.
+
+    Every message is scanned, not just the trainable user/assistant pair: a
+    tool result or system string reaches the model's context exactly as a
+    final does.
+    """
+    for message in record.get("messages", []):
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        for pattern in PII_PATTERNS:
+            if pattern.search(content):
+                raise BankingToolSftDataError(
+                    f"{record_id} leaks a private identifier matching {pattern.pattern}"
+                )
+
+
 def validate_records(
     records: Iterable[dict[str, Any]],
     *,
@@ -827,6 +858,7 @@ def validate_records(
         seen_ids.add(record_id)
         if record.get("schema_version") != BANKING_TOOL_SFT_CONTRACT:
             raise BankingToolSftDataError(f"{record_id} has unexpected schema_version")
+        _assert_no_private_identifiers(record, record_id)
         if record.get("provenance", {}).get("source") != "self-authored-synthetic":
             raise BankingToolSftDataError(f"{record_id} has unsupported provenance")
         split_keys = record.get("split_keys")

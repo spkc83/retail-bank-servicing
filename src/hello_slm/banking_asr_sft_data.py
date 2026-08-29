@@ -19,7 +19,7 @@ SPLITS = ("train", "validation", "test")
 PII_PATTERNS = (
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-    re.compile(r"\b(?:\d[ -]?){12,19}\b"),
+    re.compile(r"\b(?:\d[ -]?){12,}\b"),
 )
 SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 NORMALIZE_RE = re.compile(r"[^a-z0-9]+")

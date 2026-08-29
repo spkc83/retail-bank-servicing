@@ -92,7 +92,7 @@ SCREENSHOT_REGRESSION_CURRENTS = frozenset(
 PII_PATTERNS = (
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-    re.compile(r"\b(?:\d[ -]?){12,19}\b"),
+    re.compile(r"\b(?:\d[ -]?){12,}\b"),
     re.compile(r"\b(?:\+?1[ -.]?)?(?:\(?\d{3}\)?[ -.]?)\d{3}[ -.]\d{4}\b"),
 )
 
@@ -246,6 +246,14 @@ def build_conversation_router_splits(
         ),
         "leakage": _leakage_report(deduplicated),
     }
+    # Report-only was the wrong disposition: an injected SSN, email and card
+    # number produced pii_matches = 9 and the build still succeeded, while the
+    # alignment generator has raised on the identical finding since v5.
+    if report["pii_matches"]:
+        raise ValueError(
+            f"router corpus leaks {report['pii_matches']} private identifiers; "
+            "regenerate the source rows rather than publishing this build"
+        )
     return deduplicated, report
 
 
