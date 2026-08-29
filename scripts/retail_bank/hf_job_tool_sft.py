@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Publish the trained adapter without merging it into FP16 base weights.",
     )
+    parser.add_argument("--training-seed", type=int, default=7303)
     parser.add_argument("--positive-multiplier", type=int, default=1)
     parser.add_argument("--ambiguity-multiplier", type=int, default=1)
     parser.add_argument("--policy-faq-multiplier", type=int, default=1)
@@ -200,6 +201,7 @@ def main() -> int:
             "RETAIL_BANK_SOURCE_COMMIT": args.source_commit,
             "RETAIL_BANK_TOOL_SFT_DATASET_REPO": args.dataset_repo,
             "RETAIL_BANK_TOOL_SFT_DATASET_REVISION": args.dataset_revision,
+            "RETAIL_BANK_TRAINING_SEED": str(args.training_seed),
         }
         command = build_worker_command(args, source_root=source_root, manifest=manifest)
         subprocess.run(command, cwd=source_root, env=env, check=True)

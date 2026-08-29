@@ -28,13 +28,16 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from hello_slm.banking_bare_probe_gate import run_bare_probe_gate
 from hello_slm.banking_generation_guidance import messages_with_record_turn_guidance
 from hello_slm.banking_tool_sft_data import public_tool_manifest
 from hello_slm.banking_tool_wire import IGNORED_LABEL, ToolWireAdapter
 
 REMOTE_CONFIRMATION_ENV = "RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT"
 REMOTE_CONFIRMATION_VALUE = "banking-v5-grounded-dialogue-sft"
-TRAINING_SEED = 7303
+# Overridable so a gated rerun can escape a bad optimization path instead of
+# deterministically reproducing it; the seed lands in the training fingerprint.
+TRAINING_SEED = int(os.environ.get("RETAIL_BANK_TRAINING_SEED", "7303"))
 DEFAULT_MANIFEST = "data/banking-servicing-alignment-v5/manifest.json"
 DEFAULT_OUTPUT_DIR = "artifacts/banking-servicing-agent-v5"
 DEFAULT_HUB_DEST = "spkc83/retail-bank-servicing-agent-9b"
@@ -1324,6 +1327,26 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         result["behavioral_gate_failure"] = str(gate_error)
         write_training_result(result_path, result)
         raise
+    # Third gate: the guidance-free behaviours. The v12 run proved these churn
+    # between otherwise-identical runs while every coreference gate stays at
+    # 1.0, so they block the upload exactly the way the coreference gates do.
+    bare_probe_report = run_bare_probe_gate(trainer.model, tokenizer)
+    evaluations_dir = config.output_dir / "behavioral-evaluations"
+    evaluations_dir.mkdir(parents=True, exist_ok=True)
+    (evaluations_dir / f"bare-probes-step-{actual_step}.json").write_text(
+        json.dumps(bare_probe_report, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    result["bare_probe_behavioral_gate"] = {
+        key: bare_probe_report[key]
+        for key in ("contract", "pass", "gated_total", "gated_passed", "failures")
+    }
+    if not bare_probe_report["pass"]:
+        failures = "; ".join(
+            f"{row['case']}: {row['failure']}" for row in bare_probe_report["failures"]
+        )
+        result["behavioral_gate_failure"] = f"bare-probe gate failed: {failures}"
+        write_training_result(result_path, result)
+        raise RuntimeError(f"bare-probe behavioural gate failed: {failures}")
     save_checkpoint_metadata(
         config.output_dir,
         step=actual_step,

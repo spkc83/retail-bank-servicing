@@ -21,6 +21,7 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "  GRADIENT_ACCUMULATION_STEPS (default: 2)"
   echo "  CHECKPOINT_EVERY (default: 500)"
   echo "  LEARNING_RATE (default: 1e-4)"
+  echo "  TRAINING_SEED (default: 7303; recorded in the training fingerprint)"
   echo "  TRACKIO_PROJECT (default: retail-bank-agent-v5)"
   echo "  TRACKIO_RUN_NAME (default derived from source commit)"
   echo "  PROJECT_LABEL (default: retail-bank-agent-v5)"
@@ -50,6 +51,7 @@ max_train_seconds="${MAX_TRAIN_SECONDS:-14400}"
 gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS:-2}"
 checkpoint_every="${CHECKPOINT_EVERY:-500}"
 learning_rate="${LEARNING_RATE:-1e-4}"
+training_seed="${TRAINING_SEED:-7303}"
 trackio_project="${TRACKIO_PROJECT:-retail-bank-agent-v5}"
 trackio_run_name="${TRACKIO_RUN_NAME:-${base_family}-tool-sft-${source_commit:0:8}}"
 project_label="${PROJECT_LABEL:-retail-bank-agent-v5}"
@@ -81,6 +83,11 @@ fi
 
 if [[ -n "$skip_merge_adapter" && "$skip_merge_adapter" != "0" && "$skip_merge_adapter" != "1" ]]; then
   echo "SKIP_MERGE_ADAPTER must be unset, 0, or 1." >&2
+  exit 2
+fi
+
+if [[ ! "$training_seed" =~ ^[0-9]{1,9}$ ]]; then
+  echo "TRAINING_SEED must be a whole number." >&2
   exit 2
 fi
 
@@ -127,6 +134,7 @@ job_args=(
   --gradient-accumulation-steps "$gradient_accumulation_steps"
   --checkpoint-every "$checkpoint_every"
   --learning-rate "$learning_rate"
+  --training-seed "$training_seed"
   --trackio-project "$trackio_project"
   --trackio-run-name "$trackio_run_name"
   --positive-multiplier "$positive_multiplier"
