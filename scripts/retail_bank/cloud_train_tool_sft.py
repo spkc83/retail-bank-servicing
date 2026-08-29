@@ -877,6 +877,8 @@ def build_training_configs(config: WorkerConfig) -> dict[str, Any]:
         optim=("paged_adamw_8bit" if config.precision == "qlora" else "adamw_torch_fused"),
         report_to="trackio" if config.trackio_project else [],
         project=config.trackio_project or "huggingface",
+        seed=TRAINING_SEED,
+        data_seed=TRAINING_SEED,
         run_name=config.trackio_run_name or f"{config.family}-tool-sft",
         push_to_hub=False,
     )
@@ -1169,6 +1171,12 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         # Fail before the GPU spend rather than after it when the destination is taken.
         preflight_destination_repo(config)
     configure_trackio_environment(config)
+    # Seed before anything stochastic: LoRA initialisation, dropout, and the
+    # trainer's own sampler all draw from these generators. This lane recorded
+    # `training_seed` in its fingerprint for months while never calling this,
+    # so two runs of the same configuration could and did diverge -- the most
+    # likely explanation for behaviour churn that was read as data problems.
+    seed_training(TRAINING_SEED)
     configs = build_training_configs(config)
     from datasets import Dataset as HfDataset  # type: ignore[import-not-found]
     from peft import PeftModel  # type: ignore[import-not-found]

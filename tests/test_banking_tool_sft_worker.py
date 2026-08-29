@@ -807,3 +807,54 @@ def test_remote_training_gates_behavior_before_any_publication() -> None:
     assert (
         gate < source.index('result["behavioral_gate_failure"]') < source.index("    del model\n")
     )
+
+
+def test_sft_args_carry_the_training_seed(tmp_path: Path) -> None:
+    """The trainer must receive the seed, not merely record it.
+
+    This lane recorded `training_seed` in its fingerprint while passing no
+    seed to the trainer and never seeding the RNGs, so two runs of one
+    configuration could diverge while both claimed determinism. Assert the
+    wiring, not the constant.
+    """
+    if importlib.util.find_spec("trl") is None:
+        pytest.skip("TRL is not installed in this environment")
+
+    args = worker.build_training_configs(_config(tmp_path))["training_args"]
+
+    assert args.seed == worker.TRAINING_SEED
+    assert args.data_seed == worker.TRAINING_SEED
+
+
+def test_remote_training_seeds_the_rngs_before_anything_stochastic() -> None:
+    """`seed_training` must actually be called, and called early enough.
+
+    LoRA initialisation, dropout and the sampler all draw from the global
+    generators, so seeding after the configs are built would leave the parts
+    that matter unseeded.
+    """
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    body = source.split("def run_remote_training(", 1)[1].split("\ndef ", 1)[0]
+
+    assert "seed_training(TRAINING_SEED)" in body, (
+        "run_remote_training must seed the RNGs; the fingerprint records a seed regardless"
+    )
+    assert body.index("seed_training(TRAINING_SEED)") < body.index("build_training_configs("), (
+        "seed_training must run before the model, LoRA and trainer configs are built"
+    )
+
+
+def test_sft_config_seed_wiring_is_asserted_without_trl() -> None:
+    """The same wiring, checked from source.
+
+    `test_sft_args_carry_the_training_seed` is the stronger assertion but it
+    skips wherever TRL is absent -- including the interpreter `make test`
+    happens to use. A gate that cannot run in the environment that runs it is
+    the failure mode this project has already shipped once, so the wiring is
+    also pinned here, where nothing can skip it.
+    """
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    sft_args = source.split("training_args = SFTConfig(", 1)[1].split(")\n", 1)[0]
+
+    assert "seed=TRAINING_SEED" in sft_args
+    assert "data_seed=TRAINING_SEED" in sft_args
