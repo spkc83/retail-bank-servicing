@@ -50,10 +50,12 @@ the pages themselves describe V6 format 4 and its seven heads.
 
 ### Granite SFT dataset digests
 
-Current shipped digests after the v11 policy-alignment iteration
+Current shipped digests, which are the v12 corpus
 ([details](02-data-generation.md#granite-sft-corpora)), published to the Hub at
-`b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` — the revision the deployed v11
-adapter was trained on.
+`8494c94f9da4ada0a26de988781b88cc2ec58c53`. Note that this is **not** the corpus
+the deployed v11 adapter was trained on: that is
+`b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`, and it is no longer what sits on
+disk. Regenerating this checkout reproduces the v12 corpus, not v11's.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |

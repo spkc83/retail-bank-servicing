@@ -77,7 +77,7 @@ manifest = json.loads(
     Path("data/banking-conversation-router-v8-first-turn-mutation/manifest.json").read_text()
 )
 actual = manifest["report"]["split_counts"]
-expected = {"train": 16693, "validation": 4061, "test": 4895}
+expected = {"train": 20439, "validation": 4158, "test": 4921}
 assert actual == expected, (actual, expected)
 assert manifest["report"]["pii_matches"] == 0
 assert all(value == 0 for value in manifest["report"]["leakage"].values() if isinstance(value, int))

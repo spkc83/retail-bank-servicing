@@ -26,7 +26,7 @@ artifact.
 | `test.jsonl` | 4,921 | `135e2c16962a19c2752b85ca626e83e067eaa9222ff7e1b9029bbdbe681584e8` |
 
 The dataset manifest SHA-256 recorded in the model is
-`caae2209063beb9370d0f3a6fc166e4c35658fafdd2420b21e5920c6c9e90de5`.
+`2b991e9b21dd2fc241628c284e6754c457ac9604b676270864993cefc9669d8b`.
 
 ### Router artifact files
 
