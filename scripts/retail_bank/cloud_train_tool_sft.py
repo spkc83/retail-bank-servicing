@@ -594,6 +594,20 @@ def preflight_destination_repo(config: WorkerConfig) -> str:
 
 
 def training_fingerprint(config: WorkerConfig, adapter: ToolWireAdapter) -> dict[str, Any]:
+    """Identify a run by everything that changes the weights it produces.
+
+    This previously recorded the base, dataset, LoRA shape, precision and seed
+    and nothing else, so a 1e-4/batch-2/2000-step run and a 2e-5/batch-8/8000-step
+    run fingerprinted identically. Two consequences: an adapter could not be
+    traced back to the run that made it, and ``validate_resume_fingerprint``
+    would resume a checkpoint into a materially different optimisation and call
+    it a match. The ``optimization`` block mirrors the continuation lane's,
+    which has carried these fields all along.
+
+    Widening this deliberately invalidates resume against checkpoints written
+    by the older, narrower fingerprint -- they genuinely do not record enough
+    to prove compatibility.
+    """
     return {
         "base_model": config.base_model,
         "base_revision": config.base_revision,
@@ -607,6 +621,21 @@ def training_fingerprint(config: WorkerConfig, adapter: ToolWireAdapter) -> dict
             "alpha": config.lora_alpha,
             "dropout": config.lora_dropout,
             "target_modules": list(LORA_TARGET_MODULES),
+        },
+        "optimization": {
+            "max_steps": config.max_steps,
+            "max_train_seconds": config.max_train_seconds,
+            "learning_rate": config.learning_rate,
+            "batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
+            "max_seq_len": config.max_seq_len,
+            "warmup_ratio": config.warmup_ratio,
+        },
+        "training_mix": {
+            "positive_multiplier": config.positive_multiplier,
+            "ambiguity_multiplier": config.ambiguity_multiplier,
+            "policy_faq_multiplier": config.policy_faq_multiplier,
+            "tool_outcome_multiplier": config.tool_outcome_multiplier,
         },
     }
 

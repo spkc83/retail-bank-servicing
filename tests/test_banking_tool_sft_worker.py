@@ -858,3 +858,49 @@ def test_sft_config_seed_wiring_is_asserted_without_trl() -> None:
 
     assert "seed=TRAINING_SEED" in sft_args
     assert "data_seed=TRAINING_SEED" in sft_args
+
+
+def _fingerprint(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    class _Adapter:
+        template_hash = "deadbeef"
+
+    config = WorkerConfig(**{**_config(tmp_path).__dict__, **overrides})
+    return worker.training_fingerprint(config, _Adapter())
+
+
+def test_runs_that_optimise_differently_do_not_share_a_fingerprint() -> None:
+    """Two runs differing in every hyperparameter that matters used to match.
+
+    That made an adapter untraceable to the run that produced it, and let
+    `validate_resume_fingerprint` resume a checkpoint into a materially
+    different optimisation.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp_path = Path(raw)
+        baseline = _fingerprint(tmp_path)
+        for field, value in (
+            ("learning_rate", 2e-5),
+            ("max_steps", 8_000),
+            ("batch_size", 8),
+            ("gradient_accumulation_steps", 16),
+            ("max_seq_len", 4_096),
+            ("warmup_ratio", 0.10),
+            ("positive_multiplier", 3),
+            ("ambiguity_multiplier", 6),
+            ("policy_faq_multiplier", 4),
+            ("tool_outcome_multiplier", 2),
+        ):
+            assert _fingerprint(tmp_path, **{field: value}) != baseline, (
+                f"changing {field} must change the fingerprint"
+            )
+
+
+def test_an_identical_configuration_still_fingerprints_identically() -> None:
+    """The mirror: the fingerprint must be stable, not merely sensitive."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp_path = Path(raw)
+        assert _fingerprint(tmp_path) == _fingerprint(tmp_path)
