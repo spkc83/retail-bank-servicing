@@ -1433,47 +1433,81 @@ def run_remote_training(config: WorkerConfig) -> dict[str, Any]:
         api = HfApi(token=os.environ.get("HF_TOKEN"))
         require_publishable_destination(api, config.hub_dest)
         api.create_repo(config.hub_dest, repo_type="model", private=False, exist_ok=True)
-        # Repo root holds merged FP16 weights, or the adapter itself under
-        # --skip-merge-adapter. The adapter/ copy is uploaded either way so consumers
-        # can always load the PEFT weights from the same path.
-        api.upload_folder(
-            repo_id=config.hub_dest,
-            repo_type="model",
-            folder_path=config.output_dir / ("merged" if config.merge_adapter else "adapter"),
-            ignore_patterns=[".*", "**/.*"],
-        )
-        api.upload_folder(
-            repo_id=config.hub_dest,
-            repo_type="model",
-            folder_path=config.output_dir / "adapter",
-            path_in_repo="adapter",
-        )
-        api.upload_file(
-            repo_id=config.hub_dest,
-            repo_type="model",
-            path_or_fileobj=model_card,
-            path_in_repo="README.md",
-        )
-        api.upload_file(
-            repo_id=config.hub_dest,
-            repo_type="model",
-            path_or_fileobj=(
-                config.output_dir / "checkpoints" / f"step-{actual_step:06d}" / "metadata.json"
-            ),
-            path_in_repo="training_metadata.json",
-        )
+        # One commit, not five. The previous sequence uploaded weights, then the
+        # adapter copy, then the card, then the metadata, then the result: a
+        # failure anywhere after the first left a repository holding weights and
+        # no provenance, which a consumer cannot distinguish from a finished
+        # release -- and the retry then died on the non-empty destination check.
+        # Both other lanes already publish atomically; this one had drifted.
         result["pushed_to_hub"] = config.hub_dest
         result_path.write_text(
             json.dumps(result, indent=2, sort_keys=True, default=str) + "\n",
             encoding="utf-8",
         )
-        api.upload_file(
+        operations = build_release_operations(
+            config,
+            model_card=model_card,
+            result_path=result_path,
+            step=actual_step,
+        )
+        commit = api.create_commit(
             repo_id=config.hub_dest,
             repo_type="model",
-            path_or_fileobj=result_path,
-            path_in_repo="training_result.json",
+            operations=operations,
+            commit_message=(
+                f"Publish {config.family} tool-SFT "
+                f"{'merged weights' if config.merge_adapter else 'adapter'} atomically"
+            ),
         )
+        result["published_revision"] = str(commit.oid)
     return result
+
+
+def build_release_operations(
+    config: WorkerConfig,
+    *,
+    model_card: Path,
+    result_path: Path,
+    step: int,
+) -> list[Any]:
+    """Every file of a release, as one commit's worth of add operations.
+
+    The repository root holds merged FP16 weights, or the adapter itself under
+    ``--skip-merge-adapter``; the ``adapter/`` copy is published either way so
+    consumers can always load the PEFT weights from one path. Dotfiles are
+    skipped exactly as the previous ``ignore_patterns`` did.
+    """
+    from huggingface_hub import CommitOperationAdd  # type: ignore[import-not-found]
+
+    operations: list[Any] = []
+    root_dir = config.output_dir / ("merged" if config.merge_adapter else "adapter")
+    for path in sorted(root_dir.rglob("*")):
+        if path.is_file() and not any(part.startswith(".") for part in path.parts):
+            operations.append(
+                CommitOperationAdd(
+                    path_in_repo=str(path.relative_to(root_dir)),
+                    path_or_fileobj=str(path),
+                )
+            )
+    adapter_dir = config.output_dir / "adapter"
+    for path in sorted(adapter_dir.rglob("*")):
+        if path.is_file() and not any(part.startswith(".") for part in path.parts):
+            operations.append(
+                CommitOperationAdd(
+                    path_in_repo=f"adapter/{path.relative_to(adapter_dir)}",
+                    path_or_fileobj=str(path),
+                )
+            )
+    metadata_path = config.output_dir / "checkpoints" / f"step-{step:06d}" / "metadata.json"
+    for source, destination in (
+        (model_card, "README.md"),
+        (metadata_path, "training_metadata.json"),
+        (result_path, "training_result.json"),
+    ):
+        operations.append(
+            CommitOperationAdd(path_in_repo=destination, path_or_fileobj=str(source))
+        )
+    return operations
 
 
 def tiny_smoke_records() -> list[dict[str, Any]]:

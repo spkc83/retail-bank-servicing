@@ -362,10 +362,30 @@ def test_remote_model_load_has_no_blanket_quantized_fallback() -> None:
     assert 'if configs["quantization"] is not None' in remote_body
 
 
-def test_hub_upload_ignores_hidden_checkpoint_temp_files() -> None:
-    source = WORKER_PATH.read_text(encoding="utf-8")
+def test_hub_upload_ignores_hidden_checkpoint_temp_files(tmp_path: Path) -> None:
+    """Dotfiles stayed excluded when publishing became a single commit."""
+    pytest.importorskip("huggingface_hub")
+    config = WorkerConfig(**{**_config(tmp_path).__dict__, "merge_adapter": False})
+    adapter_dir = config.output_dir / "adapter"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / "adapter_model.safetensors").write_text("w", encoding="utf-8")
+    (adapter_dir / ".ipynb_checkpoints").mkdir()
+    (adapter_dir / ".ipynb_checkpoints" / "stale.json").write_text("{}", encoding="utf-8")
+    step_dir = config.output_dir / "checkpoints" / "step-000001"
+    step_dir.mkdir(parents=True)
+    (step_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    card = tmp_path / "README.md"
+    card.write_text("card", encoding="utf-8")
+    result_path = tmp_path / "result.json"
+    result_path.write_text("{}", encoding="utf-8")
 
-    assert 'ignore_patterns=[".*", "**/.*"]' in source
+    operations = worker.build_release_operations(
+        config, model_card=card, result_path=result_path, step=1
+    )
+
+    assert not any(
+        part.startswith(".") for op in operations for part in op.path_in_repo.split("/")
+    )
 
 
 def test_poc_serves_the_exact_sft_tool_manifest() -> None:
@@ -782,7 +802,7 @@ def test_remote_training_gates_behavior_before_any_publication() -> None:
     gate = source.index("behavioral_gates = run_coreference_behavioral_gates(")
     post_train_merge = "if config.merge_adapter:\n        parity = merge_adapter_with_reload"
     assert gate < source.index(post_train_merge)
-    assert gate < source.index("api.upload_folder(")
+    assert gate < source.index("api.create_commit(")
     assert gate < source.index("api.create_repo(")
     assert source.index("eval_metrics = trainer.evaluate()") < gate
     assert source.index('trainer.save_model(str(config.output_dir / "adapter"))') < gate
@@ -904,3 +924,49 @@ def test_an_identical_configuration_still_fingerprints_identically() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp_path = Path(raw)
         assert _fingerprint(tmp_path) == _fingerprint(tmp_path)
+
+
+def test_release_is_one_commit_covering_weights_adapter_and_provenance(
+    tmp_path: Path,
+) -> None:
+    """A partial publish used to look exactly like a finished release.
+
+    Five sequential uploads meant a failure after the first left weights with
+    no card, no metadata and no result -- and the retry then died on the
+    non-empty destination check.
+    """
+    pytest.importorskip("huggingface_hub")
+    config = WorkerConfig(**{**_config(tmp_path).__dict__, "merge_adapter": False})
+
+    adapter_dir = config.output_dir / "adapter"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / "adapter_model.safetensors").write_text("w", encoding="utf-8")
+    (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (adapter_dir / ".hidden").write_text("skip me", encoding="utf-8")
+    step_dir = config.output_dir / "checkpoints" / "step-000001"
+    step_dir.mkdir(parents=True)
+    (step_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    card = tmp_path / "README.md"
+    card.write_text("card", encoding="utf-8")
+    result_path = tmp_path / "training_result.json"
+    result_path.write_text("{}", encoding="utf-8")
+
+    operations = worker.build_release_operations(
+        config, model_card=card, result_path=result_path, step=1
+    )
+    published = {op.path_in_repo for op in operations}
+
+    assert "adapter_model.safetensors" in published, "root must carry the loadable weights"
+    assert "adapter/adapter_model.safetensors" in published, "adapter/ copy must be published"
+    assert {"README.md", "training_metadata.json", "training_result.json"} <= published
+    assert not any(part.startswith(".") for path in published for part in path.split("/"))
+
+
+def test_the_publish_path_uses_a_single_commit() -> None:
+    """Pinned from source: the sequence of uploads is what made it non-atomic."""
+    source = WORKER_PATH.read_text(encoding="utf-8")
+    publish = source.split("if config.push_to_hub:", 1)[1].split("\n    return result", 1)[0]
+
+    assert publish.count("create_commit(") == 1
+    assert "upload_folder(" not in publish
+    assert "upload_file(" not in publish
