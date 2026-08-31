@@ -105,6 +105,19 @@ the release process treats them as making.
   a card number evaded the gate. `tests/test_detector_injection.py` plants each violation and
   asserts rejection. The digit-run hole surfaced *because* the test was written first and failed.
 
+- **P1 #11 — the launcher now prices a run before submitting it** (`4c526fe`). Worst-case cost is
+  computed from flavour rate × timeout, printed, refused above `MAX_JOB_COST_USD` (default $5),
+  and refused without `CONFIRM_SPEND=1`. The 5h default is worth $13.75 and no longer launches
+  silently. `DRY_RUN=1` runs every check and stops — added because testing the gate reached a
+  real submission that had to be cancelled ($0.18).
+- **P1 #9 — the fingerprint now records what changes the weights** (`07b7df2`). Learning rate,
+  steps, batch, accumulation, sequence length, warmup and the four mix multipliers. The two runs
+  that used to fingerprint identically no longer do. This deliberately invalidates resume against
+  checkpoints written under the narrower fingerprint.
+- **P1 #10 — publication is one commit** (`b68515f`). A partial publish previously left weights
+  with no provenance, indistinguishable from a finished release, and the retry died on the
+  non-empty destination check.
+
 Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
 behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
 reworking the per-split templates, which is a corpus change, not a gate change), and injection
