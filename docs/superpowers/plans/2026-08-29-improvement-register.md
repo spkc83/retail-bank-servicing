@@ -118,6 +118,40 @@ the release process treats them as making.
   with no provenance, indistinguishable from a finished release, and the retry died on the
   non-empty destination check.
 
+### Eval contamination: diagnosed, fix written, blocked on teacher re-realization
+
+Measured on the current corpus, with instruction boilerplate discounted: **33 of 35 test rows and
+238 of 268 validation rows share task-content 4-grams with train.** The cause is structural rather
+than accidental — the builders that feed the eval splits hardcode one question per record and
+distinguish the splits with `_suffix()` alone, so `"When did the mailing-address case get
+created{suffix}?"` becomes a train row, a validation row and a test row that differ only in a
+trailing phrase. "Held out" means held out by five trailing words.
+
+A fix was written and measured: per-split question stems for the eight records in the four
+test-feeding builders, keeping the test wording byte-identical so the frozen fixtures do not move.
+It takes test contamination from 33/35 to 9/35, and the nine residuals are all the realizer's
+shared *instruction* suffix ("Tell me what you find and what happens next") rather than task
+content. Frozen `test.jsonl`, `coreference-shadow.jsonl`, `granite-v7-shadow.jsonl` and
+`screenshot-regression.jsonl` all verified byte-identical under it.
+
+**It is blocked, and deliberately not applied.** Teacher realizations pin a hash of everything
+except the final, so changing a train prompt invalidates them: `312 of 819` realization rows (38%)
+belong to the eight affected records, and regeneration fails closed with *"alignment teacher rows
+may edit final_response only"*. That guard is right. The options, none of which should be taken
+silently:
+
+1. **Re-run the teacher** on the 312 changed prompts and re-import. Correct, and needs a teacher
+   pass plus the cost that implies.
+2. **Drop the realizations** for those rows, reverting their finals to the authored templates.
+   Free, but reintroduces template-shaped finals on ~8% of train — the exact regression the v9
+   conversational-voice work existed to remove.
+3. **Re-pin the hashes** while keeping the finals. Cheapest and **wrong**: the file would then
+   assert the teacher saw prompts it never saw, which is the precise thing the hash exists to
+   prevent.
+
+The prepared patch is kept at `agent-tmp/scratch-v9/v12/READY-stem-fix.py` so whichever option is
+chosen, the wording work does not have to be redone.
+
 Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
 behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
 reworking the per-split templates, which is a corpus change, not a gate change), and injection
