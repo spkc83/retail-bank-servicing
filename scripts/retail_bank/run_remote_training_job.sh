@@ -22,6 +22,10 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "  CHECKPOINT_EVERY (default: 500)"
   echo "  LEARNING_RATE (default: 1e-4)"
   echo "  TRAINING_SEED (default: 7303; recorded in the training fingerprint)"
+  echo "  GPU_HOURLY_USD (default: 2.75; the rtx-pro-6000 rate used for the estimate)"
+  echo "  MAX_JOB_COST_USD (default: 5.00; the run is refused above this worst case)"
+  echo "  CONFIRM_SPEND (required: set to 1 to authorise the printed worst-case cost)"
+  echo "  DRY_RUN (set to 1 to validate, price, and print the job without submitting)"
   echo "  TRACKIO_PROJECT (default: retail-bank-agent-v5)"
   echo "  TRACKIO_RUN_NAME (default derived from source commit)"
   echo "  PROJECT_LABEL (default: retail-bank-agent-v5)"
@@ -52,6 +56,10 @@ gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS:-2}"
 checkpoint_every="${CHECKPOINT_EVERY:-500}"
 learning_rate="${LEARNING_RATE:-1e-4}"
 training_seed="${TRAINING_SEED:-7303}"
+gpu_hourly_usd="${GPU_HOURLY_USD:-2.75}"
+max_job_cost_usd="${MAX_JOB_COST_USD:-5.00}"
+confirm_spend="${CONFIRM_SPEND:-}"
+dry_run="${DRY_RUN:-}"
 trackio_project="${TRACKIO_PROJECT:-retail-bank-agent-v5}"
 trackio_run_name="${TRACKIO_RUN_NAME:-${base_family}-tool-sft-${source_commit:0:8}}"
 project_label="${PROJECT_LABEL:-retail-bank-agent-v5}"
@@ -69,6 +77,37 @@ fi
 
 if [[ ! "$job_timeout" =~ ^[0-9]+[smh]$ ]]; then
   echo "JOB_TIMEOUT must be a whole number followed by s, m, or h." >&2
+  exit 2
+fi
+
+# Price the worst case before anything is billed. The worker's own guards run
+# inside the container the job is already paying for, so a mistyped timeout --
+# 50h for 5h -- was a four-figure mistake nothing on this side caught.
+timeout_hours="$(python3 -c '
+import sys
+raw = sys.argv[1]
+value, unit = int(raw[:-1]), raw[-1]
+print({"s": value / 3600, "m": value / 60, "h": float(value)}[unit])
+' "$job_timeout")"
+worst_case_usd="$(python3 -c '
+import sys
+print(f"{float(sys.argv[1]) * float(sys.argv[2]):.2f}")
+' "$timeout_hours" "$gpu_hourly_usd")"
+
+echo "Billed job: rtx-pro-6000 at \$${gpu_hourly_usd}/h, timeout ${job_timeout}" >&2
+echo "Worst case if it runs to the timeout: \$${worst_case_usd} (ceiling \$${max_job_cost_usd})" >&2
+
+if python3 -c '
+import sys
+sys.exit(0 if float(sys.argv[1]) > float(sys.argv[2]) else 1)
+' "$worst_case_usd" "$max_job_cost_usd"; then
+  echo "Refusing to launch: worst case \$${worst_case_usd} exceeds MAX_JOB_COST_USD (\$${max_job_cost_usd})." >&2
+  echo "Lower JOB_TIMEOUT, or raise the ceiling deliberately." >&2
+  exit 2
+fi
+
+if [[ "$confirm_spend" != "1" ]]; then
+  echo "Refusing to launch: set CONFIRM_SPEND=1 to authorise \$${worst_case_usd} of GPU time." >&2
   exit 2
 fi
 
@@ -150,6 +189,17 @@ if [[ -n "$manifest_path" ]]; then
 fi
 if [[ -n "$resume_from" ]]; then
   job_args+=(--resume-from "$resume_from")
+fi
+
+if [[ "$dry_run" == "1" ]]; then
+  # Exercising this launcher must not cost anything. Every check above has
+  # already run; this prints exactly what would be submitted and stops. Added
+  # after a gate test reached the real submission and had to be cancelled.
+  echo "DRY_RUN=1: validated and priced; not submitting. Would run:" >&2
+  printf '  hf jobs uv run' >&2
+  printf ' %q' "${job_args[@]}" >&2
+  printf '\n' >&2
+  exit 0
 fi
 
 hf jobs uv run "${job_args[@]}"

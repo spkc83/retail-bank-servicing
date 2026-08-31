@@ -167,6 +167,10 @@ printf '%s\\n' "$@" > "$HF_LOG"
     if launcher == "run_remote_training_job.sh":
         # The from-scratch lane refuses to run without an explicit, distinct destination.
         env["HF_HUB_DEST"] = "spkc83/retail-bank-servicing-agent-9b-peft-v9-scratch"
+        # ...and, since the spend gate landed, without a priced authorisation
+        # under the cost ceiling. The default 5h timeout is worth $13.75.
+        env["JOB_TIMEOUT"] = "45m"
+        env["CONFIRM_SPEND"] = "1"
 
     subprocess.run(
         ["bash", f"scripts/retail_bank/{launcher}", *arguments],
@@ -491,6 +495,9 @@ def test_remote_training_launcher_forwards_v4_overrides(tmp_path: Path) -> None:
         "LEARNING_RATE": "2e-5",
         "CHECKPOINT_EVERY": "100",
         "TRACKIO_PROJECT": "retail-bank-servicing-v4",
+        # Forwarding test, not a spend-gate test: authorise and lift the ceiling.
+        "CONFIRM_SPEND": "1",
+        "MAX_JOB_COST_USD": "1000",
     }
 
     subprocess.run(
@@ -552,6 +559,11 @@ def _training_launcher_harness(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "TOOL_OUTCOME_MULTIPLIER",
     ):
         env.pop(name, None)
+    # These tests are about argument forwarding, not about the spend gate, so
+    # they authorise the run and lift the ceiling. The gate's own behaviour is
+    # covered by the dedicated tests at the end of this module.
+    env["CONFIRM_SPEND"] = "1"
+    env["MAX_JOB_COST_USD"] = "1000"
     return env, hf_log
 
 
@@ -802,3 +814,68 @@ def test_bootstrap_rejects_out_of_range_multipliers() -> None:
 
     with pytest.raises(ValueError, match="multiplier"):
         job.validate_arguments(args)
+
+
+LAUNCHER = Path("scripts/retail_bank/run_remote_training_job.sh")
+
+
+def _run_launcher(tmp_path: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    """Invoke the launcher with DRY_RUN so no test can ever submit a job.
+
+    `curl` is stubbed because the bootstrap-URL check runs before the dry-run
+    exit and a placeholder commit legitimately 404s. `hf` is stubbed too, as a
+    belt-and-braces guarantee that a regression in DRY_RUN handling cannot
+    reach the real submission -- this suite launched a billable job once.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("curl", "hf"):
+        stub = bin_dir / name
+        stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
+    base = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DRY_RUN": "1",
+        "HF_HUB_DEST": "spkc83/launcher-gate-test",
+        **env,
+    }
+    return subprocess.run(
+        ["bash", str(LAUNCHER), "0" * 40, "1" * 40],
+        env=base,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_launcher_refuses_a_timeout_whose_worst_case_exceeds_the_ceiling(tmp_path: Path) -> None:
+    """A mistyped timeout was a four-figure mistake nothing on this side caught."""
+    result = _run_launcher(tmp_path, JOB_TIMEOUT="999h", CONFIRM_SPEND="1")
+
+    assert result.returncode == 2
+    assert "2747.25" in result.stderr
+    assert "exceeds MAX_JOB_COST_USD" in result.stderr
+
+
+def test_launcher_refuses_without_explicit_spend_confirmation(tmp_path: Path) -> None:
+    result = _run_launcher(tmp_path, JOB_TIMEOUT="45m")
+
+    assert result.returncode == 2
+    assert "CONFIRM_SPEND=1" in result.stderr
+    assert "2.06" in result.stderr, "the price must be shown even when refusing"
+
+
+def test_launcher_prices_the_run_before_submitting_anything(tmp_path: Path) -> None:
+    result = _run_launcher(tmp_path, JOB_TIMEOUT="45m", CONFIRM_SPEND="1")
+
+    assert result.returncode == 0
+    assert "Worst case if it runs to the timeout: $2.06" in result.stderr
+    assert "not submitting" in result.stderr
+
+
+def test_the_five_hour_default_cannot_launch_silently(tmp_path: Path) -> None:
+    """The default timeout is worth $13.75; it must require a deliberate act."""
+    result = _run_launcher(tmp_path, CONFIRM_SPEND="1")
+
+    assert result.returncode == 2
+    assert "13.75" in result.stderr
