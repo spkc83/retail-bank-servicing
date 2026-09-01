@@ -194,9 +194,26 @@ current pass moves only the stems it matched. And the deictic families are alrea
 by construction (`_coreference_curriculum_specs` gives each split disjoint phrase families), so
 they need nothing.
 
-Finishing this is therefore: (a) wire the base generator to the prompt layer, (b) author per-stem
-rewrites there, and (c) continue the per-stem pass on the alignment side. That is real authoring
-work, not a mechanical sweep.
+**Update (`d2472b8`): the base-corpus claim above was wrong, and the metric was why.** Raw 4-gram
+overlap counts a banking corpus sharing its own vocabulary as contamination — the grams base train
+rows most often echo from test are *"my card ending in"*, *"freeze the active card"*, *"what is the
+policy for"*. Rewriting to avoid those would teach a model to avoid the nouns of its own domain.
+
+Nearest-neighbour similarity separates the real cases from the artefact:
+
+| corpus / split | median nearest-train similarity | ≥0.95 | ≥0.90 |
+| --- | ---: | ---: | ---: |
+| base / test | 0.771 | 0 | 4 |
+| alignment / test (after the prompt passes) | 0.843 | 0 | 8 |
+
+For contrast, the alignment rows *before* the passes were the same question with a different
+trailing phrase — the shape that scores above 0.95. **The base corpus does not need a rewrite
+pass**; it varies verb frames and entities and only shares domain language. `scripts/retail_bank/
+measure_split_contamination.py` reports both metrics and documents why the obvious one misleads.
+
+What genuinely remains is a per-stem continuation on the alignment side, where eight test rows and
+a tail of validation rows still sit above 0.90. The base writer has the prompt-pass plumbing now
+regardless, since the mechanism belongs where the corpus lives.
 
 **The corpus on disk is now unpublished and newer than `@8494c94f`.** It must be published before
 anything trains on it.
