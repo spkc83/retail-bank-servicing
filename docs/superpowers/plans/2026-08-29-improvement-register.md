@@ -175,6 +175,29 @@ can be taken through the same pass. The isolation invariant is rarity-scoped: a 
 held-out row only when it belongs to a single eval family, so shared style directives do not count
 as contamination.
 
+**Update (`b989620`): six validation-only families added**, taking alignment validation from 123
+of 188 to 111 of 188. Those families have no test rows, so their contamination inflated the dev
+gate rather than published numbers. The isolation invariant earned its keep here by rejecting one
+of my own authored phrasings for colliding with a held-out row.
+
+**Scope correction — the earlier "five remaining families" estimate was wrong.** Measuring per
+family rather than in aggregate shows the bulk of remaining contamination is in the **base
+tool-SFT corpus**, not the alignment one: `read_service_cases`, `faq_*`, `card_freeze`,
+`backend_error`, `transaction_dispute`, `small_talk_*`, `ood`, `hard_negative_private_id` and
+others account for most of the 177-of-215 composite test figure. Those rows come from
+`banking_tool_sft_data.py`, which has its own generator and its own teacher pass and is **not**
+wired to the prompt layer.
+
+Two further things the per-family view revealed. Each family carries several distinct question
+stems rather than one, so a rewrite pass is per-stem authoring, not a single substitution — the
+current pass moves only the stems it matched. And the deictic families are already split-isolated
+by construction (`_coreference_curriculum_specs` gives each split disjoint phrase families), so
+they need nothing.
+
+Finishing this is therefore: (a) wire the base generator to the prompt layer, (b) author per-stem
+rewrites there, and (c) continue the per-stem pass on the alignment side. That is real authoring
+work, not a mechanical sweep.
+
 **The corpus on disk is now unpublished and newer than `@8494c94f`.** It must be published before
 anything trains on it.
 
