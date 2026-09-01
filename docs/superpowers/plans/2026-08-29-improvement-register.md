@@ -160,10 +160,23 @@ against every held-out split. Editing the builders' stems is therefore no longer
 for this fix: the builders stay deterministic and the wording variation arrives as realizations,
 which keeps provenance honest instead of re-pinning it.
 
-What remains is the authoring pass itself — new questions for the affected records — plus one
-decision: prompts and finals would be attributed to the same `teacher_model` in a single run, so
-if a different model authors the prompts, the pipeline needs a separate prompt-response file (a
-small addition) rather than mixing two teachers under one label.
+**Update (`ae4d894`): first pass applied.** Prompts and finals now travel in separate files with
+separate teacher attribution, and 320 rows across eight record families have been rewritten.
+Measured on alignment rows with instruction boilerplate discounted:
+
+| | before | after |
+| --- | --- | --- |
+| test rows sharing task-content 4-grams with train | 38 / 40 | **14 / 40** |
+| validation rows sharing with train | 112 / 128 | **70 / 128** |
+
+Frozen fixtures byte-identical, row counts unchanged. The residue is the families not yet
+rewritten — `clarify_`, `repair_`, `history_entity`, `tool_outcome`, `deictic_` — each of which
+can be taken through the same pass. The isolation invariant is rarity-scoped: a gram identifies a
+held-out row only when it belongs to a single eval family, so shared style directives do not count
+as contamination.
+
+**The corpus on disk is now unpublished and newer than `@8494c94f`.** It must be published before
+anything trains on it.
 
 Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
 behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
