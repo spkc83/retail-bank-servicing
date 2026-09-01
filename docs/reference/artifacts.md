@@ -80,7 +80,7 @@ deployed v11 adapter was trained on `@b5ec0489`. Publish before training on it.
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
 | `train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
-| `validation.jsonl` | 447 | `d66366e22cc931161111771a23932aabd3520e47e6eea81420125f7063a0c452` |
+| `validation.jsonl` | 447 | `cab8b527c0124c7290e53a4192fb504bcbb63dfbcaef05baf90a58ffbcc4763f` |
 | `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 
 The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,

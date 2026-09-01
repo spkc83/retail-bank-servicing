@@ -62,7 +62,7 @@ Regenerating this checkout reproduces neither; publish before training on it.
 | `data/banking-v5-tool-sft/train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
 | `data/banking-v5-tool-sft/validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
 | `data/banking-servicing-alignment-v5/train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 447 | `d66366e22cc931161111771a23932aabd3520e47e6eea81420125f7063a0c452` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 447 | `cab8b527c0124c7290e53a4192fb504bcbb63dfbcaef05baf90a58ffbcc4763f` |
 
 ## Safe Local Checks
 

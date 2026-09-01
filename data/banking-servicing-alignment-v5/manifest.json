@@ -75,7 +75,7 @@
       "model": "claude-opus-5",
       "prompt_hash": "21d264fe83490f5ef3666041490a493828847c368a0aca619a034a3c3f72ed6f",
       "realized_counts": {
-        "prompts": 320,
+        "prompts": 366,
         "train": 651,
         "validation": 168
       }
@@ -253,11 +253,11 @@
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 1447153,
+      "bytes": 1453637,
       "name": "validation",
       "path": "validation.jsonl",
       "record_count": 447,
-      "sha256": "d66366e22cc931161111771a23932aabd3520e47e6eea81420125f7063a0c452"
+      "sha256": "cab8b527c0124c7290e53a4192fb504bcbb63dfbcaef05baf90a58ffbcc4763f"
     },
     {
       "allowed_use": [

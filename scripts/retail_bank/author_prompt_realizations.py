@@ -56,6 +56,56 @@ REWRITES = {
     },
 }
 
+
+# Families whose validation rows echo their own train rows. These carry
+# entities the final and the tool arguments depend on -- a card's last four,
+# a payee name -- so the rewrite substitutes the opening clause and leaves
+# everything after it untouched. None of these families has test rows: fixing
+# them makes the dev gate honest rather than the published test numbers.
+VALIDATION_PREFIX_REWRITES = {
+    "history_entity_action": (
+        "Cancel the pending payment you identified",
+        "Stop the payment that came up above",
+    ),
+    "tool_outcome_consistency": (
+        "Cancel the pending transfer to",
+        # Not "scheduled transfer": that phrase belongs to a held-out row, and
+        # the isolation invariant rejected the first attempt at this line.
+        "Stop the upcoming payment to",
+    ),
+    "clarification_answer": ("It is", "The digits are"),
+    "agent_repair": (
+        "Do not repeat that; check the actual service case",
+        "That is not right; look up the real service case",
+    ),
+    "history_entity_ambiguity": (
+        "Replace the card we were discussing",
+        "Swap out the card from that exchange",
+    ),
+    "long_context_tool_fidelity": (
+        "Before we wrap this up I still need you to",
+        "One more thing before we finish: please",
+    ),
+}
+
+
+def validation_rewrite(record, text: str) -> str | None:
+    """Substitute the opening clause of a validation prompt, keeping entities."""
+    family = str(record.get("metadata", {}).get("scenario_family", ""))
+    pair = VALIDATION_PREFIX_REWRITES.get(family)
+    if pair is None:
+        return None
+    old, new = pair
+    if not text.startswith(old):
+        return None
+    tail = text[len(old) :]
+    # The builders concatenate with no space in places ("It is 4821from this
+    # chat"); newly authored text does not inherit that.
+    if tail and not tail[0].isspace():
+        tail = " " + tail
+    return new + tail
+
+
 SUFFIX = {"train": "on my account", "validation": "from this chat"}
 
 
@@ -79,6 +129,16 @@ def main() -> int:
                 None,
             )
             if prefix is None:
+                if split == "validation":
+                    rewritten = validation_rewrite(record, _current_user_text(record))
+                    if rewritten and rewritten != _current_user_text(record):
+                        rows.append(
+                            {
+                                "record_id": record_id,
+                                "immutable_hash": _immutable_record_hash(record),
+                                "user_content": rewritten,
+                            }
+                        )
                 continue
             original = _current_user_text(record)
             _, tail = stem_and_tail(original, split)
