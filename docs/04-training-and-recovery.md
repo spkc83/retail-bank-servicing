@@ -97,6 +97,28 @@ secret. It also requires `HF_HUB_DEST` to be set explicitly and to differ from
 `BASE_MODEL`, so a from-scratch run can no longer overwrite the repository it
 trains from.
 
+### The spend gate
+
+Every launch is priced before it is submitted. The launcher converts
+`JOB_TIMEOUT` to hours, multiplies by `GPU_HOURLY_USD` (default `2.75`, the
+rtx-pro-6000 rate), prints the worst case, and then refuses the run twice over:
+above `MAX_JOB_COST_USD` (default `5.00`) it exits, and without `CONFIRM_SPEND=1`
+it exits. `DRY_RUN=1` performs every validation and prints the exact `hf jobs`
+command without submitting it.
+
+```bash
+DRY_RUN=1 CONFIRM_SPEND=1 JOB_TIMEOUT=80m ... \
+  bash scripts/retail_bank/run_remote_training_job.sh <commit> <dataset-rev>
+# Billed job: rtx-pro-6000 at $2.75/h, timeout 80m
+# Worst case if it runs to the timeout: $3.67 (ceiling $5.00)
+```
+
+This exists because the worker's own guards run inside a container the job is
+already paying for. A mistyped timeout — `50h` for `5h` — passed every format
+check and would have been a four-figure mistake that nothing on the launching
+side caught. Price with `DRY_RUN=1` first; it costs nothing and prints the same
+number the real launch will.
+
 For the currently submitted V5 configuration, the equivalent launcher inputs
 are:
 
@@ -186,6 +208,17 @@ scripts/retail_bank/run_remote_training_job.sh \
   `training_result.json` as `coreference_behavioral_gate` and
   `shadow_coreference_behavioral_gate`. A failing gate raises before any upload,
   leaving the adapter and both reports on the job bucket for diagnosis.
+- A third gate then runs the **bare probes**
+  ([`banking_bare_probe_gate.py`](../src/hello_slm/banking_bare_probe_gate.py)):
+  the guidance-free behaviours — declining a poem, refusing to read out a PIN,
+  not claiming a balance it cannot see, not fabricating a delivery it did not
+  perform. Every prompt is asked with the TURN GUIDANCE stripped, which is what
+  makes it a weight-level measurement rather than a prompt-following one. It
+  writes `behavioral-evaluations/bare-probes-step-<step>.json`, records
+  `bare_probe_behavioral_gate` in `training_result.json`, and blocks the upload
+  exactly as the coreference gates do. It exists because the v12 run held every
+  coreference gate at 1.0 while two bare-probe behaviours regressed, so the
+  coreference gates alone cannot certify a release.
 - `SKIP_MERGE_ADAPTER=1` skips the FP16 merge and its reload-parity check. The
   published repository root then holds the LoRA adapter itself rather than
   merged weights; the `adapter/` subdirectory holds the same files either way,

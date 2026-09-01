@@ -31,6 +31,9 @@ dev = [
   "pytest>=8",
   "ruff>=0.5",
   "safetensors>=0.6,<1",
+  # The POC's Streamlit surface is imported by its test module, so the
+  # documented `pytest poc/.../tests` command cannot even collect without it.
+  "streamlit>=1.48,<2",
   "transformers>=5.13,<5.14",
 ]
 

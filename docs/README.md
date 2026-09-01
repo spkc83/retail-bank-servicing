@@ -13,7 +13,7 @@ contract, and run either interface.
 | Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
 | Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
-| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` |
+| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@ce0d442955c0698d9be1f0592081e648766ffd07` (this checkout; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
@@ -50,12 +50,13 @@ the pages themselves describe V6 format 4 and its seven heads.
 
 ### Granite SFT dataset digests
 
-Digests of the corpus **as it sits on disk**, which is newer than anything
-published: it is the v12 corpus plus the first prompt-realization pass
-([details](02-data-generation.md#prompt-realization)) and has not been pushed to
-the Hub. Two revisions to keep distinct from it — `@8494c94f` is the published
-v12 corpus, and `@b5ec0489` is what the deployed v11 adapter was trained on.
-Regenerating this checkout reproduces neither; publish before training on it.
+Digests of the corpus **as it sits on disk**, which is the v12 corpus plus the
+prompt-realization passes ([details](02-data-generation.md#prompt-realization)).
+It is published at `@ce0d4429`, and the digests below are the ones that
+revision carries. Two older revisions to keep distinct from it: `@8494c94f` is
+the v12 corpus before the prompt passes, and `@b5ec0489` is what the deployed
+v11 adapter was trained on. Regenerating this checkout reproduces `@ce0d4429`
+only.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |

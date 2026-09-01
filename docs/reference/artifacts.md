@@ -50,22 +50,23 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | --- | --- |
 | PEFT release (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` — v11 policy-alignment retrain (job `6a908078`, dev and shadow gates 1.0, dataset `@b5ec0489`, source `6e53ebf`); adapter_config.json lives under `adapter/`, so the runtime needs `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | PEFT run blocked by the gate (verdict since retracted) | v13 (job `6a9261e4`, seed 9151, dataset `@8494c94f`) trained to completion and was refused publication by the first version of the bare-probe gate. That version was later found to reject 110 of 280 of the curriculum's own correct finals, and v13's poem verdict read "did not decline" rather than "wrote the poem" — the poem detectors never fired — so the block was probably a false positive and **v13 is not evidence of a regression**. The adapter bundle stays on the job bucket, unpublished and unevaluated; the gate was rewritten at `cbda8ac` (0 of 455 correct finals rejected, 10 of 10 evasions caught). Only v11 and v12, whose transcripts were read directly, are sound behaviour evidence |
-| PEFT candidate (trained, NOT deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v12-honesty@30ea0fd2d11ad457905a22a3b4968fe894d0b0a5` — v12 retrain on dataset `@8494c94f` (job `6a921641`, dev and shadow gates 1.0) that FAILED bare-probe acceptance: the poem refusal regressed and the balance availability claim persisted, so v11 stays deployed. The job gates cover coreference behaviour only; bare-probe behaviours are ungated in the training lane and churn between runs |
+| PEFT candidate (trained, NOT deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v12-honesty@30ea0fd2d11ad457905a22a3b4968fe894d0b0a5` — v12 retrain on dataset `@8494c94f` (job `6a921641`, dev and shadow gates 1.0) that FAILED bare-probe acceptance: the poem refusal regressed and the balance availability claim persisted, so v11 stays deployed. At the time of that run the job gates covered coreference behaviour only, so the two regressions passed every gate and were caught by hand afterwards. That is why the [bare-probe gate](../04-training-and-recovery.md#submit-a-guarded-hugging-face-job) now runs in the training lane and blocks the upload |
 | PEFT release (previously deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38af4595b1e139a9e9baea8e0c53cba7c2e`; same `adapter/` subfolder convention |
 | PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@8494c94f9da4ada0a26de988781b88cc2ec58c53` (v12 corpus; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
+| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@ce0d442955c0698d9be1f0592081e648766ffd07` (v12 corpus plus the prompt-realization passes; `@8494c94f` is the same curriculum before those passes, and the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
 ### Granite SFT dataset files
 
 Digests below are the corpus **on disk**, which is the v12 iteration plus the
-first prompt-realization pass ([Prompt realization](../02-data-generation.md#prompt-realization)):
-320 train and validation questions rewritten so they stop shadowing the eval
-splits. It is **unpublished** — the last published revision is
-`8494c94f9da4ada0a26de988781b88cc2ec58c53`, which predates that pass, and the
-deployed v11 adapter was trained on `@b5ec0489`. Publish before training on it.
+prompt-realization passes ([Prompt realization](../02-data-generation.md#prompt-realization)):
+366 train and validation questions rewritten so they stop shadowing the eval
+splits. It is published as `ce0d442955c0698d9be1f0592081e648766ffd07`, and the
+files served at that revision were verified against these digests after the
+upload. `@8494c94f` is the same curriculum before the prompt passes; the
+deployed v11 adapter was trained earlier still, on `@b5ec0489`.
 
 `data/banking-v5-tool-sft`
 

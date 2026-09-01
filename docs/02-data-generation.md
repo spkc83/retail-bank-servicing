@@ -279,16 +279,54 @@ facts and split keys and deliberately excludes the two wording fields — so a
 teacher can never edit what makes a row's supervision correct, in either layer.
 
 Rows whose prompt actually moved are then held to
-`_assert_realized_prompts_stay_clear_of_eval`: a rewritten prompt may not share
-a 4-gram with any test, shadow, or screenshot-regression prompt. The check is
-scoped to rows this run rewrote, which makes it a ratchet — every prompt that
-moves must land clear of the held-out splits, without requiring the whole
-inherited corpus to be re-authored at once.
+`assert_realized_prompts_stay_clear_of_eval` (in
+[`banking_tool_sft_data.py`](../src/hello_slm/banking_tool_sft_data.py), shared
+by both preparers): a rewritten prompt may not share a 4-gram with any test,
+shadow, or screenshot-regression prompt. The check is scoped to rows this run
+rewrote, which makes it a ratchet — every prompt that moves must land clear of
+the held-out splits, without requiring the whole inherited corpus to be
+re-authored at once. It earns its place: the first authored wording for the
+transfer family, "call off the scheduled transfer to", was rejected for sharing
+"the scheduled transfer to" with a held-out row. Check candidate phrasings
+against the eval vocabulary *before* authoring them.
 
-Measured on the corpus as it stands, discounting shared instruction boilerplate,
-33 of 35 test rows and 238 of 268 validation rows still share task-content
-4-grams with train. Closing that is a matter of running prompts through this
-layer, family by family.
+#### How much contamination is left, and how to measure it
+
+[`measure_split_contamination.py`](../scripts/retail_bank/measure_split_contamination.py)
+reports two numbers, because the obvious one is misleading on its own.
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/measure_split_contamination.py \
+  --corpus alignment --split test
+```
+
+| corpus / split | eval rows | train rows echoing an identifying 4-gram | median nearest-train similarity | ≥0.95 | ≥0.90 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base / test | 180 | 575 | 0.771 | 0 | 4 |
+| alignment / test | 35 | 256 | 0.843 | 0 | 8 |
+| alignment / validation | 268 | 1,073 | 0.789 | 0 | 34 |
+
+**Read the similarity column, not the gram column.** Raw 4-gram overlap is what
+originally caught the alignment corpus, where an evaluation row was the training
+question with a different trailing phrase — that shape scores above 0.95. But
+the gram count also fires on a banking corpus sharing its own vocabulary. The
+grams base train rows most often echo from test are "my card ending in",
+"freeze the active card", "what is the policy for". Rewriting to avoid those
+would teach the model to avoid the nouns of its own domain. The script filters
+grams to those owned by a single eval family and discounts known instruction
+boilerplate, and it is still not a contamination measure on its own.
+
+By similarity, **the base corpus does not need a prompt pass and would be worse
+for one**: its verb frames and entities already vary and no test row has a
+near-duplicate in train. The alignment corpus was the real case, and after the
+passes above its remaining work is narrow — eight test rows and 34 validation
+rows above 0.90, addressed per stem rather than corpus-wide. Nothing in either
+corpus is now a near-duplicate at 0.95.
+
+The validation column matters less than the test column and is listed for
+completeness: validation contamination inflates the dev gate, which makes a run
+look better than it is, while test contamination would inflate the published
+numbers.
 
 ### Voice contract
 
@@ -307,11 +345,14 @@ the existing export/import hook in
 | --- | ---: | --- |
 | `data/sources/banking-v5-tool-sft-teacher-realizations-v2.jsonl` | 1,020 | `final_response` and `user_content` for every base train (841) and validation (179) row |
 | `data/sources/banking-servicing-alignment-v5-teacher-realizations.jsonl` | 819 | `final_response` only, for the 651 train and 168 validation alignment rows that `_varied_final` had wrapped in opener/closer filler |
+| `data/sources/banking-servicing-alignment-v5-prompt-realizations.jsonl` | 366 | `user_content` only — see [Prompt realization](#prompt-realization) |
 
 The alignment preparer exposes the same three teacher flags as the base
-preparer: `--teacher-responses`, `--teacher-model`, and `--teacher-prompt-hash`.
-Alignment rows edit `final_response` only, because alignment user text feeds the
-leakage and held-out gates; the preparer enforces this. Neither teacher file may
+preparer: `--teacher-responses`, `--teacher-model`, and `--teacher-prompt-hash`,
+plus `--prompt-responses` and `--prompt-teacher-model` for the prompt layer.
+A file may move finals or prompts, never both: the finals file edits
+`final_response` only, the prompt file edits `user_content` only, and the
+preparer rejects a prompt row that carries a final. Neither teacher file may
 contain a test-split record id of either dataset, which is also enforced in
 code.
 
@@ -328,14 +369,21 @@ PYTHONPATH=src uv run python scripts/retail_bank/prepare_servicing_alignment_dat
   --output-dir data/banking-servicing-alignment-v5 \
   --teacher-responses data/sources/banking-servicing-alignment-v5-teacher-realizations.jsonl \
   --teacher-model claude-opus-5 \
-  --teacher-prompt-hash 21d264fe83490f5ef3666041490a493828847c368a0aca619a034a3c3f72ed6f
+  --teacher-prompt-hash 21d264fe83490f5ef3666041490a493828847c368a0aca619a034a3c3f72ed6f \
+  --prompt-responses data/sources/banking-servicing-alignment-v5-prompt-realizations.jsonl \
+  --prompt-teacher-model claude-opus-4-8
 ```
+
+Both commands reproduce the committed corpus byte for byte. `claude-opus-4-8`
+is not interchangeable with `claude-opus-5` here: the prompt teacher is recorded
+in every touched row's `provenance`, so passing the wrong one rewrites 256 rows
+with a false authorship claim and the digests drift.
 
 The prompt hash is a digest over the voice spec plus the request file sent to
 the teacher. The base preparer stamps `teacher_model` and `teacher_prompt_hash`
 onto every prepared row's `provenance`; the alignment preparer additionally
 records `report.alignment_teacher_realization.realized_counts` in its
-`manifest.json` (`{"train": 651, "validation": 168, "prompts": 0}`). The
+`manifest.json` (`{"train": 651, "validation": 168, "prompts": 366}`). The
 `prompts` count is the number of rows whose *question* the teacher rewrote,
 which is opt-in per run — see [Prompt realization](#prompt-realization).
 
