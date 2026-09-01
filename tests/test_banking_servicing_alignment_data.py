@@ -822,6 +822,8 @@ def test_alignment_teacher_hook_rewrites_only_train_and_validation_finals(tmp_pa
     assert manifest["report"]["alignment_teacher_realization"]["realized_counts"] == {
         "train": 1,
         "validation": 0,
+        # No prompt was rewritten here: the finals-only path is still the default.
+        "prompts": 0,
     }
 
 
@@ -1628,3 +1630,127 @@ def test_policy_alignment_families_never_reach_the_router() -> None:
     from hello_slm.banking_conversation_router_data import _SFT_ONLY_SCENARIO_FAMILIES
 
     assert set(alignment_data.POLICY_ALIGNMENT_FAMILIES) <= _SFT_ONLY_SCENARIO_FAMILIES
+
+
+def _teacher_row(record: dict[str, Any], *, user: str | None = None, final: str | None = None):
+    """A teacher response row for `record`, editing only the fields named."""
+    users = [m for m in record["messages"] if m.get("role") == "user"]
+    return {
+        "record_id": record["record_id"],
+        "immutable_hash": tool_sft_data._immutable_record_hash(record),
+        "user_content": user if user is not None else str(users[-1]["content"]),
+        "final_response": (
+            final if final is not None else str(record["messages"][-1]["content"])
+        ),
+    }
+
+
+def _first_trainable(splits: dict[str, Any]) -> dict[str, Any]:
+    return splits["train"][0]
+
+
+def test_prompt_realization_is_refused_unless_the_run_opts_in(tmp_path: Path) -> None:
+    """The finals-only contract stays the default, and says so when it refuses."""
+    base_dir = _small_base(tmp_path)
+    splits, _ = build_servicing_alignment_splits()
+    target = _first_trainable(splits)
+    responses = tmp_path / "responses.jsonl"
+    responses.write_text(
+        json.dumps(_teacher_row(target, user="A completely different question entirely")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="may edit final_response only"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out",
+            base_sft_dir=base_dir,
+            teacher_responses=responses,
+            teacher_model="claude-opus-5",
+            teacher_prompt_hash="sha256:" + "0" * 64,
+        )
+
+
+def test_a_realized_prompt_that_echoes_a_held_out_one_is_rejected(tmp_path: Path) -> None:
+    """The invariant the layer exists for: rewrites must not drift toward eval.
+
+    A teacher handed the held-out question verbatim is the exact failure this
+    corpus already has by construction, so it must not be reachable through
+    the mechanism built to fix it.
+    """
+    base_dir = _small_base(tmp_path)
+    splits, _ = build_servicing_alignment_splits()
+    target = _first_trainable(splits)
+    held_out = [m for m in splits["test"][0]["messages"] if m.get("role") == "user"][-1]
+    responses = tmp_path / "responses.jsonl"
+    responses.write_text(
+        json.dumps(_teacher_row(target, user=str(held_out["content"]))) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="shares the 4-gram"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out",
+            base_sft_dir=base_dir,
+            teacher_responses=responses,
+            teacher_model="claude-opus-5",
+            teacher_prompt_hash="sha256:" + "0" * 64,
+            allow_prompt_realization=True,
+        )
+
+
+def test_a_clean_prompt_realization_is_applied_and_counted(tmp_path: Path) -> None:
+    base_dir = _small_base(tmp_path)
+    splits, _ = build_servicing_alignment_splits()
+    target = _first_trainable(splits)
+    fresh = "Could you walk me through where that stands using only what is here"
+    responses = tmp_path / "responses.jsonl"
+    responses.write_text(
+        json.dumps(_teacher_row(target, user=fresh)) + "\n", encoding="utf-8"
+    )
+    before_test = (
+        (tmp_path / "seed" / "test.jsonl").read_bytes()
+        if (tmp_path / "seed" / "test.jsonl").exists()
+        else None
+    )
+    del before_test
+
+    manifest = write_servicing_alignment_dataset(
+        tmp_path / "out",
+        base_sft_dir=base_dir,
+        teacher_responses=responses,
+        teacher_model="claude-opus-5",
+        teacher_prompt_hash="sha256:" + "0" * 64,
+        allow_prompt_realization=True,
+    )
+
+    train = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    rewritten = next(r for r in train if r["record_id"] == target["record_id"])
+    users = [m for m in rewritten["messages"] if m.get("role") == "user"]
+    assert str(users[-1]["content"]) == fresh
+    assert manifest["report"]["alignment_teacher_realization"]["realized_counts"]["prompts"] == 1
+
+
+def test_prompt_realization_still_cannot_touch_the_supervision(tmp_path: Path) -> None:
+    """Rewriting a prompt must not be a way to edit tool calls or grounding."""
+    base_dir = _small_base(tmp_path)
+    splits, _ = build_servicing_alignment_splits()
+    target = _first_trainable(splits)
+    row = _teacher_row(target, user="An entirely fresh way of asking this thing")
+    row["immutable_hash"] = "sha256:" + "f" * 64
+
+    responses = tmp_path / "responses.jsonl"
+    responses.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    with pytest.raises(Exception, match="hash mismatch"):
+        write_servicing_alignment_dataset(
+            tmp_path / "out",
+            base_sft_dir=base_dir,
+            teacher_responses=responses,
+            teacher_model="claude-opus-5",
+            teacher_prompt_hash="sha256:" + "0" * 64,
+            allow_prompt_realization=True,
+        )

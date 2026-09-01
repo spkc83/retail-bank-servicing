@@ -264,6 +264,32 @@ generator-only (`_SFT_ONLY_SCENARIO_FAMILIES`), so the pinned router corpus
 ingests nothing new, and the ambiguity side keeps the gate-proven clarify
 template verbatim.
 
+### Prompt realization
+
+Finals have always been teacher-editable. Prompts were not, and that is why the
+evaluation splits ended up as the training questions with a different trailing
+phrase: `_suffix` was the only thing separating them, and rewording a training
+prompt invalidated every final realization hash pinned to it.
+
+`write_servicing_alignment_dataset(..., allow_prompt_realization=True)` opts a
+run into the prompt layer. A teacher row may then change `user_content` as well
+as `final_response`. The safety property is unchanged and comes from
+`_immutable_record_hash`, which covers tool calls, tool results, grounding
+facts and split keys and deliberately excludes the two wording fields — so a
+teacher can never edit what makes a row's supervision correct, in either layer.
+
+Rows whose prompt actually moved are then held to
+`_assert_realized_prompts_stay_clear_of_eval`: a rewritten prompt may not share
+a 4-gram with any test, shadow, or screenshot-regression prompt. The check is
+scoped to rows this run rewrote, which makes it a ratchet — every prompt that
+moves must land clear of the held-out splits, without requiring the whole
+inherited corpus to be re-authored at once.
+
+Measured on the corpus as it stands, discounting shared instruction boilerplate,
+33 of 35 test rows and 238 of 268 validation rows still share task-content
+4-grams with train. Closing that is a matter of running prompts through this
+layer, family by family.
+
 ### Voice contract
 
 [`2026-08-21-conversational-voice-spec.md`](superpowers/plans/2026-08-21-conversational-voice-spec.md)
@@ -309,7 +335,9 @@ The prompt hash is a digest over the voice spec plus the request file sent to
 the teacher. The base preparer stamps `teacher_model` and `teacher_prompt_hash`
 onto every prepared row's `provenance`; the alignment preparer additionally
 records `report.alignment_teacher_realization.realized_counts` in its
-`manifest.json` (`{"train": 651, "validation": 168}`).
+`manifest.json` (`{"train": 651, "validation": 168, "prompts": 0}`). The
+`prompts` count is the number of rows whose *question* the teacher rewrote,
+which is opt-in per run — see [Prompt realization](#prompt-realization).
 
 Regeneration must leave these files byte-identical:
 `data/banking-v5-tool-sft/test.jsonl` and the alignment `test.jsonl`,

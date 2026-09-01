@@ -388,9 +388,29 @@ def load_base_sft_splits(
 
 
 def _assert_alignment_teacher_rows(
-    path: Path, *, trainable: Sequence[Mapping[str, Any]], test_ids: set[str]
-) -> None:
-    """Reject teacher rows that touch the test split or edit anything but the final."""
+    path: Path,
+    *,
+    trainable: Sequence[Mapping[str, Any]],
+    test_ids: set[str],
+    allow_prompt_realization: bool = False,
+) -> set[str]:
+    """Reject teacher rows that touch the test split or edit more than allowed.
+
+    Finals have always been teacher-editable here. Prompts were not, which is
+    why the eval splits ended up as the training questions with a different
+    trailing phrase: the only way to differentiate them was `_suffix`, and
+    rewording a training prompt invalidated every final realization pinned to
+    it. Passing ``allow_prompt_realization`` opts a run into the prompt layer,
+    and the returned ids are the rows whose prompts actually moved, so the
+    caller can hold *those* rows -- and only those -- to the eval-isolation
+    invariant rather than demanding the whole legacy corpus be fixed at once.
+
+    The underlying safety property is unchanged and comes from
+    ``_immutable_record_hash``, which covers tool calls, tool results,
+    grounding facts and split keys but deliberately not the two wording
+    fields. A teacher can therefore never edit what makes the row's
+    supervision correct, whichever layer it is working in.
+    """
 
     user_text = {
         str(record["record_id"]): str(
@@ -398,6 +418,7 @@ def _assert_alignment_teacher_rows(
         ).strip()
         for record in trainable
     }
+    prompt_realized: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -405,10 +426,63 @@ def _assert_alignment_teacher_rows(
         record_id = str(row.get("record_id"))
         if record_id in test_ids:
             raise ValueError(f"{record_id}: teacher rows must not target the test split")
-        if record_id in user_text and (
-            str(row.get("user_content", "")).strip() != user_text[record_id]
-        ):
-            raise ValueError(f"{record_id}: alignment teacher rows may edit final_response only")
+        if record_id not in user_text:
+            continue
+        if str(row.get("user_content", "")).strip() != user_text[record_id]:
+            if not allow_prompt_realization:
+                raise ValueError(
+                    f"{record_id}: alignment teacher rows may edit final_response only"
+                )
+            prompt_realized.add(record_id)
+    return prompt_realized
+
+
+def _assert_realized_prompts_stay_clear_of_eval(
+    trainable: Sequence[Mapping[str, Any]],
+    *,
+    realized_ids: set[str],
+    eval_records: Sequence[Mapping[str, Any]],
+    ngram: int = 4,
+) -> None:
+    """A rewritten prompt must not drift toward a held-out one.
+
+    This is the whole point of the layer. It applies only to rows whose prompt
+    this run actually rewrote, which makes it a ratchet: every prompt that
+    moves has to land clear of the eval splits, without requiring the entire
+    inherited corpus to be re-authored in one go.
+    """
+
+    if not realized_ids:
+        return
+
+    def current(record: Mapping[str, Any]) -> str:
+        # Fixture rows do not all carry a `messages` list; the screenshot
+        # regression records store their prompt differently.
+        messages = record.get("messages")
+        if isinstance(messages, list):
+            users = [m for m in messages if isinstance(m, Mapping) and m.get("role") == "user"]
+            if users:
+                return str(users[-1].get("content", ""))
+        return str(record.get("current_text") or record.get("current") or "")
+
+    eval_grams: dict[tuple[str, ...], str] = {}
+    for record in eval_records:
+        words = normalized_user_text(current(record)).split()
+        for index in range(len(words) - ngram + 1):
+            eval_grams.setdefault(tuple(words[index : index + ngram]), str(record["record_id"]))
+
+    for record in trainable:
+        record_id = str(record["record_id"])
+        if record_id not in realized_ids:
+            continue
+        words = normalized_user_text(current(record)).split()
+        for index in range(len(words) - ngram + 1):
+            gram = tuple(words[index : index + ngram])
+            if gram in eval_grams:
+                raise ValueError(
+                    f"{record_id}: realized prompt shares the {ngram}-gram "
+                    f"{' '.join(gram)!r} with held-out record {eval_grams[gram]}"
+                )
 
 
 def write_servicing_alignment_dataset(
@@ -420,6 +494,7 @@ def write_servicing_alignment_dataset(
     teacher_responses: Path | None = None,
     teacher_model: str | None = None,
     teacher_prompt_hash: str | None = None,
+    allow_prompt_realization: bool = False,
 ) -> dict[str, Any]:
     alignment_splits, alignment_report = build_servicing_alignment_splits()
     shadow_records = build_coreference_shadow_gate()
@@ -432,19 +507,20 @@ def write_servicing_alignment_dataset(
     trainable = [*alignment_splits["train"], *alignment_splits["validation"]]
     if export_teacher_requests is not None:
         export_teacher_realization_requests(trainable, export_teacher_requests)
-    realized_counts = {"train": 0, "validation": 0}
+    realized_counts: dict[str, int] = {"train": 0, "validation": 0, "prompts": 0}
     if teacher_responses is not None:
         if not teacher_model or not teacher_prompt_hash:
             raise ValueError(
                 "teacher_model and teacher_prompt_hash are required with teacher_responses"
             )
-        _assert_alignment_teacher_rows(
+        prompt_realized_ids = _assert_alignment_teacher_rows(
             teacher_responses,
             trainable=trainable,
             test_ids={
                 str(record["record_id"])
                 for record in (*base_splits["test"], *alignment_splits["test"])
             },
+            allow_prompt_realization=allow_prompt_realization,
         )
         realized = import_teacher_realizations(
             trainable,
@@ -458,6 +534,18 @@ def write_servicing_alignment_dataset(
             "train": realized[:n_train],
             "validation": realized[n_train:],
         }
+        _assert_realized_prompts_stay_clear_of_eval(
+            realized,
+            realized_ids=prompt_realized_ids,
+            eval_records=[
+                *alignment_splits["test"],
+                *base_splits["test"],
+                *shadow_records,
+                *granite_shadow_records,
+                *screenshot_records,
+            ],
+        )
+        realized_counts["prompts"] = len(prompt_realized_ids)
         for split in ("train", "validation"):
             realized_counts[split] = sum(
                 1
