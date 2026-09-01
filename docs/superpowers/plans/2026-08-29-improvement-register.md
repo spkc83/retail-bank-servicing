@@ -152,6 +152,19 @@ silently:
 The prepared patch is kept at `agent-tmp/scratch-v9/v12/READY-stem-fix.py` so whichever option is
 chosen, the wording work does not have to be redone.
 
+**Update (`cd6c787`): option 1 is now unblocked.** The prompt-realization layer exists — the
+teacher may rewrite `user_content` as well as `final_response` under
+`allow_prompt_realization=True`, with the structural hash still pinning tool calls, tool results,
+grounding facts and split keys, and with rewritten prompts held to a 4-gram isolation invariant
+against every held-out split. Editing the builders' stems is therefore no longer the right shape
+for this fix: the builders stay deterministic and the wording variation arrives as realizations,
+which keeps provenance honest instead of re-pinning it.
+
+What remains is the authoring pass itself — new questions for the affected records — plus one
+decision: prompts and finals would be attributed to the same `teacher_model` in a single run, so
+if a different model authors the prompts, the pipeline needs a separate prompt-response file (a
+small addition) rather than mixing two teachers under one label.
+
 Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
 behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
 reworking the per-split templates, which is a corpus change, not a gate change), and injection
