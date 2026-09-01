@@ -52,6 +52,17 @@ def parse_args() -> argparse.Namespace:
         help="Teacher model id recorded in provenance; required with --teacher-responses.",
     )
     parser.add_argument(
+        "--prompt-responses",
+        type=Path,
+        default=None,
+        help="Apply teacher-authored question rewrites from this JSONL path (prompts only).",
+    )
+    parser.add_argument(
+        "--prompt-teacher-model",
+        default=None,
+        help="Teacher model credited for the question rewrites; required with --prompt-responses.",
+    )
+    parser.add_argument(
         "--teacher-prompt-hash",
         default=None,
         help="Teacher prompt digest recorded in provenance; required with --teacher-responses.",
@@ -85,6 +96,8 @@ def main() -> int:
         teacher_responses=args.teacher_responses,
         teacher_model=args.teacher_model,
         teacher_prompt_hash=args.teacher_prompt_hash,
+        prompt_responses=args.prompt_responses,
+        prompt_teacher_model=args.prompt_teacher_model,
     )
     if args.expected_release_lock is not None:
         verify_release_lock(manifest, args.expected_release_lock)

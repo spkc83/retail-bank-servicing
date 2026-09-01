@@ -60,10 +60,12 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 
 ### Granite SFT dataset files
 
-Digests below are the shipped corpora as of the v12 iteration (access-claim
-honesty seed plus status-context replace reinforcement) described in
-[Granite SFT corpora](../02-data-generation.md#granite-sft-corpora), published
-to the Hub at `8494c94f9da4ada0a26de988781b88cc2ec58c53`.
+Digests below are the corpus **on disk**, which is the v12 iteration plus the
+first prompt-realization pass ([Prompt realization](../02-data-generation.md#prompt-realization)):
+320 train and validation questions rewritten so they stop shadowing the eval
+splits. It is **unpublished** — the last published revision is
+`8494c94f9da4ada0a26de988781b88cc2ec58c53`, which predates that pass, and the
+deployed v11 adapter was trained on `@b5ec0489`. Publish before training on it.
 
 `data/banking-v5-tool-sft`
 
@@ -77,8 +79,8 @@ to the Hub at `8494c94f9da4ada0a26de988781b88cc2ec58c53`.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 3,959 | `128502f39f359dc07dc7b3da74127fa11b3e9a536d329336c9d01c9636c02a41` |
-| `validation.jsonl` | 447 | `a0f2cd9941240232a24a93cb9eadc7dfe0d96dc249a81a6b539c8536d43267a3` |
+| `train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
+| `validation.jsonl` | 447 | `d66366e22cc931161111771a23932aabd3520e47e6eea81420125f7063a0c452` |
 | `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 
 The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,

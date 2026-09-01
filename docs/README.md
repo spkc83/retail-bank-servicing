@@ -50,19 +50,19 @@ the pages themselves describe V6 format 4 and its seven heads.
 
 ### Granite SFT dataset digests
 
-Current shipped digests, which are the v12 corpus
-([details](02-data-generation.md#granite-sft-corpora)), published to the Hub at
-`8494c94f9da4ada0a26de988781b88cc2ec58c53`. Note that this is **not** the corpus
-the deployed v11 adapter was trained on: that is
-`b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`, and it is no longer what sits on
-disk. Regenerating this checkout reproduces the v12 corpus, not v11's.
+Digests of the corpus **as it sits on disk**, which is newer than anything
+published: it is the v12 corpus plus the first prompt-realization pass
+([details](02-data-generation.md#prompt-realization)) and has not been pushed to
+the Hub. Two revisions to keep distinct from it — `@8494c94f` is the published
+v12 corpus, and `@b5ec0489` is what the deployed v11 adapter was trained on.
+Regenerating this checkout reproduces neither; publish before training on it.
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
 | `data/banking-v5-tool-sft/train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
 | `data/banking-v5-tool-sft/validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
-| `data/banking-servicing-alignment-v5/train.jsonl` | 3,959 | `128502f39f359dc07dc7b3da74127fa11b3e9a536d329336c9d01c9636c02a41` |
-| `data/banking-servicing-alignment-v5/validation.jsonl` | 447 | `a0f2cd9941240232a24a93cb9eadc7dfe0d96dc249a81a6b539c8536d43267a3` |
+| `data/banking-servicing-alignment-v5/train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
+| `data/banking-servicing-alignment-v5/validation.jsonl` | 447 | `d66366e22cc931161111771a23932aabd3520e47e6eea81420125f7063a0c452` |
 
 ## Safe Local Checks
 

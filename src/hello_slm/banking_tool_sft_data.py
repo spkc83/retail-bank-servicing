@@ -555,6 +555,60 @@ def export_teacher_realization_requests(records: Iterable[dict[str, Any]], path:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def import_prompt_realizations(
+    records: Iterable[dict[str, Any]],
+    path: Path,
+    *,
+    prompt_teacher_model: str,
+) -> list[dict[str, Any]]:
+    """Apply teacher-authored *questions*, leaving finals and supervision alone.
+
+    Separate from :func:`import_teacher_realizations` for one reason:
+    attribution. A run stamps a single ``teacher_model``, so when the prompts
+    and the finals come from different teachers, folding them into one file
+    would label one model's text as the other's. The two passes therefore
+    carry their own files and their own provenance stamps.
+
+    This must run *after* the finals pass. That pass rewrites both wording
+    fields from its own row, so applying prompts first would see them reverted.
+
+    Safety is the same ``_immutable_record_hash`` used by the finals pass: it
+    covers tool calls, tool results, grounding facts and split keys, so a
+    prompt rewrite can never reach the supervision.
+    """
+
+    rows = {_required_str(row, "record_id"): row for row in _read_jsonl(path)}
+    realized = json.loads(json.dumps(list(records), sort_keys=True))
+    for record in realized:
+        record_id = _required_str(record, "record_id")
+        row = rows.get(record_id)
+        if row is None:
+            continue
+        before_hash = _immutable_record_hash(record)
+        accepted_hashes = {before_hash}
+        pre_scrub_hash = record.get("provenance", {}).get("pre_scrub_immutable_hash")
+        if isinstance(pre_scrub_hash, str):
+            accepted_hashes.add(pre_scrub_hash)
+        if row.get("immutable_hash") not in accepted_hashes:
+            raise BankingToolSftDataError(f"{record_id} prompt request hash mismatch")
+        user_content = row.get("user_content")
+        if not isinstance(user_content, str) or not user_content.strip():
+            raise BankingToolSftDataError(f"{record_id} prompt user_content must be text")
+        if "final_response" in row:
+            raise BankingToolSftDataError(
+                f"{record_id} prompt rows must not carry final_response; finals have their own pass"
+            )
+        _last_user_message(record)["content"] = user_content.strip()
+        if _immutable_record_hash(record) != before_hash:
+            raise BankingToolSftDataError(f"{record_id} prompt teacher changed immutable semantics")
+        record["provenance"]["prompt_teacher_model"] = prompt_teacher_model
+        record["validation"]["prompt_realization_hash"] = (
+            f"sha256:{hashlib.sha256(canonical_json_bytes(row)).hexdigest()}"
+        )
+    validate_records(realized)
+    return realized
+
+
 def import_teacher_realizations(
     records: Iterable[dict[str, Any]],
     path: Path,
