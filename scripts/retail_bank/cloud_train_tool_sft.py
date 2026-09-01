@@ -1475,29 +1475,28 @@ def build_release_operations(
     The repository root holds merged FP16 weights, or the adapter itself under
     ``--skip-merge-adapter``; the ``adapter/`` copy is published either way so
     consumers can always load the PEFT weights from one path. Dotfiles are
-    skipped exactly as the previous ``ignore_patterns`` did.
+    skipped exactly as the previous ``ignore_patterns`` did -- judged on the
+    path *inside* the release, never on the absolute path, which would drop
+    every file of a run whose output happened to sit under a dot-directory.
     """
     from huggingface_hub import CommitOperationAdd  # type: ignore[import-not-found]
 
-    operations: list[Any] = []
+    def released_files(directory: Path, prefix: str = "") -> list[Any]:
+        found = []
+        for path in sorted(directory.rglob("*")):
+            relative = path.relative_to(directory)
+            if not path.is_file() or any(part.startswith(".") for part in relative.parts):
+                continue
+            found.append(
+                CommitOperationAdd(
+                    path_in_repo=f"{prefix}{relative}", path_or_fileobj=str(path)
+                )
+            )
+        return found
+
     root_dir = config.output_dir / ("merged" if config.merge_adapter else "adapter")
-    for path in sorted(root_dir.rglob("*")):
-        if path.is_file() and not any(part.startswith(".") for part in path.parts):
-            operations.append(
-                CommitOperationAdd(
-                    path_in_repo=str(path.relative_to(root_dir)),
-                    path_or_fileobj=str(path),
-                )
-            )
-    adapter_dir = config.output_dir / "adapter"
-    for path in sorted(adapter_dir.rglob("*")):
-        if path.is_file() and not any(part.startswith(".") for part in path.parts):
-            operations.append(
-                CommitOperationAdd(
-                    path_in_repo=f"adapter/{path.relative_to(adapter_dir)}",
-                    path_or_fileobj=str(path),
-                )
-            )
+    operations: list[Any] = released_files(root_dir)
+    operations.extend(released_files(config.output_dir / "adapter", prefix="adapter/"))
     metadata_path = config.output_dir / "checkpoints" / f"step-{step:06d}" / "metadata.json"
     for source, destination in (
         (model_card, "README.md"),

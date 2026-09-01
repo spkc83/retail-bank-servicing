@@ -962,6 +962,43 @@ def test_release_is_one_commit_covering_weights_adapter_and_provenance(
     assert not any(part.startswith(".") for path in published for part in path.split("/"))
 
 
+def test_a_dot_directory_in_the_output_path_does_not_empty_the_release(
+    tmp_path: Path,
+) -> None:
+    """The dotfile skip judges the path inside the release, not the whole path.
+
+    Judging ``path.parts`` of the absolute path meant a run whose output sat
+    anywhere under a dot-directory -- a cache root, a hidden scratch mount --
+    published a card, metadata and a result with no weights at all, and the
+    single commit made that look like a clean release.
+    """
+    pytest.importorskip("huggingface_hub")
+    hidden_root = tmp_path / ".cache" / "run"
+    hidden_root.mkdir(parents=True)
+    config = WorkerConfig(**{**_config(hidden_root).__dict__, "merge_adapter": False})
+
+    adapter_dir = config.output_dir / "adapter"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / "adapter_model.safetensors").write_text("w", encoding="utf-8")
+    step_dir = config.output_dir / "checkpoints" / "step-000001"
+    step_dir.mkdir(parents=True)
+    (step_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    card = hidden_root / "README.md"
+    card.write_text("card", encoding="utf-8")
+    result_path = hidden_root / "training_result.json"
+    result_path.write_text("{}", encoding="utf-8")
+
+    published = {
+        op.path_in_repo
+        for op in worker.build_release_operations(
+            config, model_card=card, result_path=result_path, step=1
+        )
+    }
+
+    assert "adapter_model.safetensors" in published
+    assert "adapter/adapter_model.safetensors" in published
+
+
 def test_the_publish_path_uses_a_single_commit() -> None:
     """Pinned from source: the sequence of uploads is what made it non-atomic."""
     source = WORKER_PATH.read_text(encoding="utf-8")
