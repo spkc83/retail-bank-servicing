@@ -18,6 +18,8 @@ from hello_slm.banking_tool_sft_data import (
     POLICY_CHUNKS,
     SYSTEM_PROMPT,
     _attach_generation_contract,
+    assert_realized_prompts_stay_clear_of_eval,
+    current_user_text,
     export_teacher_realization_requests,
     import_prompt_realizations,
     import_teacher_realizations,
@@ -438,77 +440,6 @@ def _assert_alignment_teacher_rows(
     return prompt_realized
 
 
-def _current_user_text(record: Mapping[str, Any]) -> str:
-    messages = record.get("messages")
-    if isinstance(messages, list):
-        users = [m for m in messages if isinstance(m, Mapping) and m.get("role") == "user"]
-        if users:
-            return str(users[-1].get("content", ""))
-    return str(record.get("current_text") or record.get("current") or "")
-
-
-def _assert_realized_prompts_stay_clear_of_eval(
-    trainable: Sequence[Mapping[str, Any]],
-    *,
-    realized_ids: set[str],
-    eval_records: Sequence[Mapping[str, Any]],
-    ngram: int = 4,
-) -> None:
-    """A rewritten prompt must not drift toward a held-out one.
-
-    This is the whole point of the layer. It applies only to rows whose prompt
-    this run actually rewrote, which makes it a ratchet: every prompt that
-    moves has to land clear of the eval splits, without requiring the entire
-    inherited corpus to be re-authored in one go.
-    """
-
-    if not realized_ids:
-        return
-
-    # Only *distinctive* eval wording identifies a held-out row. Every split
-    # shares instruction boilerplate -- "please keep the answer concise",
-    # "use the information from this conversation" -- because the realizer
-    # appends the same style directives everywhere. Those phrases span every
-    # eval family, carry no task content, and a model gains nothing from
-    # having seen them, so matching on them would reject correct rewrites and
-    # teach the next author to avoid ordinary English.
-    #
-    # A gram is treated as identifying when it appears in exactly one eval
-    # family: "mailing address case get" belongs to one scenario, "please keep
-    # the answer" belongs to all of them.
-    gram_families: dict[tuple[str, ...], set[str]] = {}
-    gram_owner: dict[tuple[str, ...], str] = {}
-    for record in eval_records:
-        family = str(
-            record.get("metadata", {}).get("scenario_family")
-            or record.get("scenario_family")
-            or record.get("record_id")
-        )
-        words = normalized_user_text(_current_user_text(record)).split()
-        for index in range(len(words) - ngram + 1):
-            gram = tuple(words[index : index + ngram])
-            gram_families.setdefault(gram, set()).add(family)
-            gram_owner.setdefault(gram, str(record["record_id"]))
-    eval_grams = {
-        gram: gram_owner[gram]
-        for gram, families in gram_families.items()
-        if len(families) == 1
-    }
-
-    for record in trainable:
-        record_id = str(record["record_id"])
-        if record_id not in realized_ids:
-            continue
-        words = normalized_user_text(_current_user_text(record)).split()
-        for index in range(len(words) - ngram + 1):
-            gram = tuple(words[index : index + ngram])
-            if gram in eval_grams:
-                raise ValueError(
-                    f"{record_id}: realized prompt shares the {ngram}-gram "
-                    f"{' '.join(gram)!r} with held-out record {eval_grams[gram]}"
-                )
-
-
 def write_servicing_alignment_dataset(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     *,
@@ -560,7 +491,7 @@ def write_servicing_alignment_dataset(
             "train": realized[:n_train],
             "validation": realized[n_train:],
         }
-        _assert_realized_prompts_stay_clear_of_eval(
+        assert_realized_prompts_stay_clear_of_eval(
             realized,
             realized_ids=prompt_realized_ids,
             eval_records=[
@@ -585,7 +516,7 @@ def write_servicing_alignment_dataset(
         # fields from its own row, so prompts applied first would be reverted.
         trainable_now = [*alignment_splits["train"], *alignment_splits["validation"]]
         before = {
-            str(record["record_id"]): _current_user_text(record) for record in trainable_now
+            str(record["record_id"]): current_user_text(record) for record in trainable_now
         }
         prompted = import_prompt_realizations(
             trainable_now,
@@ -595,7 +526,7 @@ def write_servicing_alignment_dataset(
         moved = {
             str(record["record_id"])
             for record in prompted
-            if _current_user_text(record) != before.get(str(record["record_id"]))
+            if current_user_text(record) != before.get(str(record["record_id"]))
         }
         n_train = len(alignment_splits["train"])
         alignment_splits = {
@@ -603,7 +534,7 @@ def write_servicing_alignment_dataset(
             "train": prompted[:n_train],
             "validation": prompted[n_train:],
         }
-        _assert_realized_prompts_stay_clear_of_eval(
+        assert_realized_prompts_stay_clear_of_eval(
             prompted,
             realized_ids=moved,
             eval_records=[

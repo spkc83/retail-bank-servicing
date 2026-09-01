@@ -382,6 +382,15 @@ def main(argv: list[str] | None = None) -> int:
         "--teacher-prompt-hash",
         help="Teacher prompt hash used for --teacher-responses.",
     )
+    parser.add_argument(
+        "--prompt-responses",
+        type=Path,
+        help="Apply teacher-authored question rewrites (prompts only) before writing splits.",
+    )
+    parser.add_argument(
+        "--prompt-teacher-model",
+        help="Teacher model credited for the question rewrites; required with --prompt-responses.",
+    )
     args = parser.parse_args(argv)
     try:
         report = prepare(
@@ -393,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
             teacher_responses=args.teacher_responses,
             teacher_model=args.teacher_model,
             teacher_prompt_hash=args.teacher_prompt_hash,
+            prompt_responses=args.prompt_responses,
+            prompt_teacher_model=args.prompt_teacher_model,
         )
     except (BankingToolSftDataError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -469,6 +480,8 @@ def prepare(
     teacher_responses: Path | None = None,
     teacher_model: str | None = None,
     teacher_prompt_hash: str | None = None,
+    prompt_responses: Path | None = None,
+    prompt_teacher_model: str | None = None,
 ) -> dict[str, Any]:
     records = generate_records(
         pilot_count=pilot_count,
@@ -488,6 +501,35 @@ def prepare(
             teacher_model=teacher_model,
             teacher_prompt_hash=teacher_prompt_hash,
         )
+    if prompt_responses is not None:
+        if not prompt_teacher_model:
+            raise BankingToolSftDataError(
+                "--prompt-teacher-model is required with --prompt-responses"
+            )
+        # After the finals pass on purpose: that pass rewrites both wording
+        # fields from its own row, so prompts applied first would be reverted.
+        before = {
+            _required_str(record, "record_id"): current_user_text(record) for record in records
+        }
+        records = import_prompt_realizations(
+            records, prompt_responses, prompt_teacher_model=prompt_teacher_model
+        )
+        moved = {
+            _required_str(record, "record_id")
+            for record in records
+            if current_user_text(record) != before.get(_required_str(record, "record_id"))
+        }
+        trainable = [
+            record for record in records if record["metadata"]["split"] in TRAINABLE_TEXT_SPLITS
+        ]
+        assert_realized_prompts_stay_clear_of_eval(
+            trainable,
+            realized_ids=moved,
+            eval_records=[
+                record for record in records if record["metadata"]["split"] == "test"
+            ],
+        )
+
     split_rows = {
         split: [record for record in records if record["metadata"]["split"] == split]
         for split in SPLITS
@@ -553,6 +595,77 @@ def export_teacher_realization_requests(records: Iterable[dict[str, Any]], path:
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def current_user_text(record: Mapping[str, Any]) -> str:
+    messages = record.get("messages")
+    if isinstance(messages, list):
+        users = [m for m in messages if isinstance(m, Mapping) and m.get("role") == "user"]
+        if users:
+            return str(users[-1].get("content", ""))
+    return str(record.get("current_text") or record.get("current") or "")
+
+
+def assert_realized_prompts_stay_clear_of_eval(
+    trainable: Sequence[Mapping[str, Any]],
+    *,
+    realized_ids: set[str],
+    eval_records: Sequence[Mapping[str, Any]],
+    ngram: int = 4,
+) -> None:
+    """A rewritten prompt must not drift toward a held-out one.
+
+    This is the whole point of the layer. It applies only to rows whose prompt
+    this run actually rewrote, which makes it a ratchet: every prompt that
+    moves has to land clear of the eval splits, without requiring the entire
+    inherited corpus to be re-authored in one go.
+    """
+
+    if not realized_ids:
+        return
+
+    # Only *distinctive* eval wording identifies a held-out row. Every split
+    # shares instruction boilerplate -- "please keep the answer concise",
+    # "use the information from this conversation" -- because the realizer
+    # appends the same style directives everywhere. Those phrases span every
+    # eval family, carry no task content, and a model gains nothing from
+    # having seen them, so matching on them would reject correct rewrites and
+    # teach the next author to avoid ordinary English.
+    #
+    # A gram is treated as identifying when it appears in exactly one eval
+    # family: "mailing address case get" belongs to one scenario, "please keep
+    # the answer" belongs to all of them.
+    gram_families: dict[tuple[str, ...], set[str]] = {}
+    gram_owner: dict[tuple[str, ...], str] = {}
+    for record in eval_records:
+        family = str(
+            record.get("metadata", {}).get("scenario_family")
+            or record.get("scenario_family")
+            or record.get("record_id")
+        )
+        words = normalized_user_text(current_user_text(record)).split()
+        for index in range(len(words) - ngram + 1):
+            gram = tuple(words[index : index + ngram])
+            gram_families.setdefault(gram, set()).add(family)
+            gram_owner.setdefault(gram, str(record["record_id"]))
+    eval_grams = {
+        gram: gram_owner[gram]
+        for gram, families in gram_families.items()
+        if len(families) == 1
+    }
+
+    for record in trainable:
+        record_id = str(record["record_id"])
+        if record_id not in realized_ids:
+            continue
+        words = normalized_user_text(current_user_text(record)).split()
+        for index in range(len(words) - ngram + 1):
+            gram = tuple(words[index : index + ngram])
+            if gram in eval_grams:
+                raise ValueError(
+                    f"{record_id}: realized prompt shares the {ngram}-gram "
+                    f"{' '.join(gram)!r} with held-out record {eval_grams[gram]}"
+                )
 
 
 def import_prompt_realizations(
