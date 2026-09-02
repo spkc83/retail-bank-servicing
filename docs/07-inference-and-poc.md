@@ -161,6 +161,11 @@ The model event uses `@spaces.GPU(size="large", duration=90)`. An authenticated
 chat smoke confirms that user code entered a ZeroGPU worker and generated a
 response. The Gradio queue uses concurrency one for this low-traffic POC.
 
+A radio under the examples, **Who decides the turn?**, switches the classifier
+between the cross-encoder router and the 9B model itself for that request;
+both feed the same harness. See
+[Who should decide the turn?](17-routing-classifier-comparison.md).
+
 Plan a deployment with the immutable router placeholder replaced:
 
 ```bash

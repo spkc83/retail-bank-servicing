@@ -43,8 +43,20 @@ The third is not a deployment option; it is the V3 legacy surface and the
 baseline that measures what the routing layer contributes. It is opt-in
 (`tool_authority: "unrouted"`) precisely so it cannot be reached by accident.
 
-Select a mode with `RETAIL_BANK_ROUTING_MODE=router|model`. An unrecognised
-value falls back to the router.
+`RETAIL_BANK_ROUTING_MODE=router|model` sets the deployment default, and the
+Gradio surface carries a radio — **Who decides the turn?** — that overrides it
+per request, so the same session can ask the same question both ways. An
+unrecognised value, from either source, resolves to the router and never to
+anything unrouted. Technical details then report `Classifier` and, in model
+mode, the tuple the model proposed *before* the legality check beside the one
+the harness acted on.
+
+The radio costs one extra generation per turn in model mode. That is
+autoregressive work — the model writes its decision one token at a time, each
+token a full 9B forward pass — against a single classification pass through a
+66M-parameter encoder, which is where the two differ in cost. On the Space
+that pass runs inside the same `@spaces.GPU(duration=90)` wall as the rest of
+the turn.
 
 ## Scoring
 
@@ -79,8 +91,11 @@ PYTHONPATH=src uv run python scripts/retail_bank/compare_routing_classifiers.py 
 | seconds per turn | 0.084 (CPU) |
 
 **SLM as classifier:** not yet measured at a publishable sample size. A five-row
-smoke on the local TITAN V returned 8.2 s/turn — roughly a hundred times the
-cross-encoder — with four of five turns producing no usable routing object.
+smoke on the local TITAN V returned 8.2 s/turn with four of five turns
+producing no usable routing object. That latency is a local, NF4-quantized,
+Volta-era number and should not be read across to the Space, which serves
+bf16 on newer hardware; the ratio to the cross-encoder is real, the absolute
+figure is not portable.
 That direction is unsurprising: v14 was fine-tuned to *be* a servicing agent,
 not to emit routing labels, and nothing in its curriculum teaches the JSON
 contract this asks for. **Five rows is an anecdote, not a result**, and the raw

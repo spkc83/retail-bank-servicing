@@ -159,6 +159,7 @@ def run_model_turn(
     conversation_history: list[dict[str, Any]],
     dialogue_state_payload: dict[str, Any] | None,
     request: gr.Request,
+    routing_mode: str = "router",
 ) -> tuple[
     Any,
     list[dict[str, str]],
@@ -178,7 +179,9 @@ def run_model_turn(
     conversation = canonical_conversation(conversation_history)
     prior_state = DialogueState.from_dict(dialogue_state_payload)
 
-    learned_route = route_query(message, conversation, prior_state.as_dict())
+    # Gradio injects `request` by annotation, so the radio's value maps to
+    # routing_mode by position even though it is declared after it.
+    learned_route = route_query(message, conversation, prior_state.as_dict(), routing_mode)
     route = ground_servicing_decision(
         learned_route,
         message=message.strip(),
@@ -428,14 +431,27 @@ def fail_model_turn(
     )
 
 
-def active_classifier() -> Any:
-    """The classifier for this deployment: the cross-encoder, or the SLM itself.
+ROUTING_CHOICES = ("router", "model")
 
-    Built lazily so the model router costs nothing in the default mode, and so
+
+def resolve_routing_mode(requested: str | None) -> str:
+    """The mode for this turn: the radio's choice, else the deployment default.
+
+    Anything unrecognised resolves to the router, never to something unrouted.
+    """
+    if isinstance(requested, str) and requested in ROUTING_CHOICES:
+        return requested
+    return ROUTING_MODE
+
+
+def active_classifier(mode: str | None = None) -> Any:
+    """The classifier for a turn: the cross-encoder, or the SLM itself.
+
+    The model router is built lazily so the default mode costs nothing, and so
     the ZeroGPU adapter is only touched on a request rather than at import.
     """
     global _model_router
-    if ROUTING_MODE != "model":
+    if resolve_routing_mode(mode) != "model":
         return router
     if _model_router is None:
         _model_router = ModelConversationRouter(_RuntimeModel(), revision=MODEL_REVISION)
@@ -446,8 +462,9 @@ def route_query(
     message: str,
     history: list[dict[str, Any]] | None = None,
     dialogue_state: dict[str, Any] | None = None,
+    routing_mode: str | None = None,
 ) -> dict[str, Any]:
-    classifier = active_classifier()
+    classifier = active_classifier(routing_mode)
     if classifier is None:
         # Not "delegated to the 9B model" any more: an unroutable turn exposes
         # no tools at all. Saying otherwise described the fail-open branch that
@@ -766,6 +783,9 @@ def _render_diagnostics(
         f"- Exposed tools: `{json.dumps(decision['exposed_tools'])}`\n"
         f"- Relation probabilities: "
         f"`{json.dumps(route.get('relation_probabilities', {}), sort_keys=True)}`\n"
+        f"- Classifier: `{route.get('classifier', 'router')}`\n"
+        f"- Model proposed (before legality): "
+        f"`{json.dumps(route.get('proposed') or {}, sort_keys=True)}`\n"
         f"- Router reason: `{route.get('reason', 'not provided')}`\n"
         f"- Router failure type: `{route.get('failure_type', 'none')}`\n"
         f"- Constraint notes: "
@@ -843,6 +863,19 @@ with gr.Blocks(
                 inputs=message_box,
                 label=f"Try asking {ASSISTANT_NAME}",
             )
+            routing_mode_radio = gr.Radio(
+                choices=[
+                    ("Cross-encoder router (66M, one pass)", "router"),
+                    ("The 9B model itself (one extra generation)", "model"),
+                ],
+                value=ROUTING_MODE,
+                label="Who decides the turn?",
+                info=(
+                    "Both run through the same guards, so only the classifier "
+                    "changes. Technical details show which one decided and what "
+                    "the model proposed before the legality check."
+                ),
+            )
     with gr.Accordion("Technical details", open=False):
         diagnostics_panel = gr.Markdown()
 
@@ -863,7 +896,7 @@ with gr.Blocks(
     model_event = gr.on(
         triggers=[message_box.submit, send_button.click],
         fn=run_model_turn,
-        inputs=[message_box, chatbot, conversation_history, dialogue_state],
+        inputs=[message_box, chatbot, conversation_history, dialogue_state, routing_mode_radio],
         outputs=[
             message_box,
             chatbot,

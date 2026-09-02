@@ -567,7 +567,7 @@ def test_credential_like_text_reaches_router_and_model(
     routed: list[str] = []
     generated: list[str] = []
 
-    def record_route(message, _history, _dialogue_state):
+    def record_route(message, _history, _dialogue_state, _routing_mode=None):
         routed.append(message)
         return route()
 
@@ -951,3 +951,48 @@ def test_model_mode_classifies_with_the_slm_and_still_gates(
     assert route["action"] == "clarify"
     _system, tools = _generation_plan(route)
     assert tools == []
+
+
+def test_the_radio_offers_both_classifiers_and_defaults_to_the_deployment(app_module) -> None:
+    assert app_module.ROUTING_CHOICES == ("router", "model")
+    assert app_module.resolve_routing_mode(None) == app_module.ROUTING_MODE
+    assert app_module.resolve_routing_mode("model") == "model"
+    # A value the radio cannot produce -- a tampered request -- resolves to the
+    # router, never to an unrouted surface.
+    assert app_module.resolve_routing_mode("unrouted") == "router"
+
+
+def test_a_turn_honours_the_radio_over_the_deployment_default(app_module, monkeypatch) -> None:
+    """The radio is per request: a router deployment can still ask the model."""
+    seen: dict[str, object] = {}
+
+    def fake_generate_text(messages, tools, max_new_tokens, **kwargs):
+        seen["tools"] = tools
+        return (
+            '{"domain": "banking", "intent": "policy_knowledge", '
+            '"action": "retrieve_policy", "entity_resolution": "not_required"}'
+        )
+
+    monkeypatch.setattr(app_module, "generate_text", fake_generate_text)
+    assert app_module.ROUTING_MODE == "router"
+
+    route = app_module.route_query("what is the dispute timeline?", [], routing_mode="model")
+
+    assert route["classifier"] == "model"
+    assert route["action"] == "retrieve_policy"
+    assert seen["tools"] is None, "the routing pass must be given no tools"
+
+
+def test_diagnostics_say_which_classifier_decided(app_module) -> None:
+    decided = {
+        **route(intent="view_cards"),
+        "classifier": "model",
+        "proposed": {"action": "converse", "intent": "freeze_card"},
+        "constraint_diagnostics": ("constraint:mutation-intent-cannot-converse",),
+    }
+
+    diagnostics = app_module._render_diagnostics(decided, (), (), "test")
+
+    assert "Classifier: `model`" in diagnostics
+    assert '"action": "converse"' in diagnostics, "the pre-legality proposal must be visible"
+    assert "mutation-intent-cannot-converse" in diagnostics
