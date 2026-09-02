@@ -1,0 +1,213 @@
+# Declared use-case coverage for each training corpus.
+#
+# A cell is (intent, phrasing form, first_turn | multi_turn). Forms are
+# imperative, wh_question ("What is my balance?"), modal_request ("Could you
+# pull up my accounts?"), elliptical and deictic. wh_question and modal_request
+# are distinct on purpose: the router handles modal requests, and it was the
+# wh-question about an amount that it had never seen. `minimum` is a
+# ratchet: the build fails if the corpus drops below it. `target` is the goal;
+# a cell below target is reported, worst first, so empty cells set the
+# authoring order. A cell that is empty today is declared with minimum 0 and a
+# real target -- declaring it is the point, because the one that shipped empty,
+# (view_accounts, wh_question, first_turn), was never written down anywhere.
+#
+# Measure with:  PYTHONPATH=src uv run python scripts/retail_bank/measure_corpus_coverage.py
+# Raise a minimum only after the rows exist and the router has been retrained on them.
+
+[router]
+
+[router.categories]
+# Floors for whole categories, independent of intent.
+in_domain = 1
+out_of_domain = 1
+social = 1
+counterfactual = 1
+multi_turn = 1
+long_running = 1
+policy_question = 1
+intent_drift = 1
+loop_back = 1
+agent_repair = 1
+clarification_answer = 1
+# Not present in the corpus today. Declared so the report says so on every run.
+adversarial = 0
+multi_intent = 0
+
+# Every servicing read, asked as a real question on the first turn -- "What is
+# my balance?", "Which cards do I have?". These are the plain first asks a
+# customer types, and the corpus is built almost entirely around transitions
+# between tasks rather than the tasks themselves.
+[[router.cell]]
+intent = "view_accounts"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_cards"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_transactions"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_transfers"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_service_cases"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+# The same reads as polite modal requests ("Could you pull up...").
+[[router.cell]]
+intent = "view_accounts"
+form = "modal_request"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "view_cards"
+form = "modal_request"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "view_transactions"
+form = "modal_request"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "view_transfers"
+form = "modal_request"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "view_service_cases"
+form = "modal_request"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+# The same reads, asked imperatively on the first turn -- the presets' shape.
+[[router.cell]]
+intent = "view_accounts"
+form = "imperative"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_cards"
+form = "imperative"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_transactions"
+form = "imperative"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_transfers"
+form = "imperative"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+[[router.cell]]
+intent = "view_service_cases"
+form = "imperative"
+turn = "first_turn"
+minimum = 0
+target = 60
+
+# Mutations asked as a question ("Can you freeze my card?") on the first turn.
+[[router.cell]]
+intent = "freeze_card"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "replace_card"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "dispute_transaction"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+[[router.cell]]
+intent = "cancel_transfer"
+form = "wh_question"
+turn = "first_turn"
+minimum = 0
+target = 40
+
+# Deictic follow-ups per mutation: the counterfactual pairs live here.
+[[router.cell]]
+intent = "freeze_card"
+form = "deictic"
+turn = "multi_turn"
+minimum = 0
+target = 100
+
+[[router.cell]]
+intent = "replace_card"
+form = "deictic"
+turn = "multi_turn"
+minimum = 0
+target = 100
+
+[[router.cell]]
+intent = "cancel_transfer"
+form = "deictic"
+turn = "multi_turn"
+minimum = 0
+target = 100
+
+[[router.cell]]
+intent = "dispute_transaction"
+form = "deictic"
+turn = "multi_turn"
+minimum = 0
+target = 100
+
+[alignment]
+
+[alignment.categories]
+in_domain = 0
+multi_turn = 1
+long_running = 1
+policy_question = 0
+adversarial = 0
+multi_intent = 0

@@ -86,7 +86,8 @@ Read these in order:
 8. [End-to-end runbook](docs/08-end-to-end-runbook.md)
 9. [Router architecture deep dive](docs/09-conversation-router-v4.md)
 10. [Who should decide the turn?](docs/17-routing-classifier-comparison.md)
-11. [File map](docs/reference/file-map.md)
+11. [Use-case coverage](docs/18-corpus-usecase-coverage.md)
+12. [File map](docs/reference/file-map.md)
 
 The filenames `05-hierarchical-router.md` and `09-conversation-router-v4.md` are
 retained for stable links. Their content documents the active V6 router.

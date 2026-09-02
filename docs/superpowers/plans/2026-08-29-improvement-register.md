@@ -396,6 +396,44 @@ The gap this fell through was already named and open: "authenticated chat smoke 
 carried as a minor residual for weeks. It was the only check that could have caught this, and a
 person running four manual turns is what finally did.
 
+## What this audit did not ask: is the corpus complete from the use-case side?
+
+Every finding above is about a mechanism — a gate that cannot fire, a path that fails open, a
+hash that validates itself. None asks whether the corpus contains what a customer says. That
+class of gap surfaced in the live Space on 2026-09-01:
+
+> "What is my checking account balance right now?" → routed to the policy lane, refused with
+> "I couldn't find an approved current policy", Granite passes 0. The balance was on the sidebar.
+
+Measured with [`measure_corpus_coverage.py`](../../../scripts/retail_bank/measure_corpus_coverage.py)
+against a declared matrix, the instance turned out to be a class. First-turn `wh_question` rows
+in the router corpus, per servicing intent: `view_accounts` **0**, `view_cards` **0**,
+`view_transactions` **0**, `view_transfers` **0**, `freeze_card` **0**, `replace_card` **0**.
+The corpus is 75% multi-turn and 45% topic-shift; the plain first ask is the neglected case
+across the whole servicing lane, and every demo preset is imperative, which is why it never
+showed. Also absent: adversarial turns in the router corpus (0 — the router has no notion of
+"ignore your instructions"), multi-intent turns in either corpus (0), and long-running
+conversations (32 rows ≥6 turns).
+
+Three layers made the instance unrecoverable, each now recorded:
+- the corpus hole above;
+- the policy lane has no path back to servicing — `policy_context_fallback_route` only looks at
+  prior tool results, never at the runner-up intent (`view_accounts` was second at 0.153);
+- the bare-probe gate exercises that exact sentence against the *model in isolation* and passes
+  (`balance_no_tools`, 11/11), so nothing end-to-end tests the routing of the probe sentences.
+
+**Closed in the same way finding #5 was closed for detectors:** a declared expectation and a
+gate. [`configs/corpus-coverage.toml`](../../../configs/corpus-coverage.toml) names the cells
+with a ratchet `minimum` and a `target`; `make verify` fails below a minimum; the report ranks
+cells below target, which is the authoring order. Every category and form detector has a test
+that plants a row and proves it fires. Two detectors were wrong in their first version and were
+caught by inspection before any number was published: "interrogative" lumped "Could you pull up
+my accounts?" with "What is my balance?" (the router handles the first fine — the split is the
+finding), and the multi-intent regex counted a topic-switch scaffold sixty times.
+
+Not done: the rows. Authoring them is the next data iteration, and the router cannot simply be
+rebuilt on them until the HEAD rebuild failure in section 4 of the runbook is resolved.
+
 ## Recommended order
 
 Findings 1 and 5–7 first: they are cheap, and until they land, no experiment result from this
