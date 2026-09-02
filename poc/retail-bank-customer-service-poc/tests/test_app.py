@@ -49,6 +49,12 @@ def route(
     }.get(capability, capability)
     return {
         "route": route_name,
+        # V3 compatibility: no action head, so the model sees every tool and
+        # picks for itself. That is stated rather than implied, because an
+        # action-less route is also what a router failure produces and it now
+        # fails closed. test_diagnostics_retain_v3_route_compatibility below
+        # is the test this shape exists for.
+        "tool_authority": "unrouted",
         "banking_probability": banking_probability,
         "ood_probability": 1 - banking_probability,
         "confidence": max(banking_probability, 1 - banking_probability),

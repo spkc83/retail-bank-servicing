@@ -9,19 +9,41 @@ from responses import MODEL_FAILURE_RESPONSE
 
 
 class StaticRouter:
-    def __init__(self, route_name: str = "in_domain") -> None:
+    """A double for the V6 router, which always decides an action.
+
+    It used to omit "action" entirely, which is the shape a router *failure*
+    produces -- so these tests were silently exercising the unrouted fail-open
+    branch rather than the routed path they describe. Emitting the action and
+    entity state the real seven-head router emits keeps the double faithful.
+    """
+
+    def __init__(
+        self,
+        route_name: str = "in_domain",
+        *,
+        action: str = "execute_tool",
+        intent: str = "view_accounts",
+        entity_resolution: str = "resolved",
+    ) -> None:
         self.route_name = route_name
+        self.action = action
+        self.intent = intent
+        self.entity_resolution = entity_resolution
         self.seen_history: list[dict[str, object]] | None = None
 
     def classify(self, message, history):
         self.seen_history = history
         return {
             "route": self.route_name,
+            "action": self.action,
+            "fine_intent": self.intent,
+            "entity_resolution": self.entity_resolution,
+            "lane": "servicing",
             "banking_probability": 0.99 if self.route_name == "in_domain" else 0.01,
             "ood_probability": 0.01 if self.route_name == "in_domain" else 0.99,
             "confidence": 0.99,
             "capability": "accounts",
-            "intent": "view_accounts",
+            "intent": self.intent,
             "intent_confidence": 0.9,
             "capability_confidence": 0.9,
             "capability_candidates": [{"capability": "accounts", "probability": 0.9}],
@@ -310,8 +332,22 @@ class FakePolicyKnowledge:
 
 
 def routed(intent: str, *, relations: list[str] | None = None) -> dict[str, object]:
+    """A V6-shaped route for `intent`, including the action head.
+
+    This helper used to stop at the intent. A route with no action is the shape
+    a router *failure* produces, so every test built on it was running through
+    the unrouted fail-open branch instead of the lane it names. The action and
+    entity state are derived the way the real router derives them: a policy
+    question retrieves, a servicing intent executes against a resolved target.
+    """
+    policy = intent == "policy_knowledge"
     return {
         "route": "in_domain",
+        "domain": "banking",
+        "lane": "policy" if policy else "servicing",
+        "action": "retrieve_policy" if policy else "execute_tool",
+        "entity_resolution": "not_required" if policy else "resolved",
+        "fine_intent": intent,
         "banking_probability": 0.99,
         "ood_probability": 0.01,
         "confidence": 0.99,

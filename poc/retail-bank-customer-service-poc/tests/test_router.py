@@ -563,3 +563,32 @@ def test_generation_plan_renders_downgraded_mutation_clarify_without_raising() -
 
     assert tools == []
     assert "clarification question" in system["content"]
+
+
+def test_a_route_without_an_action_exposes_no_tools() -> None:
+    """Router failure must not hand the model every mutation it owns.
+
+    `_uncertain_route` and `_classifier_error_route` both omit "action", so on
+    a classifier failure the live app reached the branch that returned the full
+    MODEL_TOOLS list -- all nine tools including freeze_card, replace_card,
+    dispute_transaction and cancel_transfer -- with no turn guidance and no
+    entity grounding. A genuine `uncertain` route was already safe; only the
+    degraded path failed open, which is exactly the turn where it matters.
+    """
+    system, tools = _generation_plan({"route": "uncertain", "reason": "classifier failed"})
+
+    assert tools == []
+    assert "clarification question" in system["content"]
+
+
+def test_the_unrouted_tool_surface_must_be_asked_for_explicitly() -> None:
+    """The all-tools surface still exists, but a caller has to state it wants it.
+
+    It is a legitimate baseline -- it measures what the harness contributes --
+    so it is opt-in rather than deleted. Absence means most-restrictive.
+    """
+    from model_service import MODEL_TOOLS
+
+    _system, tools = _generation_plan({"route": "uncertain", "tool_authority": "unrouted"})
+
+    assert tools == MODEL_TOOLS

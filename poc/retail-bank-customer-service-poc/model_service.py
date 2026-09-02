@@ -1301,7 +1301,30 @@ def _generation_plan(
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     system = _system_message(router_result)
     if "action" not in router_result:
-        return system, MODEL_TOOLS
+        # Absent means most-restrictive. _uncertain_route and
+        # _classifier_error_route both omit "action", so this branch is the
+        # live degraded path -- and it used to return every tool the assistant
+        # owns, mutations included, with no guidance and no entity grounding.
+        # A genuine "uncertain" route was already safe; only router failure
+        # failed open, on precisely the turn where that is most dangerous.
+        #
+        # The unrouted surface is still reachable, because it is a real
+        # baseline for measuring what the routing layer contributes -- but a
+        # caller now has to ask for it by name rather than get it by omission.
+        if router_result.get("tool_authority") == "unrouted":
+            return system, MODEL_TOOLS
+        guidance = _render_turn_guidance(
+            {
+                "mode": "clarify",
+                "entity_state": "missing",
+                "tool_names": [],
+                "argument_constraints": {},
+            }
+        )
+        return {
+            "role": "system",
+            "content": f"{system['content']}\n\nTURN GUIDANCE: {guidance}",
+        }, []
 
     if router_result.get("route") != "in_domain":
         mode = (

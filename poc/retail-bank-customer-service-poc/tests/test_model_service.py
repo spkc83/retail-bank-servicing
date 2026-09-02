@@ -62,8 +62,16 @@ class RecordingModel:
 
 
 def router_guidance() -> dict[str, Any]:
+    """A V3-shaped route: no action head, so no single-schema narrowing.
+
+    This is the unrouted surface, where the model sees all nine tools and
+    chooses among them itself. It has to say so now: an "action"-less route
+    without `tool_authority` fails closed, because that shape is also what a
+    router *failure* produces in the live app.
+    """
     return {
         "route": "in_domain",
+        "tool_authority": "unrouted",
         "banking_probability": 0.99,
         "ood_probability": 0.01,
         "capability": "transfers",
