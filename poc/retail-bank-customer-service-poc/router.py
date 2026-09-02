@@ -694,60 +694,15 @@ def verify_artifact(root: Path) -> dict[str, Any]:
 
 
 def _verify_v4_config(config: Mapping[str, Any]) -> None:
-    try:
-        from hello_slm.banking_conversation_router_data import RELATION_LABELS
-        from hello_slm.banking_domain_taxonomy import (
-            ACTION_LABELS,
-            DOMAIN_LABELS,
-            ENTITY_RESOLUTION_LABELS,
-            FAMILY_LABELS,
-            INTENT_LABELS,
-            LANE_LABELS,
-        )
-    except ModuleNotFoundError:
-        # The Space artifact is standalone; this fallback mirrors the canonical module.
-        DOMAIN_LABELS = ("out_of_domain", "banking", "social")
-        LANE_LABELS = ("out_of_domain", "servicing", "policy", "conversation", "other_banking")
-        FAMILY_LABELS = (
-            "external",
-            "accounts",
-            "cards",
-            "transactions",
-            "transfers",
-            "service_cases",
-            "policy",
-            "social",
-            "other_banking",
-        )
-        INTENT_LABELS = (
-            "view_accounts",
-            "view_cards",
-            "freeze_card",
-            "replace_card",
-            "view_transactions",
-            "dispute_transaction",
-            "view_transfers",
-            "cancel_transfer",
-            "view_service_cases",
-            "policy_knowledge",
-            "conversation",
-            "other_banking",
-        )
-        RELATION_LABELS = (
-            "context_dependent",
-            "agent_repair",
-            "topic_shift",
-            "clarification_answer",
-            "resume_previous_service",
-        )
-        ACTION_LABELS = ("refuse_ood", "execute_tool", "clarify", "retrieve_policy", "converse")
-        ENTITY_RESOLUTION_LABELS = (
-            "not_required",
-            "resolved",
-            "missing",
-            "ambiguous",
-            "ineligible",
-        )
+    from taxonomy import (
+        ACTION_LABELS,
+        DOMAIN_LABELS,
+        ENTITY_RESOLUTION_LABELS,
+        FAMILY_LABELS,
+        INTENT_LABELS,
+        LANE_LABELS,
+        RELATION_LABELS,
+    )
 
     expected = {
         "domain_labels": DOMAIN_LABELS,

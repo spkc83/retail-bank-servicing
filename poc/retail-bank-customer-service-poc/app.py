@@ -116,12 +116,22 @@ class _RuntimeModel(ModelRuntime):
         max_new_tokens: int,
         *,
         sample: bool = False,
+        prefill: str = "",
     ) -> str:
-        # Only pass `sample` when true, so tests that monkeypatch generate_text
-        # with the pre-Best-of-N signature keep working unmodified.
+        # Every keyword ModelRuntime declares has to be accepted here, even
+        # though Protocol cannot enforce it: `prefill` was added to the
+        # protocol, to generate_text and to the local runtime but not to this
+        # adapter, so each prefilled retry on ZeroGPU raised TypeError and
+        # replaced a correct answer with the generic failure text.
+        #
+        # Non-defaults are still only forwarded when set, which is what lets a
+        # test monkeypatch generate_text with an older signature.
+        extra: dict[str, Any] = {}
         if sample:
-            return generate_text(messages, tools, max_new_tokens, sample=True)
-        return generate_text(messages, tools, max_new_tokens)
+            extra["sample"] = True
+        if prefill:
+            extra["prefill"] = prefill
+        return generate_text(messages, tools, max_new_tokens, **extra)
 
     def count_tokens(
         self,

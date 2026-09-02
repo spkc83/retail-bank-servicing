@@ -837,3 +837,47 @@ def test_policy_for_x_question_keeps_stock_response_despite_account_evidence(
 
     answer = followup[1][-1]["content"]
     assert "approved current policy" in answer
+
+
+def test_the_zerogpu_adapter_accepts_everything_model_service_passes(app_module) -> None:
+    """The adapter must satisfy ModelRuntime, which Protocol cannot enforce at runtime.
+
+    `prefill` was added to ModelRuntime, to generate_text and to the local
+    runtime, but not to this adapter. model_service passes it on the prefilled
+    tool-call retry, so every ZeroGPU turn that took that path died with
+    `_RuntimeModel.generate() got an unexpected keyword argument 'prefill'` --
+    a TypeError that replaced a correct model answer with the generic failure
+    text. Local Streamlit was unaffected, which is why no test caught it.
+    """
+    import inspect
+
+    from model_service import ModelRuntime
+
+    expected = inspect.signature(ModelRuntime.generate).parameters
+    actual = inspect.signature(app_module._RuntimeModel.generate).parameters
+
+    missing = [
+        name
+        for name, parameter in expected.items()
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY and name not in actual
+    ]
+    assert missing == [], f"adapter drops keyword arguments the protocol declares: {missing}"
+
+
+def test_the_zerogpu_adapter_forwards_prefill_to_generate_text(app_module, monkeypatch) -> None:
+    """Signature parity is necessary but not sufficient: the value must arrive."""
+    seen: dict[str, object] = {}
+
+    def fake_generate_text(messages, tools, max_new_tokens, **kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(app_module, "generate_text", fake_generate_text)
+    runtime = app_module._RuntimeModel()
+
+    runtime.generate([{"role": "system", "content": "s"}], None, 32, prefill='<tool_call>{"n')
+    assert seen == {"prefill": '<tool_call>{"n'}
+
+    seen.clear()
+    runtime.generate([{"role": "system", "content": "s"}], None, 32)
+    assert seen == {}, "an unset prefill must not reach an older generate_text"
