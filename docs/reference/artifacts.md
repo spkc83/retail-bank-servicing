@@ -55,7 +55,7 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 | PEFT release (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Adapter bundle | `b4269445ce7b2b943d2d9531102166bf8840a074` |
 | Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@ce0d442955c0698d9be1f0592081e648766ffd07` (v12 corpus plus the prompt-realization passes; `@8494c94f` is the same curriculum before those passes, and the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
+| SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (v12 corpus plus the prompt-realization passes, with the dataset card). `@ce0d442955c0698d9be1f0592081e648766ffd07` is the same three data files one commit earlier and is the revision v14 trained on; `@8494c94f` is the curriculum before the prompt passes; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
 ### Granite SFT dataset files
@@ -63,10 +63,12 @@ Release evidence: selected epoch 2, `release_eligible: true`, empty
 Digests below are the corpus **on disk**, which is the v12 iteration plus the
 prompt-realization passes ([Prompt realization](../02-data-generation.md#prompt-realization)):
 366 train and validation questions rewritten so they stop shadowing the eval
-splits. It is published as `ce0d442955c0698d9be1f0592081e648766ffd07`, and the
-files served at that revision were verified against these digests after the
-upload. `@8494c94f` is the same curriculum before the prompt passes; the
-deployed v11 adapter was trained earlier still, on `@b5ec0489`.
+splits. It was published as `ce0d442955c0698d9be1f0592081e648766ffd07` and the
+files served there were verified against these digests after the upload; the
+current head `@a649b766` adds only the dataset card and was re-verified to
+carry the same three files. `@8494c94f` is the same curriculum before the
+prompt passes; the deployed v11 adapter was trained earlier still, on
+`@b5ec0489`.
 
 `data/banking-v5-tool-sft`
 
