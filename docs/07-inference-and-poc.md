@@ -190,7 +190,12 @@ The current Space source/pin deployment is
 variables were repinned to the v11 adapter on 2026-08-27 without a source
 change, so the Space serves
 `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b446` with
-`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. On `zero-a10g` it reports `SLEEPING`
+`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. **The card published on the Space still
+names the v8 adapter** — the repin changed runtime variables only, and the card
+is `poc/retail-bank-customer-service-poc/README.md`, which only reaches the Hub
+through a deploy. It is corrected in this checkout and will publish with the
+next `deploy_zero_gpu_space.py --execute --allow-publish`; until then, trust the
+runtime variables over the published card. On `zero-a10g` it reports `SLEEPING`
 between requests and wakes on demand — that is the normal ZeroGPU idle state,
 not an outage. Because `PeftModel.from_pretrained` runs at module scope, a missing
 or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than
