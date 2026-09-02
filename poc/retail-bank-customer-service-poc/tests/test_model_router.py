@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from model_router import (
     ModelConversationRouter,
     enforce_legality,
@@ -188,8 +189,8 @@ def test_both_classifiers_reach_the_same_tool_surface_for_the_same_decision() ->
         }
         model = ModelConversationRouter(
             ScriptedModel(
-                '{"domain": "banking", "intent": "%s", "action": "%s", '
-                '"entity_resolution": "%s"}' % (intent, action, entity)
+                f'{{"domain": "banking", "intent": "{intent}", "action": "{action}", '
+                f'"entity_resolution": "{entity}"}}'
             )
         ).classify("x", [])
 
