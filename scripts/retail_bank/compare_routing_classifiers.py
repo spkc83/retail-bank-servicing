@@ -87,7 +87,7 @@ def build_model_router():
     from local_gpu_runtime import LocalGraniteRuntime  # type: ignore[import-not-found]
     from model_router import ModelConversationRouter  # type: ignore[import-not-found]
 
-    return ModelConversationRouter(LocalGraniteRuntime(), revision="local")
+    return ModelConversationRouter(LocalGraniteRuntime.load(), revision="local")
 
 
 def score(arm: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
