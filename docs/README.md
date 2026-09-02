@@ -15,6 +15,7 @@ contract, and run either interface.
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (this checkout; `@ce0d4429` is the same data one commit earlier, before the card was added, and is the revision v14 trained on; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| Granite PEFT adapter (gated candidate, not deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`; first run to pass all three training gates, including bare probes 11/11 |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d`; authenticated chat smoke pending |

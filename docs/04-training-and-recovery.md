@@ -156,6 +156,49 @@ then invokes the worker with all three execution guards:
 RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT=banking-v5-grounded-dialogue-sft
 ```
 
+## The Most Recent Run (v14)
+
+The current reference invocation. It cleared all three gates and published
+`spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b`:
+
+```bash
+CONFIRM_SPEND=1 \
+HF_HUB_DEST=spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
+JOB_TIMEOUT=80m \
+MAX_STEPS=2000 \
+MAX_TRAIN_SECONDS=3600 \
+SKIP_MERGE_ADAPTER=1 \
+OUTPUT_PREFIX=/data/retail-bank-agent-9b-v14-4c7e986c \
+bash scripts/retail_bank/run_remote_training_job.sh \
+  4c7e986ce9307d0a40036233b39c1ebde566eb80 \
+  ce0d442955c0698d9be1f0592081e648766ffd07
+```
+
+Training took 26 minutes (2,000 steps, 2.02 epochs, `eval_loss` 0.5594). Run
+the same command with `DRY_RUN=1` first to see the price without submitting.
+
+### When the in-job upload stalls
+
+The v14 release commit stalled inside the job at 16.1MB of the 396MB adapter.
+Everything needed to finish is on the job bucket, so **this does not require a
+second GPU run**:
+
+```bash
+hf buckets ls hf://buckets/spkc83/jobs-artifacts/<output-prefix>/
+hf buckets sync hf://buckets/spkc83/jobs-artifacts/<output-prefix>/adapter/ ./adapter/
+hf cp hf://buckets/spkc83/jobs-artifacts/<output-prefix>/README.md ./card.md
+hf cp hf://buckets/spkc83/jobs-artifacts/<output-prefix>/training_result.json ./result.json
+```
+
+Then publish with one `create_commit` in the same layout
+`build_release_operations` produces: the adapter files at the root, the same
+files again under `adapter/`, the generated card as `README.md`, and
+`training_result.json`. Verify the published weights against the bucket copy by
+SHA-256 before recording the revision. Cancel the stalled job once its
+artifacts are safely off the bucket rather than paying for it to idle to its
+timeout — but read `training_result.json` first and confirm the gates passed,
+because a job that never reached the upload is a different situation.
+
 ## V9 From-Scratch Guarded Run
 
 The from-scratch Stage-2 lane carries the same destination, wall-clock, mix, and

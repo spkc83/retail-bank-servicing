@@ -242,6 +242,57 @@ coverage for the remaining leakage detectors.
 - Three doc claims that contradicted their artifacts (`2a43086`): runbook split counts, the
   v11-vs-v12 corpus attribution, and a fossil router manifest digest.
 
+## The v14 run — what the fixed gates actually bought
+
+Run on 2026-09-01: job `6a9760d60718b0f6d890e8a0`, source `4c7e986`, dataset `@ce0d4429`,
+seed 7303, 2000 steps, `--skip-merge-adapter`. **This is the first run whose seed was really
+applied**, since finding 1 landed before it.
+
+| Gate | Result |
+| --- | --- |
+| Coreference dev | positive 1.0, ambiguity 1.0, pair-flip 1.0, 0 parse failures |
+| Coreference shadow | positive 1.0, ambiguity 1.0, pair-flip 1.0, 0 parse failures |
+| Bare probes | **11 of 11 gated cases pass, zero failures** |
+
+`eval_loss` 0.5594 against v12's 0.5605, and `eval_mean_token_accuracy` 0.8476 against 0.8485 —
+the corpus change was wording, not supervision, so the loss was expected to hold, and it did.
+
+The result that matters is the third gate. v12 held every coreference gate at 1.0 while
+regressing on exactly two guidance-free behaviours, which is what motivated building the gate at
+all. v14's transcripts on those two, with TURN GUIDANCE stripped:
+
+> **poem** — "I can't compose poetry about the ocean. What I can do is help with banking, from
+> card questions to transfers and payments."
+>
+> **balance, no tools** — "Your checking account balance isn't something I can state from memory;
+> the account itself has to be checked first. Just say so and I'll make that the next step."
+
+Both are correct, and both are the behaviours v12 lost. The gate that would have blocked v12
+passed v14 on its own evidence rather than on a claim.
+
+**Caveat on attribution.** v14 differs from v12 in three ways at once — the prompt-realization
+corpus, a seed that is now actually applied, and the gate itself. This run cannot separate those.
+It establishes that a gated release is now reachable; it does not establish that the prompt pass
+caused the improvement.
+
+### The upload stalled, and that is the interesting part
+
+All three gates passed and the worker began its release commit, which then stalled at 16.1MB of
+the 396MB adapter and did not advance for over twenty minutes. Pulling the same file from the
+same bucket to this machine *succeeded* in about five minutes and matched its recorded size
+exactly (395,912,984 bytes), so this is not general transport trouble — it is specific to the
+job container's upload, and the run itself is sound.
+
+The trained adapter, the generated card and all three gate reports sit on the job bucket and
+were read from there — which is exactly the recovery the worker's gate-failure path was designed
+for, arriving by a route nobody planned for. Worth carrying into the framework: **a run's
+evidence must be durable independently of whether its publish succeeds**, and here it was. The
+publish was completed by hand from the bucket rather than by paying for a second GPU run: the
+same 396MB file uploaded from this machine at ~42MB/s, and the published weights match the
+bucket copy by SHA-256. The job was cancelled once its artifacts were safely off the bucket
+rather than left to idle to its 80m timeout — `47968b2b9ce02973b5676e464aafaa768cdbb05e`,
+built in the same single-commit layout `build_release_operations` produces.
+
 ## Recommended order
 
 Findings 1 and 5–7 first: they are cheap, and until they land, no experiment result from this
