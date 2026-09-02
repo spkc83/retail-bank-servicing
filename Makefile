@@ -1,4 +1,4 @@
-.PHONY: install prepare-data model-plan tiny-smoke test lint typecheck
+.PHONY: install prepare-data model-plan tiny-smoke test lint typecheck corpora verify
 
 install:
 	python -m pip install -e '.[dev]'
@@ -27,3 +27,16 @@ lint:
 
 typecheck:
 	python -m mypy src scripts tests
+
+corpora:
+	PYTHONPATH=src python scripts/retail_bank/check_corpora_reproduce.py
+
+# The whole gate, in the order that fails cheapest first. There is no hosted CI
+# by decision, so this is the enforcement -- run it before pushing.
+verify:
+	uv lock --check
+	uv run ruff check .
+	PYTHONPATH=src uv run python -m pytest -q tests
+	POC_SKIP_MODEL_LOAD=1 POC_SKIP_ROUTER_LOAD=1 \
+		uv run python -m pytest -q poc/retail-bank-customer-service-poc/tests
+	PYTHONPATH=src uv run python scripts/retail_bank/check_corpora_reproduce.py

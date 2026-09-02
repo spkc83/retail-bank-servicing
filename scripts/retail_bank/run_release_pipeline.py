@@ -104,6 +104,7 @@ def build_stages(config: Mapping[str, Any], args: argparse.Namespace) -> tuple[S
     base = _section(config, "granite_base")
     alignment = _section(config, "granite_alignment")
     router = _section(config, "router")
+    peft = _section(config, "granite_peft")
     source_commit = exact_revision(
         args.source_commit or source["release_commit"],
         field="source commit",
@@ -239,6 +240,14 @@ def build_stages(config: Mapping[str, Any], args: argparse.Namespace) -> tuple[S
         paid=True,
         publishes=True,
     )
+    # Every identity is stated. The stage used to name only the model and the
+    # router and let the rest default, which paired a --model-id from the
+    # merged-weights lineage with the deploy script's hard-coded v8 adapter and
+    # an empty subfolder -- a silent two-generation rollback of the live demo,
+    # and a composition that never existed in any release.
+    adapter_revision = exact_revision(
+        str(peft["adapter_revision"]), field="deployed adapter revision"
+    )
     deploy = Stage(
         name="deploy",
         purpose="Deploy the gated model and router source to the public ZeroGPU Space.",
@@ -249,13 +258,29 @@ def build_stages(config: Mapping[str, Any], args: argparse.Namespace) -> tuple[S
                 "--space-id",
                 str(_section(config, "space")["repo"]),
                 "--model-id",
-                str(alignment["output_repo"]),
+                str(peft["adapter_repo"]),
                 "--model-revision",
-                aligned_weights_revision,
+                adapter_revision,
+                "--base-model-id",
+                str(peft["base_model_repo"]),
+                "--base-model-revision",
+                exact_revision(
+                    str(peft["base_model_revision"]), field="deployed base model revision"
+                ),
+                "--adapter-id",
+                str(peft["adapter_repo"]),
+                "--adapter-revision",
+                adapter_revision,
+                "--adapter-subfolder",
+                str(peft["adapter_subfolder"]),
+                "--model-dtype",
+                str(peft["model_dtype"]),
                 "--router-id",
                 str(router["model_repo"]),
                 "--router-revision",
                 router_revision,
+                "--best-of-n",
+                str(peft["best_of_n"]),
                 "--execute",
                 "--allow-publish",
             ),

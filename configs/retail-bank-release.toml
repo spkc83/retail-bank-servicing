@@ -22,10 +22,23 @@ evaluation_job = "spkc83/6a6caac1a00abefd4b289b14"
 
 [router]
 dataset_repo = "spkc83/retail-bank-conversation-router-data"
-dataset_revision = "e9a64a2e7f2b622d5412c15eac4618ceca2150da"
+dataset_revision = "b33c27170e27cdb11783704ede14f7d25f70625e"
 model_repo = "spkc83/retail-bank-conversation-router"
-model_revision = "9e090c0fa21cebbaa03a431a7ce61e656c0739fe"
+model_revision = "dd5ea26674a0f9808d42110a9ee51a9af6762a76"
 
 [space]
 repo = "spkc83/retail-bank-servicing-poc"
 rollback_revision = "ccb9a61dc17993cb5e8036df26a645ee08974c60"
+
+# The PEFT adapter the Space actually serves. The deploy stage passes these
+# explicitly: deploy_zero_gpu_space.py has no adapter default any more, because
+# a default names one release and rots at the next one.
+[granite_peft]
+adapter_repo = "spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment"
+adapter_revision = "03a7b44633fadab7ad672b009925cc68b52494d4"
+# adapter_config.json is nested; an empty value means the repository root.
+adapter_subfolder = "adapter"
+base_model_repo = "spkc83/retail-bank-servicing-agent-9b"
+base_model_revision = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
+model_dtype = "bf16"
+best_of_n = "2"

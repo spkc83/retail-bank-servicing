@@ -13,8 +13,12 @@ from typing import Any
 DEFAULT_SOURCE_DIR = Path("poc/retail-bank-customer-service-poc")
 DEFAULT_BASE_MODEL_ID = "spkc83/retail-bank-servicing-agent-9b"
 DEFAULT_BASE_MODEL_REVISION = "1d56824995aa1adecfe20f62ca42fb1c0c443817"
-DEFAULT_ADAPTER_ID = "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
-DEFAULT_ADAPTER_REVISION = "badbc05ad1f861818ea244b462eda49bca6c6fca"
+# There is deliberately no default adapter. A default here names one specific
+# release, and it rots the moment the next one ships: these two lines pinned
+# v8 while the Space had served v11 since 2026-08-27, so any caller that
+# omitted the flags would have silently rolled the public demo back two
+# generations -- and paired it with a --model-id from a different lineage.
+# Deploying is choosing a model; the caller states which one.
 ALLOW_PATTERNS = ["*.py", "*.md", "*.txt", "*.toml", "*.lock", "*.json", "LICENSE"]
 IGNORE_PATTERNS = [
     "tests/**",
@@ -40,8 +44,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-revision", required=True)
     parser.add_argument("--base-model-id", default=DEFAULT_BASE_MODEL_ID)
     parser.add_argument("--base-model-revision", default=DEFAULT_BASE_MODEL_REVISION)
-    parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
-    parser.add_argument("--adapter-revision", default=DEFAULT_ADAPTER_REVISION)
+    parser.add_argument("--adapter-id", default=None)
+    parser.add_argument("--adapter-revision", default=None)
     parser.add_argument(
         "--adapter-subfolder",
         default="",

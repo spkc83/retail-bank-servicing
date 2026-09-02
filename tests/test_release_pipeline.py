@@ -80,3 +80,46 @@ def test_sft_dataset_revision_overrides_are_stage_specific() -> None:
 
     assert stages[1].commands[0][-1] == base_revision
     assert stages[2].commands[0][-1] == alignment_revision
+
+
+def test_the_deploy_stage_states_every_runtime_identity() -> None:
+    """The stage used to name only the model and the router, and let the rest default.
+
+    Its --model-id came from the merged-weights lineage while the deploy
+    script's own default supplied a v8 adapter and an empty subfolder, so
+    running this stage would have silently rolled the live Space back two
+    generations into a composition no release ever had.
+    """
+    config = pipeline.load_config(Path("configs/retail-bank-release.toml"))
+    command = pipeline.build_stages(config, _args())[5].commands[0]
+    flags = {
+        command[index]: command[index + 1]
+        for index, value in enumerate(command)
+        if value.startswith("--") and index + 1 < len(command)
+    }
+
+    for required in (
+        "--base-model-id",
+        "--base-model-revision",
+        "--adapter-id",
+        "--adapter-revision",
+        "--adapter-subfolder",
+        "--model-dtype",
+    ):
+        assert required in flags, f"deploy must state {required} rather than inherit a default"
+
+    # The adapter is the thing being deployed: model and adapter must agree.
+    assert flags["--model-id"] == flags["--adapter-id"]
+    assert flags["--model-revision"] == flags["--adapter-revision"]
+    assert flags["--adapter-id"].endswith("-peft-v11-alignment")
+    assert flags["--adapter-subfolder"] == "adapter"
+    assert flags["--base-model-id"] != flags["--adapter-id"]
+
+
+def test_the_config_pins_the_router_the_space_actually_serves() -> None:
+    """These pins were two releases stale and nothing recomputed them."""
+    config = pipeline.load_config(Path("configs/retail-bank-release.toml"))
+    router = config["router"]
+
+    assert router["model_revision"] == "dd5ea26674a0f9808d42110a9ee51a9af6762a76"
+    assert router["dataset_revision"] == "b33c27170e27cdb11783704ede14f7d25f70625e"

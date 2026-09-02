@@ -62,9 +62,9 @@ the release process treats them as making.
 | 9 | **The from-scratch fingerprint omits every hyperparameter that changes the model** — lr, steps, batch, grad-accum, seq-len, warmup, multipliers, source commit. Two materially different runs fingerprint identically, and resume will load a mismatched checkpoint. The continuation fingerprint already carries all of it. | `cloud_train_tool_sft.py:596-611` | S |
 | 10 | **Publication is five non-atomic commits**; a partial failure leaves weights with no metadata, indistinguishable from a complete release, and the retry then dies on the non-empty-destination check. Both other lanes already use a single `create_commit`. | `cloud_train_tool_sft.py:1402-1433` | M |
 | 11 | **The billed-job guard cannot gate spend**: the launcher submits after format validation only, the real guard runs inside the already-billed container, and `JOB_TIMEOUT` defaults to 5h on a $2.75/h flavour with no ceiling (`999h` validates). | `run_remote_training_job.sh:41,70-73,155` | S |
-| 12 | **Re-running the canonical release pipeline deploys the wrong model** — deploy inherits the v8 defaults instead of the deployed v11 pins, and the pipeline cannot execute either paid stage (wrong dataset repo; destination already populated). | `run_release_pipeline.py:166-174,195,242-265` | S–M |
+| 12 | **CLOSED (deploy half)** — **Re-running the canonical release pipeline deploys the wrong model** — deploy inherits the v8 defaults instead of the deployed v11 pins, and the pipeline cannot execute either paid stage (wrong dataset repo; destination already populated). | `run_release_pipeline.py:166-174,195,242-265` | S–M |
 | 13 | **Gate wiring is asymmetric**: the bare-probe gate is train-lane only, so the continuation lane can publish without it; the coreference gates live in the continuation module and are reached through a circular-import shim. | `cloud_train_tool_sft.py:443-456,1333`, `cloud_continue_tool_sft.py:1409-1416` | M |
-| 14 | **Nothing is enforced by machine** — no CI, no pre-commit, no hooks, against a public repo where `git add -A` would sweep in 12 untracked data directories. | repo root | S |
+| 14 | **PARTLY CLOSED** (local `make verify`; hosted CI declined) — **Nothing is enforced by machine** — no CI, no pre-commit, no hooks, against a public repo where `git add -A` would sweep in 12 untracked data directories. | repo root | S |
 
 ## P2 — reusability (the Phase-1/Phase-2 blockers)
 
@@ -292,6 +292,78 @@ same 396MB file uploaded from this machine at ~42MB/s, and the published weights
 bucket copy by SHA-256. The job was cancelled once its artifacts were safely off the bucket
 rather than left to idle to its 80m timeout — `47968b2b9ce02973b5676e464aafaa768cdbb05e`,
 built in the same single-commit layout `build_release_operations` produces.
+
+## P1 #12 closed — the release pipeline would have rolled the demo back two generations
+
+The finding said "deploy inherits the v8 defaults". Reading the code, it is worse than that: the
+deploy stage named only `--model-id`, `--model-revision`, `--router-*` and let everything else
+default, which produced a composition **no release ever shipped**:
+
+| Pin | What the stage would have set | What the Space actually serves |
+| --- | --- | --- |
+| `RETAIL_BANK_MODEL_ID` | `retail-bank-servicing-agent-9b` (the Stage-2 **base**, from the merged-weights lineage) | `…-peft-v11-alignment` |
+| `RETAIL_BANK_ADAPTER_ID` | `…-peft-v8-natural-generation` (script default) | `…-peft-v11-alignment` |
+| `RETAIL_BANK_ADAPTER_SUBFOLDER` | `""` | `adapter` |
+| `RETAIL_BANK_ROUTER_REVISION` | `9e090c0f…` (config fossil) | `dd5ea266…` |
+
+None of it would have raised. Fixes:
+
+- **The deploy script has no adapter default any more.** A default names one release and rots at
+  the next; these two lines pinned v8 from 2026-08-18 through today. `--adapter-id` and
+  `--adapter-revision` now default to `None`, and the existing composition check turns an omission
+  into a `DeployError` naming the missing flags. `--merged-model-only` is unaffected.
+- **The deploy stage states every identity**, read from a new `[granite_peft]` config section.
+- **The fossil router pins are refreshed** to the released V6 identities.
+
+The audit's thesis lands again, twice. Five deploy tests were silently supplying adapter identity
+*from the fossil default* — the suite never exercised a caller that names its own adapter, which is
+why nothing noticed the default go stale. And
+`test_deploy_persists_exact_runtime_pins_and_space_commit` asserted the v8 id and revision as the
+expected pins: **the bug was written down as the contract**. Both are corrected, plus two tests
+that fail if an adapter is ever inherited again.
+
+Still open in #12: the pipeline cannot execute either paid stage. Its lineage
+(`granite-4.1-8b` → `retail-bank-agent-9b` → `retail-bank-servicing-agent-9b`) is the historical
+merged-weights architecture, not the current PEFT lane, so making it runnable is a redesign rather
+than a repin. The deploy stage is now safe either way.
+
+## P1 #14 partly closed — one command now runs the whole gate
+
+The finding proposed CI. **Hosted CI is declined by the repository owner**, so the enforcement is
+local: `make verify` runs the lockfile check, ruff, both test suites, and a new
+corpus-reproducibility check. That leaves the finding's core — *nothing is enforced by machine* —
+only partly closed: `make verify` still depends on someone running it, where CI would not. Record
+it as a deliberate trade, not an oversight.
+
+**The `git add -A` hazard is closed too.** Twelve untracked router candidate directories, their
+lock files and a stray sweep dump sat in the working tree, one `git add -A` from a public repo —
+and `git add -A` is exactly what this session used to stage commits. They are now ignored rather
+than deleted, so `git add -f` still promotes one deliberately.
+
+### The new check, and what it caught on its first run
+
+`scripts/retail_bank/check_corpora_reproduce.py` reads the regeneration commands **out of
+`docs/02-data-generation.md`** rather than keeping a copy, so what is tested is the instruction a
+person would actually follow. Each is run into a scratch directory and every split compared by
+SHA-256.
+
+It reproduces today's near-miss as a test: mutate the documented
+`--prompt-teacher-model claude-opus-4-8` to `claude-opus-5` and it fails on `train.jsonl` and
+`validation.jsonl` — the 256 rows whose provenance that flag rewrites. Verified by doing exactly
+that and restoring the file.
+
+On its first real run it also surfaced something prose already knew but nothing enforced: **the
+router corpus has not rebuilt from HEAD since 2026-08-21.** It is frozen at `0ebbd73`
+(2026-08-20) and derives from `data/banking-servicing-alignment-v5`, which has moved repeatedly
+since — the coreference phrase families, then the prompt-realization passes. It is declared in
+`FROZEN_RELEASE_ARTIFACTS` with that reason rather than silently skipped: an entry means the
+committed files are a release artifact pinned to a deployed model, which is a different thing
+from a corpus that must reproduce. The base and alignment corpora must, and do.
+
+`test_obsolete_implementation_and_specs_are_absent` keeps `.github/workflows` on its
+obsolete-trees list, which now enforces the no-hosted-CI decision as well as its original purpose
+(the workflow deleted at `a5a096a` drove the retired banking_v2/MoE lane — it lint-checked
+`quantize_local_gguf.sh`).
 
 ## Recommended order
 

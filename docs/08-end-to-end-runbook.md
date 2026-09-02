@@ -36,6 +36,11 @@ This is the immutable router commit returned by publication.
 
 ## 1. Install and Validate
 
+`make verify` runs the whole gate in one command: lockfile, ruff, both test suites, and
+`check_corpora_reproduce.py`, which re-runs the regeneration commands documented in
+[Data generation](02-data-generation.md) and compares every split by SHA-256. There is no
+hosted CI, so this is the enforcement — run it before pushing, not after.
+
 ```bash
 uv sync --extra dev --extra scale
 uv lock --check
@@ -86,6 +91,17 @@ PY
 ```
 
 Stop if counts, digests, leakage checks, or PII checks differ.
+
+> **At HEAD this command does not pass, and that is the known state.** The router
+> corpus and its release lock are frozen at `0ebbd73` (2026-08-20), while
+> `data/banking-servicing-alignment-v5`, which it derives from, has moved since —
+> the coreference phrase families on 2026-08-21 and the prompt-realization passes
+> on 2026-08-31. `--expected-release-lock` therefore fails with a train-split
+> digest drift. This is the data-side half of the rebuild problem section 4
+> describes; the committed corpus stays as-is because the deployed router is
+> pinned to it. `check_corpora_reproduce.py` declares it in
+> `FROZEN_RELEASE_ARTIFACTS` for the same reason, so CI enforces the base and
+> alignment corpora without demanding a router rebuild nobody wants.
 
 ## 3. Confirm the Published Dataset
 

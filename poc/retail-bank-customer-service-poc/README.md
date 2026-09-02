@@ -214,15 +214,17 @@ ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
   --adapter-revision "$ADAPTER_REVISION" \
+  --adapter-subfolder adapter \
   --model-dtype bf16 \
   --router-id spkc83/retail-bank-conversation-router \
-  --router-revision "$ROUTER_REVISION"
+  --router-revision "$ROUTER_REVISION" \
+  --best-of-n 2
 ```
 
 The command prints a plan unless `--execute --allow-publish` is supplied. The

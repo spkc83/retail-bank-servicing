@@ -69,6 +69,13 @@ def _args(tmp_path: Path, *extra: str):
             "spkc83/router",
             "--router-revision",
             ROUTER_REVISION,
+            # Stated, never inherited. These used to come from a hard-coded v8
+            # default in the script, so the suite never exercised a caller that
+            # names its own adapter -- and never noticed the default go stale.
+            "--adapter-id",
+            "spkc83/adapter",
+            "--adapter-revision",
+            ADAPTER_REVISION,
             *extra,
         ]
     )
@@ -89,8 +96,6 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         _args(tmp_path, "--execute", "--allow-publish"),
         api,
     )
-    default_adapter_id = "spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation"
-
     assert api.upload is not None
     assert api.upload["allow_patterns"] == deploy_module.ALLOW_PATTERNS
     assert api.upload["ignore_patterns"] == deploy_module.IGNORE_PATTERNS
@@ -101,8 +106,8 @@ def test_deploy_persists_exact_runtime_pins_and_space_commit(tmp_path: Path) -> 
         "RETAIL_BANK_MODEL_DTYPE": "bf16",
         "RETAIL_BANK_BASE_MODEL_ID": "spkc83/retail-bank-servicing-agent-9b",
         "RETAIL_BANK_BASE_MODEL_REVISION": "1d56824995aa1adecfe20f62ca42fb1c0c443817",
-        "RETAIL_BANK_ADAPTER_ID": default_adapter_id,
-        "RETAIL_BANK_ADAPTER_REVISION": "badbc05ad1f861818ea244b462eda49bca6c6fca",
+        "RETAIL_BANK_ADAPTER_ID": "spkc83/adapter",
+        "RETAIL_BANK_ADAPTER_REVISION": ADAPTER_REVISION,
         "RETAIL_BANK_ADAPTER_SUBFOLDER": "",
         "RETAIL_BANK_ROUTER_ID": "spkc83/router",
         "RETAIL_BANK_ROUTER_REVISION": ROUTER_REVISION,
@@ -185,3 +190,47 @@ def test_adapter_subfolder_is_pinned_and_defaults_to_the_repo_root(tmp_path: Pat
     assert nested["RETAIL_BANK_ADAPTER_SUBFOLDER"] == "adapter"
     assert slashed["RETAIL_BANK_ADAPTER_SUBFOLDER"] == "adapter"
     assert merged["RETAIL_BANK_ADAPTER_SUBFOLDER"] == ""
+
+
+def test_a_peft_deploy_that_names_no_adapter_is_refused(tmp_path: Path) -> None:
+    """Deploying is choosing a model, so there is no default adapter to inherit.
+
+    The script used to carry one, hard-coded to v8. It stayed there while the
+    Space moved to v11, so any caller that omitted the flags would have rolled
+    the public demo back two generations without a word -- and paired it with
+    whatever --model-id it was given, a composition no release ever shipped.
+    """
+    source_dir = tmp_path / "space"
+    source_dir.mkdir(parents=True)
+    args = deploy_module.parse_args(
+        [
+            "--space-id",
+            "spkc83/test-space",
+            "--source-dir",
+            str(source_dir),
+            "--model-id",
+            "spkc83/model",
+            "--model-revision",
+            MODEL_REVISION,
+            "--router-id",
+            "spkc83/router",
+            "--router-revision",
+            ROUTER_REVISION,
+        ]
+    )
+
+    assert args.adapter_id is None, "no adapter may be inherited from a default"
+    with pytest.raises(deploy_module.DeployError, match="--adapter-id"):
+        deploy_module.plan(args)
+
+
+def test_no_specific_release_is_hard_coded_as_a_deploy_default() -> None:
+    """A default naming one release rots at the next one; keep them out."""
+    source = Path("scripts/retail_bank/deploy_zero_gpu_space.py").read_text(encoding="utf-8")
+    defaults = [
+        line
+        for line in source.splitlines()
+        if line.startswith("DEFAULT_") and "peft" in line.lower()
+    ]
+
+    assert defaults == [], f"adapter release pinned as a default: {defaults}"

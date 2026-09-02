@@ -24,3 +24,15 @@ data/banking-router-v1/
 data/banking-conversation-router-v4/
 data/banking-servicing-alignment-v4/
 *.egg-info/
+
+# Router experiment outputs. These are candidate corpora from sweeps, not
+# releases: twelve of them sat untracked in the working tree, one `git add -A`
+# away from a public repo. Ignored rather than deleted -- `git add -f` still
+# commits one deliberately, which is how a candidate should be promoted.
+data/banking-conversation-router-*-candidate*/
+data/banking-conversation-router-v9-clean/
+data/banking-conversation-router-v9-unsupported-capability/
+data/sources/banking-conversation-router-*-candidate*.lock.json
+data/sources/banking-conversation-router-v9-clean.lock.json
+data/sources/banking-conversation-router-v9-unsupported-capability.lock.json
+sweep_*.jsonl
