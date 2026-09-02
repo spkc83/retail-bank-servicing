@@ -853,15 +853,17 @@ def test_the_zerogpu_adapter_accepts_everything_model_service_passes(app_module)
 
     from model_service import ModelRuntime
 
-    expected = inspect.signature(ModelRuntime.generate).parameters
-    actual = inspect.signature(app_module._RuntimeModel.generate).parameters
+    missing: list[str] = []
+    for method in ("generate", "count_tokens"):
+        expected = inspect.signature(getattr(ModelRuntime, method)).parameters
+        actual = inspect.signature(getattr(app_module._RuntimeModel, method)).parameters
+        missing.extend(
+            f"{method}(..., {name})"
+            for name, parameter in expected.items()
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY and name not in actual
+        )
 
-    missing = [
-        name
-        for name, parameter in expected.items()
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY and name not in actual
-    ]
-    assert missing == [], f"adapter drops keyword arguments the protocol declares: {missing}"
+    assert missing == [], f"adapter drops arguments the protocol declares: {missing}"
 
 
 def test_the_zerogpu_adapter_forwards_prefill_to_generate_text(app_module, monkeypatch) -> None:
