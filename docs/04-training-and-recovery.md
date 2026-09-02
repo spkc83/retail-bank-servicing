@@ -113,11 +113,9 @@ DRY_RUN=1 CONFIRM_SPEND=1 JOB_TIMEOUT=80m ... \
 # Worst case if it runs to the timeout: $3.67 (ceiling $5.00)
 ```
 
-This exists because the worker's own guards run inside a container the job is
-already paying for. A mistyped timeout — `50h` for `5h` — passed every format
-check and would have been a four-figure mistake that nothing on the launching
-side caught. Price with `DRY_RUN=1` first; it costs nothing and prints the same
-number the real launch will.
+The launcher prices the run because the worker's own guards only run inside a
+container that is already being billed. `DRY_RUN=1` prints the same number the
+real launch will and costs nothing; use it before every submission.
 
 For the currently submitted V5 configuration, the equivalent launcher inputs
 are:
@@ -156,10 +154,11 @@ then invokes the worker with all three execution guards:
 RETAIL_BANK_ALLOW_REMOTE_TOOL_SFT=banking-v5-grounded-dialogue-sft
 ```
 
-## The Most Recent Run (v14)
+## Reference Invocation
 
-The current reference invocation. It cleared all three gates and published
-`spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b`:
+The invocation that produced the deployed adapter (identities in the
+[artifact ledger](reference/artifacts.md)). Change the destination and the
+source and dataset revisions; keep the shape:
 
 ```bash
 CONFIRM_SPEND=1 \
@@ -174,14 +173,15 @@ bash scripts/retail_bank/run_remote_training_job.sh \
   ce0d442955c0698d9be1f0592081e648766ffd07
 ```
 
-Training took 26 minutes (2,000 steps, 2.02 epochs, `eval_loss` 0.5594). Run
-the same command with `DRY_RUN=1` first to see the price without submitting.
+A run of this shape trains 2,000 steps in about 26 minutes, spends a further
+ten to fifteen in the three gates, then publishes. Run it with `DRY_RUN=1` first
+to see the price without submitting.
 
-### When the in-job upload stalls
+### Recovering a stalled upload
 
-The v14 release commit stalled inside the job at 16.1MB of the 396MB adapter.
-Everything needed to finish is on the job bucket, so **this does not require a
-second GPU run**:
+The gates run before the upload, so a job whose upload stalls has already
+produced a validated adapter. Everything needed to publish it is on the job
+bucket, and **no second GPU run is required**:
 
 ```bash
 hf buckets ls hf://buckets/spkc83/jobs-artifacts/<output-prefix>/
@@ -259,9 +259,8 @@ scripts/retail_bank/run_remote_training_job.sh \
   makes it a weight-level measurement rather than a prompt-following one. It
   writes `behavioral-evaluations/bare-probes-step-<step>.json`, records
   `bare_probe_behavioral_gate` in `training_result.json`, and blocks the upload
-  exactly as the coreference gates do. It exists because the v12 run held every
-  coreference gate at 1.0 while two bare-probe behaviours regressed, so the
-  coreference gates alone cannot certify a release.
+  exactly as the coreference gates do. The coreference gates do not cover these
+  behaviours, so on their own they cannot certify a release.
 - `SKIP_MERGE_ADAPTER=1` skips the FP16 merge and its reload-parity check. The
   published repository root then holds the LoRA adapter itself rather than
   merged weights; the `adapter/` subdirectory holds the same files either way,

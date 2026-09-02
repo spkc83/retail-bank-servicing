@@ -176,15 +176,13 @@ The active job uses:
 
 The final PEFT release revision `cc95e446...` was the v7 inference identity.
 The bundle commit `b4269445...` proves which adapter files it contains;
-neither rejected merged checkpoint is an inference substitute. The current
-inference identity is the v14 prompt-realized adapter
-`spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized` at revision
-`47968b2b9ce02973b5676e464aafaa768cdbb05e` (job `6a9760d6`, dataset `@ce0d4429`, dev and shadow
-gates 1.0 and bare probes 11 of 11 — the first run to clear all three). Its `adapter_config.json` is published under `adapter/`, so both runtimes
-need `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`; PEFT reads the repo root otherwise and fails with a 404.
-The previously deployed adapter was `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment` at
-`03a7b44633fadab7ad672b009925cc68b52494d4`, and `…-peft-v10-longctx` at
-`055ce38af4595b1e139a9e9baea8e0c53cba7c2e` before that.
+neither rejected merged checkpoint is an inference substitute. The deployed
+inference identity is a LoRA adapter published as its own repository; the
+exact repository and revision, and the ones before it, are recorded in the
+[artifact ledger](reference/artifacts.md). Adapters from v10 onward publish
+`adapter_config.json` under `adapter/`, so both runtimes are started with
+`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`; PEFT reads the repository root
+otherwise and fails with a 404.
 
 ## Rebuilding on New Infrastructure
 

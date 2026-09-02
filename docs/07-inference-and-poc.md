@@ -190,15 +190,14 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
-The current Space source/pin deployment is
-`2a6501b6d5029d1e1991f7444c9f352eef31b000`, deployed 2026-09-01, which pinned
-the Space to `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b` with
-`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` and republished the Space card. The
-card had drifted twice before this — it named v8 while the Space served v11,
-because the 2026-08-27 repin changed runtime variables only and the card is
-`poc/retail-bank-customer-service-poc/README.md`, which reaches the Hub solely
-through a deploy. Any repin that skips a deploy leaves the public card wrong
-again. On `zero-a10g` it reports `SLEEPING`
+The current Space source commit and runtime pins are recorded in the
+[artifact ledger](reference/artifacts.md). Two things are true of every
+deployment. The runtime identities live in Space *variables*, which a deploy
+sets from its arguments. The public Space card is
+`poc/retail-bank-customer-service-poc/README.md`, which reaches the Hub only
+when a deploy uploads it — so a change to the pins is not complete until the
+card is changed in the same deploy, or the card will describe a model the Space
+no longer serves. On `zero-a10g` it reports `SLEEPING`
 between requests and wakes on demand — that is the normal ZeroGPU idle state,
 not an outage. Because `PeftModel.from_pretrained` runs at module scope, a missing
 or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than

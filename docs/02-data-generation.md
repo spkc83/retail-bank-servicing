@@ -285,15 +285,13 @@ by both preparers): a rewritten prompt may not share a 4-gram with any test,
 shadow, or screenshot-regression prompt. The check is scoped to rows this run
 rewrote, which makes it a ratchet — every prompt that moves must land clear of
 the held-out splits, without requiring the whole inherited corpus to be
-re-authored at once. It earns its place: the first authored wording for the
-transfer family, "call off the scheduled transfer to", was rejected for sharing
-"the scheduled transfer to" with a held-out row. Check candidate phrasings
-against the eval vocabulary *before* authoring them.
+re-authored at once. Check candidate phrasings against the held-out vocabulary
+before authoring them; the assertion rejects any rewrite that collides.
 
-#### How much contamination is left, and how to measure it
+#### Measuring split contamination
 
 [`measure_split_contamination.py`](../scripts/retail_bank/measure_split_contamination.py)
-reports two numbers, because the obvious one is misleading on its own.
+reports two numbers for a corpus split, because either alone misleads.
 
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/measure_split_contamination.py \
@@ -306,22 +304,20 @@ PYTHONPATH=src uv run python scripts/retail_bank/measure_split_contamination.py 
 | alignment / test | 35 | 256 | 0.843 | 0 | 8 |
 | alignment / validation | 268 | 1,073 | 0.789 | 0 | 34 |
 
-**Read the similarity column, not the gram column.** Raw 4-gram overlap is what
-originally caught the alignment corpus, where an evaluation row was the training
-question with a different trailing phrase — that shape scores above 0.95. But
-the gram count also fires on a banking corpus sharing its own vocabulary. The
-grams base train rows most often echo from test are "my card ending in",
-"freeze the active card", "what is the policy for". Rewriting to avoid those
-would teach the model to avoid the nouns of its own domain. The script filters
-grams to those owned by a single eval family and discounts known instruction
-boilerplate, and it is still not a contamination measure on its own.
+**Read the similarity column, not the gram column.** 4-gram overlap detects
+the damaging shape — an evaluation row that is a training question with a
+different trailing phrase scores above 0.95 — but it also fires on a banking
+corpus sharing its own vocabulary: "my card ending in", "freeze the active
+card", "what is the policy for". Rewriting to avoid those would teach the model
+to avoid the nouns of its own domain. The script filters grams to those owned
+by a single eval family and discounts instruction boilerplate, and the count is
+still only a pointer to where to look.
 
-By similarity, **the base corpus does not need a prompt pass and would be worse
-for one**: its verb frames and entities already vary and no test row has a
-near-duplicate in train. The alignment corpus was the real case, and after the
-passes above its remaining work is narrow — eight test rows and 34 validation
-rows above 0.90, addressed per stem rather than corpus-wide. Nothing in either
-corpus is now a near-duplicate at 0.95.
+Nearest-neighbour similarity is the measure to act on. By that measure the base
+corpus needs no prompt pass — its verb frames and entities vary, and no test
+row has a near-duplicate in train — while the alignment corpus has eight test
+rows and 34 validation rows above 0.90 remaining, addressed per stem rather
+than corpus-wide. Nothing in either corpus is a near-duplicate at 0.95.
 
 The validation column matters less than the test column and is listed for
 completeness: validation contamination inflates the dev gate, which makes a run

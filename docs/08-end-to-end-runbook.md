@@ -92,16 +92,13 @@ PY
 
 Stop if counts, digests, leakage checks, or PII checks differ.
 
-> **At HEAD this command does not pass, and that is the known state.** The router
-> corpus and its release lock are frozen at `0ebbd73` (2026-08-20), while
-> `data/banking-servicing-alignment-v5`, which it derives from, has moved since —
-> the coreference phrase families on 2026-08-21 and the prompt-realization passes
-> on 2026-08-31. `--expected-release-lock` therefore fails with a train-split
-> digest drift. This is the data-side half of the rebuild problem section 4
-> describes; the committed corpus stays as-is because the deployed router is
-> pinned to it. `check_corpora_reproduce.py` declares it in
-> `FROZEN_RELEASE_ARTIFACTS` for the same reason, so CI enforces the base and
-> alignment corpora without demanding a router rebuild nobody wants.
+> **The committed router corpus is a frozen release artifact.** It is pinned to
+> the deployed router and derives from the alignment corpus, which has changed
+> since it was built, so at HEAD `--expected-release-lock` reports a train-split
+> digest drift. That is expected: `check_corpora_reproduce.py` lists this
+> corpus under `FROZEN_RELEASE_ARTIFACTS` and enforces reproducibility for the
+> base and alignment corpora only. Do not regenerate it into the tracked
+> directory; see section 4 for why a rebuilt router is not releasable.
 
 ## 3. Confirm the Published Dataset
 
@@ -158,15 +155,16 @@ The release selected epoch 2 and passed every gate.
 > **A rebuild at HEAD does not reproduce that result.** Retraining the router from
 > the current corpus fails five gates -- `in_domain_false_refusal_rate` 0.021,
 > `repair_false_refusal_rate` 0.024, and `heldout_regression_{route,intent,relation}`
-> 0.222 / 0.250 / 0.111, all of which the shipped artifact scores at 0.0. Bisected to
-> the coreference phrase-family commits (`b21589e` + `eca2e01`, 2026-08-21): they
-> expand the `deictic_replace_*` templates, the router inherits them through
-> `_row_from_sft_record`, and `_synthetic_generalization_rows` amplifies that into
-> +669 train rows, which pushes agent-repair turns below the in-domain threshold.
+> 0.222 / 0.250 / 0.111, all of which the shipped artifact scores at 0.0. The
+> cause is the expanded `deictic_replace_*` phrase families in the alignment
+> corpus: the router inherits them through `_row_from_sft_record`,
+> `_synthetic_generalization_rows` amplifies them into +669 train rows, and
+> agent-repair turns fall below the in-domain threshold.
 > `LearnedConversationRouter.from_artifact_dir` refuses to load a gate-failing
 > artifact, so a rebuilt router cannot be used even accidentally. Until this is
 > resolved, keep using the shipped artifact and do not republish the router.
-> Reproduce with `bisect_at.sh <commit>` (see the plan note dated 2026-08-24).
+> The investigation is recorded in the
+> [improvement register](superpowers/plans/2026-08-29-improvement-register.md).
 >
 > Excluding the deictic curricula is **not** the fix: it drops train to 16,483 and
 > `load_governed_data` then refuses outright, because the counterfactual
@@ -235,10 +233,9 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source commit is
-`2a6501b6d5029d1e1991f7444c9f352eef31b000` (deployed 2026-09-01, pinning the v14 adapter and
-republishing the Space card). The Space runs on `zero-a10g` with the pinned base, adapter, and
-router identities, and reports `SLEEPING` between requests — the normal ZeroGPU idle state, not an
-outage.
+`2a6501b6d5029d1e1991f7444c9f352eef31b000`; the pins it carries are in the
+[artifact ledger](reference/artifacts.md). The Space runs on `zero-a10g` and reports `SLEEPING`
+between requests — the normal ZeroGPU idle state, not an outage.
 Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the
 `DEMO_AUTH_JSON` Space secret and are not readable through the API.
 

@@ -71,11 +71,11 @@ spkc83/retail-bank-servicing-alignment-sft
 9d7aed545604bb42fb02b7a0919427a0ed2b81e2
 ```
 
-The evaluated composition is v8. The deployed adapter is now
-`spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`,
-which has **not** been through this harness -- it was gated on the dev and shadow
-behavioural suites, the guidance-free bare-probe arena, and the long-session sweep only. Treat the numbers below as
-v8 numbers:
+The numbers below were produced against the v8 composition. Adapters released
+since then are accepted by the dev, shadow, and bare-probe gates and the
+long-session sweep instead, and have not been re-scored on this harness; the
+deployed identity is in the [artifact ledger](reference/artifacts.md). Treat
+the numbers below as v8 numbers:
 
 ```text
 base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
