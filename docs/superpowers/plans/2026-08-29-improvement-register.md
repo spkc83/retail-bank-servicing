@@ -117,6 +117,14 @@ the release process treats them as making.
 - **P1 #10 — publication is one commit** (`b68515f`). A partial publish previously left weights
   with no provenance, indistinguishable from a finished release, and the retry died on the
   non-empty destination check.
+  - **Follow-on, found by that commit's own test** (`4c7e986`): the dotfile skip judged
+    `path.parts` of the *absolute* path, so a run whose output sat anywhere under a dot-directory
+    published a card, metadata and a result with **no weights at all** — and because the publish
+    is now a single commit, that empty release looked clean. No shipped adapter is affected
+    (`/data/retail-bank-agent-9b-*` has no dot segment); it surfaced only because this box's
+    TMPDIR lives under `~/.cache`. This is the audit's own thesis landing on the fix for the
+    audit: the test asserted the happy path precisely enough to catch it, and the new regression
+    test reproduces it from a clean `/tmp`.
 
 ### Eval contamination: diagnosed, fix written, blocked on teacher re-realization
 
@@ -215,8 +223,10 @@ What genuinely remains is a per-stem continuation on the alignment side, where e
 a tail of validation rows still sit above 0.90. The base writer has the prompt-pass plumbing now
 regardless, since the mechanism belongs where the corpus lives.
 
-**The corpus on disk is now unpublished and newer than `@8494c94f`.** It must be published before
-anything trains on it.
+**The corpus is now published** as `@ce0d442955c0698d9be1f0592081e648766ffd07`, and the files
+served at that revision were verified against the committed digests after the upload. Both
+corpora also reproduce byte-for-byte from the documented commands — which they did not before,
+because the documented alignment command omitted the prompt-realization flags.
 
 Still open from #4/#5: the cross-split leakage gate (it keys on a value embedding the split, and
 behind it 32 of 35 alignment test rows share a 4-gram with train — fixing the gate requires
