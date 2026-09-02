@@ -34,17 +34,19 @@ from this before launch.
 
 ---
 
-## Phase 0 — dataforge core (done / in flight)
+## Phase 0 — dataforge core (done)
 
 - v9 mechanisms ported and pushed (`a191af9..2aeb72a`): banned-wording gate, duplicate/paired
   counterfactual dedup, teacher provenance hashes, batch checker, conversation rows.
-- v11 mechanisms port (in flight): behaviour-curriculum builder (frames × subjects dosing,
-  held-back validation subjects), field-invariant gates, probe-exclusion guard,
-  evidence-aware unsupported-claim guard, fuzzy final dedup, allowed-use registry tagging.
+- v11 mechanisms ported and pushed (`485a88d..611122b`): behaviour-curriculum builder
+  (frames × subjects dosing, held-back validation subjects), field-invariant gates,
+  probe-exclusion guard, evidence-aware unsupported-claim guard, fuzzy final dedup,
+  allowed-use registry tagging. The final commit closes the fail-open paths a review found
+  in the first cut.
 
-Exit criteria: committed on master, tests green, README documents the new surface, worked
-example exercises it, and a post-commit review pass (review: Phase 0 status must be judged
-at commit time, not from a moving working tree).
+Exit criteria met at `origin/master@611122b`: committed and pushed, 346 tests green, the
+worked example exercises the behaviour curriculum and its invariants, and the review pass
+ran post-commit rather than against a moving working tree.
 
 ## Phase 1 — `slm-harness`: extract the serving harness into a library
 
