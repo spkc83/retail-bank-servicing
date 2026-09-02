@@ -65,6 +65,7 @@ from responses import (
     policy_chunk_lookup,
     render_gradio_assistant_message,
 )
+from model_router import ModelConversationRouter
 from router import ROUTER_REVISION, LearnedBankingRouter
 from state import BANK
 
@@ -81,6 +82,13 @@ AUTH_MESSAGE = (
 )
 SKIP_ROUTER_LOAD = os.environ.get("POC_SKIP_ROUTER_LOAD") == "1"
 router = None if SKIP_ROUTER_LOAD else LearnedBankingRouter.from_hub()
+
+# Which component decides the turn. "router" is the seven-head cross-encoder;
+# "model" asks the fine-tuned SLM for the same decision and runs it through
+# the identical guards, so the two are comparable. Unknown values fall back
+# to the router rather than to something unrouted.
+ROUTING_MODE = "model" if os.environ.get("RETAIL_BANK_ROUTING_MODE") == "model" else "router"
+_model_router: ModelConversationRouter | None = None
 POLICY_KNOWLEDGE = PolicyKnowledgeBase.from_json(DEFAULT_POLICY_PATH)
 POLICY_CHUNK_LOOKUP = policy_chunk_lookup(chunk.as_dict() for chunk in POLICY_KNOWLEDGE.chunks)
 
@@ -420,15 +428,33 @@ def fail_model_turn(
     )
 
 
+def active_classifier() -> Any:
+    """The classifier for this deployment: the cross-encoder, or the SLM itself.
+
+    Built lazily so the model router costs nothing in the default mode, and so
+    the ZeroGPU adapter is only touched on a request rather than at import.
+    """
+    global _model_router
+    if ROUTING_MODE != "model":
+        return router
+    if _model_router is None:
+        _model_router = ModelConversationRouter(_RuntimeModel(), revision=MODEL_REVISION)
+    return _model_router
+
+
 def route_query(
     message: str,
     history: list[dict[str, Any]] | None = None,
     dialogue_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if router is None:
-        return _uncertain_route("router unavailable; delegated to the 9B model")
+    classifier = active_classifier()
+    if classifier is None:
+        # Not "delegated to the 9B model" any more: an unroutable turn exposes
+        # no tools at all. Saying otherwise described the fail-open branch that
+        # used to hand over every mutation.
+        return _uncertain_route("router unavailable; the turn is handled without tools")
     try:
-        return router.classify(message, history, dialogue_state=dialogue_state)
+        return classifier.classify(message, history, dialogue_state=dialogue_state)
     except (RuntimeError, TypeError, ValueError) as error:
         return _classifier_error_route(type(error).__name__)
 

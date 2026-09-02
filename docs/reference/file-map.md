@@ -60,6 +60,9 @@ dd5ea26674a0f9808d42110a9ee51a9af6762a76
 | [`../../src/hello_slm/banking_servicing_alignment_data.py`](../../src/hello_slm/banking_servicing_alignment_data.py) | Composite servicing-alignment scenarios used by Granite and router derivation. |
 | [`../../scripts/retail_bank/prepare_tool_sft_data.py`](../../scripts/retail_bank/prepare_tool_sft_data.py) | Base SFT CLI. |
 | [`../../scripts/retail_bank/prepare_servicing_alignment_data.py`](../../scripts/retail_bank/prepare_servicing_alignment_data.py) | Composite alignment CLI and optional publication. |
+| [`../../poc/retail-bank-customer-service-poc/model_router.py`](../../poc/retail-bank-customer-service-poc/model_router.py) | The SLM as routing classifier, producing the learned router's decision shape so the harness is unchanged. |
+| [`../../poc/retail-bank-customer-service-poc/taxonomy.py`](../../poc/retail-bank-customer-service-poc/taxonomy.py) | Canonical label sets, resolved once for both routing implementations. |
+| [`../../scripts/retail_bank/compare_routing_classifiers.py`](../../scripts/retail_bank/compare_routing_classifiers.py) | Scores both classifiers on the router's held-out split. See [the comparison](../17-routing-classifier-comparison.md). |
 | [`../../scripts/retail_bank/check_corpora_reproduce.py`](../../scripts/retail_bank/check_corpora_reproduce.py) | Runs the regeneration commands documented in `02-data-generation.md` and compares every split by SHA-256. Part of `make verify`. |
 | [`../../scripts/retail_bank/measure_split_contamination.py`](../../scripts/retail_bank/measure_split_contamination.py) | Reports identifying-4-gram overlap and nearest-neighbour similarity for a corpus split, and documents why the first metric misleads. |
 | [`../../scripts/retail_bank/cloud_train_tool_sft.py`](../../scripts/retail_bank/cloud_train_tool_sft.py) | Granite LoRA/QLoRA worker and checkpoints. |

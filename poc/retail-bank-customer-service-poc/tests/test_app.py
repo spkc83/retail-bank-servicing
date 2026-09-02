@@ -883,3 +883,71 @@ def test_the_zerogpu_adapter_forwards_prefill_to_generate_text(app_module, monke
     seen.clear()
     runtime.generate([{"role": "system", "content": "s"}], None, 32)
     assert seen == {}, "an unset prefill must not reach an older generate_text"
+
+
+def test_the_default_deployment_routes_with_the_cross_encoder(app_module) -> None:
+    assert app_module.ROUTING_MODE == "router"
+    assert app_module.active_classifier() is app_module.router
+
+
+@pytest.fixture
+def model_mode_app(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """The same app, deployed with the SLM as its classifier."""
+    monkeypatch.setenv("RETAIL_BANK_ROUTING_MODE", "model")
+    monkeypatch.setenv(
+        "DEMO_AUTH_JSON",
+        '{"alex.demo":"alex-test-password","maya.demo":"maya-test-password"}',
+    )
+    monkeypatch.setenv("POC_SKIP_MODEL_LOAD", "1")
+    monkeypatch.setenv("POC_SKIP_ROUTER_LOAD", "1")
+    monkeypatch.setenv("POC_SESSION_DB_DIR", str(tmp_path / "sessions"))
+    for name in ("app", "model_service", "state", "zero_gpu_runtime", "model_router"):
+        sys.modules.pop(name, None)
+    yield importlib.import_module("app")
+    for name in ("app", "model_service", "state", "zero_gpu_runtime", "model_router"):
+        sys.modules.pop(name, None)
+
+
+def test_an_unrecognised_routing_mode_falls_back_to_the_router(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A typo must not silently select an unrouted or half-configured surface."""
+    monkeypatch.setenv("RETAIL_BANK_ROUTING_MODE", "modle")
+    monkeypatch.setenv(
+        "DEMO_AUTH_JSON",
+        '{"alex.demo":"alex-test-password","maya.demo":"maya-test-password"}',
+    )
+    monkeypatch.setenv("POC_SKIP_MODEL_LOAD", "1")
+    monkeypatch.setenv("POC_SKIP_ROUTER_LOAD", "1")
+    monkeypatch.setenv("POC_SESSION_DB_DIR", str(tmp_path / "sessions"))
+    for name in ("app", "model_service", "state", "zero_gpu_runtime"):
+        sys.modules.pop(name, None)
+
+    module = importlib.import_module("app")
+    assert module.ROUTING_MODE == "router"
+
+    for name in ("app", "model_service", "state", "zero_gpu_runtime"):
+        sys.modules.pop(name, None)
+
+
+def test_model_mode_classifies_with_the_slm_and_still_gates(
+    model_mode_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Selecting the model changes who decides, not what is enforced."""
+    from model_service import _generation_plan
+
+    assert model_mode_app.ROUTING_MODE == "model"
+    monkeypatch.setattr(
+        model_mode_app,
+        "generate_text",
+        lambda *_a, **_k: '{"domain": "banking", "intent": "replace_card", '
+        '"action": "execute_tool", "entity_resolution": "ambiguous"}',
+    )
+
+    route = model_mode_app.route_query("replace that card", [])
+
+    assert route["classifier"] == "model"
+    # An ambiguous target is gated exactly as it is under the cross-encoder.
+    assert route["action"] == "clarify"
+    _system, tools = _generation_plan(route)
+    assert tools == []
