@@ -42,9 +42,10 @@ Three further files are **not trainable** and are declared as such in
 | `granite-v7-shadow.jsonl` | 13 | Checkpoint selection and generalization evaluation |
 | `screenshot-regression.jsonl` | 9 | Regression fixture for the demo surface |
 
-Loading the dataset with `datasets` gives you the three splits. The gate files
-are plain JSONL beside them and are deliberately not exposed as splits, so a
-naive `load_dataset` cannot train on them.
+`manifest.json` is the authority on what each file may be used for: every entry
+carries an `allowed_use` list and the non-trainable files carry
+`trainable: false`. Read it before wiring the corpus into a trainer rather than
+inferring intent from filenames.
 
 ## What the alignment curriculum teaches
 
