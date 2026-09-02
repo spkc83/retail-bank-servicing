@@ -1478,35 +1478,38 @@ def build_release_operations(
     skipped exactly as the previous ``ignore_patterns`` did -- judged on the
     path *inside* the release, never on the absolute path, which would drop
     every file of a run whose output happened to sit under a dot-directory.
+
+    One destination is written once. PEFT writes its own ``README.md`` beside
+    the adapter, so under ``--skip-merge-adapter`` that file and the generated
+    model card both claim the repository root; the card wins, deliberately
+    rather than by whichever add the Hub happened to apply last.
     """
     from huggingface_hub import CommitOperationAdd  # type: ignore[import-not-found]
 
-    def released_files(directory: Path, prefix: str = "") -> list[Any]:
-        found = []
+    # Insertion-ordered, keyed by destination: a later source for the same
+    # path_in_repo replaces the earlier one instead of racing it in one commit.
+    by_destination: dict[str, Any] = {}
+
+    def release(destination: str, source: Path) -> None:
+        by_destination[destination] = CommitOperationAdd(
+            path_in_repo=destination, path_or_fileobj=str(source)
+        )
+
+    def release_tree(directory: Path, prefix: str = "") -> None:
         for path in sorted(directory.rglob("*")):
             relative = path.relative_to(directory)
             if not path.is_file() or any(part.startswith(".") for part in relative.parts):
                 continue
-            found.append(
-                CommitOperationAdd(
-                    path_in_repo=f"{prefix}{relative}", path_or_fileobj=str(path)
-                )
-            )
-        return found
+            release(f"{prefix}{relative}", path)
 
     root_dir = config.output_dir / ("merged" if config.merge_adapter else "adapter")
-    operations: list[Any] = released_files(root_dir)
-    operations.extend(released_files(config.output_dir / "adapter", prefix="adapter/"))
+    release_tree(root_dir)
+    release_tree(config.output_dir / "adapter", prefix="adapter/")
     metadata_path = config.output_dir / "checkpoints" / f"step-{step:06d}" / "metadata.json"
-    for source, destination in (
-        (model_card, "README.md"),
-        (metadata_path, "training_metadata.json"),
-        (result_path, "training_result.json"),
-    ):
-        operations.append(
-            CommitOperationAdd(path_in_repo=destination, path_or_fileobj=str(source))
-        )
-    return operations
+    release("README.md", model_card)
+    release("training_metadata.json", metadata_path)
+    release("training_result.json", result_path)
+    return list(by_destination.values())
 
 
 def tiny_smoke_records() -> list[dict[str, Any]]:
