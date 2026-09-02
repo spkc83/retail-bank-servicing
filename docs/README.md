@@ -13,12 +13,12 @@ contract, and run either interface.
 | Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
 | Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
-| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (this checkout; `@ce0d4429` is the same data one commit earlier, before the card was added, and is the revision v14 trained on; the deployed v11 adapter was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
-| Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
-| Granite PEFT adapter (gated candidate, not deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`; first run to pass all three training gates, including bare probes 11/11 |
+| Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (this checkout; `@ce0d4429` is the same data one commit earlier, before the card was added, and is the revision v14 trained on; v11, deployed until 2026-09-01, was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
+| Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. First run to pass all three training gates, including bare probes 11/11; deployed 2026-09-01 |
+| Granite PEFT adapter (previously deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@a227df8d40934e6d3c1be31d49a49c4f20dcc81d`; authenticated chat smoke pending |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@453a227f2395747ec0635bb6c298c050f006aedd`; authenticated chat smoke pending |
 
 ## Read in This Order
 
@@ -55,8 +55,8 @@ Digests of the corpus **as it sits on disk**, which is the v12 corpus plus the
 prompt-realization passes ([details](02-data-generation.md#prompt-realization)).
 It is published at `@ce0d4429`, and the digests below are the ones that
 revision carries. Two older revisions to keep distinct from it: `@8494c94f` is
-the v12 corpus before the prompt passes, and `@b5ec0489` is what the deployed
-v11 adapter was trained on. Regenerating this checkout reproduces `@ce0d4429`
+the v12 corpus before the prompt passes, and `@b5ec0489` is what the
+previously deployed v11 adapter was trained on. Regenerating this checkout reproduces `@ce0d4429`
 only.
 
 | File | Rows | SHA-256 |

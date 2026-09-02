@@ -10,7 +10,7 @@ app_file: app.py
 pinned: false
 suggested_hardware: zero-a10g
 models:
-  - spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment
+  - spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized
   - spkc83/retail-bank-servicing-agent-9b
   - spkc83/retail-bank-conversation-router
 datasets:
@@ -41,7 +41,7 @@ bank or perform a real transaction.
 | --- | --- |
 | Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
 | Router data | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4`, loaded with `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
+| Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`, loaded with `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | Granite base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 | Space source/pins | The immutable deployed commit is exposed as `SPACE_COMMIT_SHA` in diagnostics |
@@ -214,11 +214,11 @@ ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --adapter-revision "$ADAPTER_REVISION" \
   --adapter-subfolder adapter \
   --model-dtype bf16 \

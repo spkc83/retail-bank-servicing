@@ -14,8 +14,8 @@ bank data.
 | Component | Identity |
 | --- | --- |
 | Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` |
-| Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10 and v11 publishes nest `adapter_config.json`, and PEFT reads the repo root without it |
+| Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e` (deployed 2026-09-01; v11 `@03a7b446` before it) |
+| Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10, v11 and v14 publishes nest `adapter_config.json`, and PEFT reads the repo root without it |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
 
@@ -164,16 +164,16 @@ response. The Gradio queue uses concurrency one for this low-traffic POC.
 Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
-ADAPTER_REVISION=03a7b44633fadab7ad672b009925cc68b52494d4
+ADAPTER_REVISION=47968b2b9ce02973b5676e464aafaa768cdbb05e
 ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --adapter-revision "$ADAPTER_REVISION" \
   --adapter-subfolder adapter \
   --model-dtype bf16 \
@@ -186,16 +186,14 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`a227df8d40934e6d3c1be31d49a49c4f20dcc81d`, deployed 2026-08-24; the runtime
-variables were repinned to the v11 adapter on 2026-08-27 without a source
-change, so the Space serves
-`spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b446` with
-`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. **The card published on the Space still
-names the v8 adapter** — the repin changed runtime variables only, and the card
-is `poc/retail-bank-customer-service-poc/README.md`, which only reaches the Hub
-through a deploy. It is corrected in this checkout and will publish with the
-next `deploy_zero_gpu_space.py --execute --allow-publish`; until then, trust the
-runtime variables over the published card. On `zero-a10g` it reports `SLEEPING`
+`453a227f2395747ec0635bb6c298c050f006aedd`, deployed 2026-09-01, which pinned
+the Space to `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b` with
+`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` and republished the Space card. The
+card had drifted twice before this — it named v8 while the Space served v11,
+because the 2026-08-27 repin changed runtime variables only and the card is
+`poc/retail-bank-customer-service-poc/README.md`, which reaches the Hub solely
+through a deploy. Any repin that skips a deploy leaves the public card wrong
+again. On `zero-a10g` it reports `SLEEPING`
 between requests and wakes on demand — that is the normal ZeroGPU idle state,
 not an outage. Because `PeftModel.from_pretrained` runs at module scope, a missing
 or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than
@@ -209,8 +207,8 @@ Drive the agent in process rather than through the browser. One runtime load, a
 fresh session per case, no Streamlit session lifecycle to fight:
 
 ```bash
-export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment
-export RETAIL_BANK_MODEL_REVISION=03a7b44633fadab7ad672b009925cc68b52494d4
+export RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized
+export RETAIL_BANK_MODEL_REVISION=47968b2b9ce02973b5676e464aafaa768cdbb05e
 export RETAIL_BANK_ADAPTER_ID="$RETAIL_BANK_MODEL_ID"
 export RETAIL_BANK_ADAPTER_REVISION="$RETAIL_BANK_MODEL_REVISION"
 export RETAIL_BANK_ADAPTER_SUBFOLDER=adapter

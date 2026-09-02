@@ -182,9 +182,9 @@ The hierarchical state-conditioned router is published at
 `dd5ea26674a0f9808d42110a9ee51a9af6762a76` from dataset revision
 `b33c27170e27cdb11783704ede14f7d25f70625e`. Granite inference composes base
 `spkc83/retail-bank-servicing-agent-9b@1d568249...` with PEFT adapter
-`spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b446...`
+`spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b...`
 (published with `adapter_config.json` under `adapter/`; set `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`).
-The previously deployed adapter was `spkc83/retail-bank-servicing-agent-9b-peft-v10-longctx@055ce38...`.
+The previously deployed adapter was `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b446...`.
 Merged candidates are not used because they failed the unchanged
 behavioral-parity gates. Evaluation job `6a7f89edc97db76cbdf31893` (v7
 composition) then failed strict behavioral gates. A corrected evaluator and

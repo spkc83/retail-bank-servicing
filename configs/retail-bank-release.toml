@@ -34,8 +34,8 @@ rollback_revision = "ccb9a61dc17993cb5e8036df26a645ee08974c60"
 # explicitly: deploy_zero_gpu_space.py has no adapter default any more, because
 # a default names one release and rots at the next one.
 [granite_peft]
-adapter_repo = "spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment"
-adapter_revision = "03a7b44633fadab7ad672b009925cc68b52494d4"
+adapter_repo = "spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized"
+adapter_revision = "47968b2b9ce02973b5676e464aafaa768cdbb05e"
 # adapter_config.json is nested; an empty value means the repository root.
 adapter_subfolder = "adapter"
 base_model_repo = "spkc83/retail-bank-servicing-agent-9b"

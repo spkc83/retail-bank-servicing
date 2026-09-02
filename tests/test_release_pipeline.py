@@ -111,7 +111,7 @@ def test_the_deploy_stage_states_every_runtime_identity() -> None:
     # The adapter is the thing being deployed: model and adapter must agree.
     assert flags["--model-id"] == flags["--adapter-id"]
     assert flags["--model-revision"] == flags["--adapter-revision"]
-    assert flags["--adapter-id"].endswith("-peft-v11-alignment")
+    assert flags["--adapter-id"].endswith("-peft-v14-prompt-realized")
     assert flags["--adapter-subfolder"] == "adapter"
     assert flags["--base-model-id"] != flags["--adapter-id"]
 

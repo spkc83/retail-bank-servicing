@@ -19,8 +19,8 @@ Router release:
   dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 Granite PEFT (deployed):
-  spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment
-  03a7b44633fadab7ad672b009925cc68b52494d4
+  spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized
+  47968b2b9ce02973b5676e464aafaa768cdbb05e
   adapter subfolder: adapter
 
 Granite PEFT (last evaluated):
@@ -215,16 +215,16 @@ exposed tool schema, model passes, and immutable revisions.
 ## 7. Plan and Execute ZeroGPU Deployment
 
 ```bash
-ADAPTER_REVISION=03a7b44633fadab7ad672b009925cc68b52494d4
+ADAPTER_REVISION=47968b2b9ce02973b5676e464aafaa768cdbb05e
 ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
-  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --model-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --model-revision "$ADAPTER_REVISION" \
   --base-model-id spkc83/retail-bank-servicing-agent-9b \
   --base-model-revision 1d56824995aa1adecfe20f62ca42fb1c0c443817 \
-  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment \
+  --adapter-id spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized \
   --adapter-revision "$ADAPTER_REVISION" \
   --adapter-subfolder adapter \
   --model-dtype bf16 \
@@ -235,10 +235,10 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source commit is
-`a227df8d40934e6d3c1be31d49a49c4f20dcc81d` (deployed 2026-08-24; the runtime
-variables were repinned to the v11 adapter on 2026-08-27 without a source change). The Space runs
-on `zero-a10g` with the pinned base, adapter, and router identities, and reports `SLEEPING`
-between requests — the normal ZeroGPU idle state, not an outage.
+`453a227f2395747ec0635bb6c298c050f006aedd` (deployed 2026-09-01, pinning the v14 adapter and
+republishing the Space card). The Space runs on `zero-a10g` with the pinned base, adapter, and
+router identities, and reports `SLEEPING` between requests — the normal ZeroGPU idle state, not an
+outage.
 Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the
 `DEMO_AUTH_JSON` Space secret and are not readable through the API.
 
