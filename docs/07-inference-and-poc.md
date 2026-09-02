@@ -186,8 +186,13 @@ Without `--execute --allow-publish`, the helper prints and validates a plan.
 Execution uploads only allowlisted POC files and persists exact runtime pins.
 
 The current Space source/pin deployment is
-`a227df8d40934e6d3c1be31d49a49c4f20dcc81d`, deployed 2026-08-24. The runtime is **RUNNING** on `zero-a10g` and
-serves v10. Because `PeftModel.from_pretrained` runs at module scope, a missing
+`a227df8d40934e6d3c1be31d49a49c4f20dcc81d`, deployed 2026-08-24; the runtime
+variables were repinned to the v11 adapter on 2026-08-27 without a source
+change, so the Space serves
+`spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b446` with
+`RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. On `zero-a10g` it reports `SLEEPING`
+between requests and wakes on demand — that is the normal ZeroGPU idle state,
+not an outage. Because `PeftModel.from_pretrained` runs at module scope, a missing
 or wrong `--adapter-subfolder` shows up as `RUNTIME_ERROR` at startup rather than
 as a per-request failure. An authenticated chat smoke is still pending: the demo
 credentials live in the `DEMO_AUTH_JSON` Space secret, whose value the API does

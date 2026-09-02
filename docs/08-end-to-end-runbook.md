@@ -220,8 +220,9 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source commit is
 `a227df8d40934e6d3c1be31d49a49c4f20dcc81d` (deployed 2026-08-24; the runtime
-variables were repinned to the v11 adapter on 2026-08-27 without a source change). The runtime is
-RUNNING on `zero-a10g` with the pinned base, adapter, and router identities.
+variables were repinned to the v11 adapter on 2026-08-27 without a source change). The Space runs
+on `zero-a10g` with the pinned base, adapter, and router identities, and reports `SLEEPING`
+between requests — the normal ZeroGPU idle state, not an outage.
 Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the
 `DEMO_AUTH_JSON` Space secret and are not readable through the API.
 
