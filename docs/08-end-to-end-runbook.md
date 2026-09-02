@@ -235,7 +235,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source commit is
-`453a227f2395747ec0635bb6c298c050f006aedd` (deployed 2026-09-01, pinning the v14 adapter and
+`2a6501b6d5029d1e1991f7444c9f352eef31b000` (deployed 2026-09-01, pinning the v14 adapter and
 republishing the Space card). The Space runs on `zero-a10g` with the pinned base, adapter, and
 router identities, and reports `SLEEPING` between requests — the normal ZeroGPU idle state, not an
 outage.
