@@ -9,17 +9,16 @@ contract, and run either interface.
 
 | Component | Identity/status |
 | --- | --- |
-| Hierarchical router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
-| Router dataset rows | train 20,439; validation 4,158; test 4,921 |
-| Router rebuild candidate (local, unpublished) | `data/banking-conversation-router-v9-surface-form`: train 21,686; validation 4,283; test 4,863; release eligible when retrained, not published |
+| Hierarchical router | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
+| Router dataset | `spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2` |
+| Local router artifact | `artifacts/banking-conversation-router-v9-surface-form`; release eligible |
+| Router dataset rows | train 21,686; validation 4,283; test 4,863 |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (this checkout; `@ce0d4429` is the same data one commit earlier, before the card was added, and is the revision v14 trained on; v11, deployed until 2026-09-01, was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. First run to pass all three training gates, including bare probes 11/11; deployed 2026-09-01 |
 | Granite PEFT adapter (previously deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` |
 | Granite PEFT adapter (last evaluated) | `spkc83/retail-bank-servicing-agent-9b-peft-v8-natural-generation@badbc05ad1f861818ea244b462eda49bca6c6fca` |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2a6501b6d5029d1e1991f7444c9f352eef31b000`; authenticated chat smoke pending |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@4e6f24bbf1740656db0d9e2f5c13ec35cd68528c`; authenticated chat smoke pending |
 
 ## Read in This Order
 
@@ -45,9 +44,9 @@ the pages themselves describe V6 format 4 and its seven heads.
 | --- | --- |
 | `data/banking-v5-tool-sft` | Governed Granite tool-use SFT corpus. |
 | `data/banking-servicing-alignment-v5` | Governed Granite alignment source used to derive in-domain router examples. |
-| `data/banking-conversation-router-v8-first-turn-mutation` | V6 train, validation, and test rows. |
-| `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` | Source and prepared-split digests. |
-| `artifacts/banking-conversation-router-v8-first-turn-mutation` | Format-4 model, heads, tokenizer, configuration, metrics, and manifest. |
+| `data/banking-conversation-router-v9-surface-form` | V6 train, validation, and test rows. |
+| `data/sources/banking-conversation-router-v9-surface-form.lock.json` | Source and prepared-split digests. |
+| `artifacts/banking-conversation-router-v9-surface-form` | Format-4 model, heads, tokenizer, configuration, metrics, and manifest. |
 | `src/hello_slm/banking_domain_taxonomy.py` | Canonical hierarchy and legal action/entity combinations. |
 | `poc/retail-bank-customer-service-poc` | Shared Gradio/ZeroGPU and Streamlit runtime. |
 | `scripts/retail_bank` | Data, training, evaluation, and deployment entry points. |
@@ -72,8 +71,8 @@ only.
 ## Safe Local Checks
 
 ```bash
-python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
-python -m json.tool artifacts/banking-conversation-router-v8-first-turn-mutation/metrics.json >/dev/null
+python -m json.tool data/banking-conversation-router-v9-surface-form/manifest.json >/dev/null
+python -m json.tool artifacts/banking-conversation-router-v9-surface-form/metrics.json >/dev/null
 
 PYTHONPATH=src uv run pytest -q \
   tests/test_banking_conversation_router.py \

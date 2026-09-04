@@ -39,8 +39,8 @@ bank or perform a real transaction.
 
 | Component | Revision/status |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Router data | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
+| Router | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
+| Router data | `spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2` |
 | Granite PEFT | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`, loaded with `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter` |
 | Granite base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
 | Policy corpus | `sha256:ec6e75000209f34a1c84d5904d203b275842e441401e6db82ac883301fabe10a` |
@@ -102,6 +102,14 @@ An explicit new intent replaces stale state. An ambiguous or missing action
 target produces a natural clarification with no tool. An ineligible target
 also blocks tool exposure.
 
+## Who Decides the Turn?
+
+A radio under the examples switches the classifier for that request between
+the cross-encoder router and the 9B model itself, which then reads the same
+conversation and proposes the same seven-field decision. Both feed the same
+harness and the same legality guards; the diagnostics say which one decided
+and, for the model, what it proposed before legality was applied.
+
 ## Confirming Model Generation
 
 Open **Technical details** in Gradio or **Experiment diagnostics** in
@@ -158,7 +166,7 @@ The runtime loads the Granite base with bitsandbytes NF4 double quantization,
 attaches the adapter, and prefers the local router artifact:
 
 ```text
-artifacts/banking-conversation-router-v8-first-turn-mutation
+artifacts/banking-conversation-router-v9-surface-form
 ```
 
 Useful overrides:
@@ -210,7 +218,7 @@ Plan deployment:
 
 ```bash
 ADAPTER_REVISION=cc95e446af2b5e1d8d9df2751a8192613ad386e3
-ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
+ROUTER_REVISION=a666075f9193f4d4dcbca0391225571a59e3fda9
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \

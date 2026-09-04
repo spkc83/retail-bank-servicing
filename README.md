@@ -16,10 +16,10 @@ fictional. The POC does not connect to a real bank.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Router data | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Local artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
-| Local data | `data/banking-conversation-router-v8-first-turn-mutation` |
+| Router | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
+| Router data | `spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2` |
+| Local artifact | `artifacts/banking-conversation-router-v9-surface-form` |
+| Local data | `data/banking-conversation-router-v9-surface-form` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Artifact format | 4 |
 | Release gate | `release_eligible: true`; no failures |
@@ -99,13 +99,13 @@ uv sync --extra dev --extra scale
 
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
+  --output-dir data/banking-conversation-router-v9-surface-form \
+  --source-lock data/sources/banking-conversation-router-v9-surface-form.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v9-surface-form.lock.json
 
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
+  --dataset-dir data/banking-conversation-router-v9-surface-form \
+  --output-dir artifacts/banking-conversation-router-v9-surface-form
 ```
 
 Expected split counts are 20,439 training, 4,158 validation, and 4,921 test

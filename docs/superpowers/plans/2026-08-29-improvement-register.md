@@ -484,10 +484,14 @@ eligible with the repair gate at 0.0 (in-domain false refusal 0.0024 / 0.0014 / 
 accept 0.0145 / 0.017 / 0.016). The definitive artifact is the seed-7401 run on the committed corpus,
 `artifacts/banking-conversation-router-v9-surface-form` (local; `artifacts/` is not tracked).
 
-Not done, deliberately: publishing the rebuilt router. The v8 artifact stays deployed; the candidate
-corpus is `data/banking-conversation-router-v9-surface-form` with its lock, reproducible by
-`make corpora`, and the coverage gate now measures it with raised minimums for the cells the
-phrasing family filled.
+Published on 2026-09-04 on the user's decision: dataset
+`spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2`, router
+`spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` (the publish run
+reproduced the local metrics exactly), deployed to the Space at commit `4e6f24bb` together with the
+classifier radio. The v8 corpus stays in the repository as a frozen artifact. The coverage gate
+measures the new corpus with raised minimums for the cells the phrasing family filled. Still open
+from this investigation: the 31 template-mangled prompts in the frozen alignment and tool-SFT test
+splits, to be handled as a versioned fixture regeneration.
 
 ## Recommended order
 

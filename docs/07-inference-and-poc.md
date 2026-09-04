@@ -13,7 +13,7 @@ bank data.
 
 | Component | Identity |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
+| Router | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
 | Granite PEFT release | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e` (deployed 2026-09-01; v11 `@03a7b446` before it) |
 | Granite adapter subfolder | `adapter` (`RETAIL_BANK_ADAPTER_SUBFOLDER`); the v10, v11 and v14 publishes nest `adapter_config.json`, and PEFT reads the repo root without it |
 | Granite Stage-2 base | `spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817` |
@@ -131,7 +131,7 @@ bitsandbytes NF4 double quantization and attaches the immutable adapter. It
 prefers:
 
 ```text
-artifacts/banking-conversation-router-v8-first-turn-mutation
+artifacts/banking-conversation-router-v9-surface-form
 ```
 
 Local-only default credentials are:
@@ -170,7 +170,7 @@ Plan a deployment with the immutable router placeholder replaced:
 
 ```bash
 ADAPTER_REVISION=47968b2b9ce02973b5676e464aafaa768cdbb05e
-ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
+ROUTER_REVISION=a666075f9193f4d4dcbca0391225571a59e3fda9
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
@@ -218,7 +218,7 @@ export RETAIL_BANK_ADAPTER_REVISION="$RETAIL_BANK_MODEL_REVISION"
 export RETAIL_BANK_ADAPTER_SUBFOLDER=adapter
 export RETAIL_BANK_BASE_MODEL_ID=spkc83/retail-bank-servicing-agent-9b
 export RETAIL_BANK_BASE_MODEL_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817
-export LOCAL_ROUTER_ARTIFACT_DIR=artifacts/banking-conversation-router-v8-first-turn-mutation
+export LOCAL_ROUTER_ARTIFACT_DIR=artifacts/banking-conversation-router-v9-surface-form
 export HF_TOKEN=$(cat ~/.cache/huggingface/token)
 
 uv run scripts/retail_bank/inproc_long_session_sweep.py v10 --out /tmp/sweeps

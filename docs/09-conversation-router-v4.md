@@ -138,7 +138,7 @@ It does not eliminate:
 ## Evidence
 
 The release artifact is
-`artifacts/banking-conversation-router-v8-first-turn-mutation`. Its `metrics.json`
+`artifacts/banking-conversation-router-v9-surface-form`. Its `metrics.json`
 records:
 
 - `release_eligible: true` and no failed gates;
@@ -155,12 +155,12 @@ Dataset identity:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-b33c27170e27cdb11783704ede14f7d25f70625e
+9618f2a8adef86a681624b7d3ce24e122a4323a2
 ```
 
 Router identity after publication:
 
 ```text
 spkc83/retail-bank-conversation-router
-dd5ea26674a0f9808d42110a9ee51a9af6762a76
+a666075f9193f4d4dcbca0391225571a59e3fda9
 ```

@@ -8,26 +8,26 @@ artifact.
 
 | Artifact | Identity |
 | --- | --- |
-| Hub model | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Hub dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Local model | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
-| Local dataset | `data/banking-conversation-router-v8-first-turn-mutation` |
-| Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
+| Hub model | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
+| Hub dataset | `spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2` |
+| Local model | `artifacts/banking-conversation-router-v9-surface-form` |
+| Local dataset | `data/banking-conversation-router-v9-surface-form` |
+| Source lock | `data/sources/banking-conversation-router-v9-surface-form.lock.json` |
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
-| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2a6501b6d5029d1e1991f7444c9f352eef31b000` |
+| ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@4e6f24bbf1740656db0d9e2f5c13ec35cd68528c` |
 | ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
-| Rebuild candidate (local, unpublished) | `data/banking-conversation-router-v9-surface-form` (lock `data/sources/banking-conversation-router-v9-surface-form.lock.json`); a router trained on it passes every release gate, see [runbook section 4](../08-end-to-end-runbook.md#4-train-locally) |
+| Previous router (deployed until 2026-09-04) | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` from `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e`; local `data/banking-conversation-router-v8-first-turn-mutation`, frozen |
 
 ### Dataset files
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 20,439 | `c838134cdecc22723fda887c1dd561329ab5cac2c72eabc2de484c54a4d4f733` |
-| `validation.jsonl` | 4,158 | `5491dcbe64ef5c4d7a15d440076ef9964a3767a0adb94d0c4edbb33ecc3c2168` |
-| `test.jsonl` | 4,921 | `135e2c16962a19c2752b85ca626e83e067eaa9222ff7e1b9029bbdbe681584e8` |
+| `train.jsonl` | 21,686 | `a18eaceb189f2e247e51d4d665b81df9cf75eb75ff2a4e9dd307ccca7b0543c3` |
+| `validation.jsonl` | 4,283 | `d32d2cbadf4efd1628a623573d405002356f578fda1701f27a53c94941a32722` |
+| `test.jsonl` | 4,863 | `a71f203e5d9a5362bcebcb8228e2ec49bbf30a9ecf868637bd9fb54eff4debfc` |
 
 The dataset manifest SHA-256 recorded in the model is
-`2b991e9b21dd2fc241628c284e6754c457ac9604b676270864993cefc9669d8b`.
+`e039d05ade9563d60c9759e0a3e4d2fa2b2e5686bbd898a5a4c4f25854d8bb05`.
 
 ### Router artifact files
 
@@ -43,7 +43,8 @@ The dataset manifest SHA-256 recorded in the model is
 | `README.md` | Generated model card. |
 
 Release evidence: selected epoch 2, `release_eligible: true`, empty
-`release_gate_failures`, and zero exposed hierarchy-compatibility errors.
+`release_gate_failures`, zero exposed hierarchy-compatibility errors, and the same
+corpus release eligible at seeds 11 and 23.
 
 ## Granite Composition
 
@@ -76,7 +77,7 @@ prompt passes; the deployed v11 adapter was trained earlier still, on
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
+| `train.jsonl` | 21,686 | `a18eaceb189f2e247e51d4d665b81df9cf75eb75ff2a4e9dd307ccca7b0543c3` |
 | `validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
 | `test.jsonl` (frozen) | 180 | `9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c` |
 
@@ -84,7 +85,7 @@ prompt passes; the deployed v11 adapter was trained earlier still, on
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
+| `train.jsonl` | 21,686 | `a18eaceb189f2e247e51d4d665b81df9cf75eb75ff2a4e9dd307ccca7b0543c3` |
 | `validation.jsonl` | 447 | `cab8b527c0124c7290e53a4192fb504bcbb63dfbcaef05baf90a58ffbcc4763f` |
 | `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 

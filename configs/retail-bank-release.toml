@@ -22,9 +22,9 @@ evaluation_job = "spkc83/6a6caac1a00abefd4b289b14"
 
 [router]
 dataset_repo = "spkc83/retail-bank-conversation-router-data"
-dataset_revision = "b33c27170e27cdb11783704ede14f7d25f70625e"
+dataset_revision = "9618f2a8adef86a681624b7d3ce24e122a4323a2"
 model_repo = "spkc83/retail-bank-conversation-router"
-model_revision = "dd5ea26674a0f9808d42110a9ee51a9af6762a76"
+model_revision = "a666075f9193f4d4dcbca0391225571a59e3fda9"
 
 [space]
 repo = "spkc83/retail-bank-servicing-poc"

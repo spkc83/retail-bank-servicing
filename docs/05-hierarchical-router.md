@@ -12,9 +12,9 @@ never authorises anything.
 
 | Item | Value |
 | --- | --- |
-| Router | `spkc83/retail-bank-conversation-router@dd5ea26674a0f9808d42110a9ee51a9af6762a76` |
-| Dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Local artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation` |
+| Router | `spkc83/retail-bank-conversation-router@a666075f9193f4d4dcbca0391225571a59e3fda9` |
+| Dataset | `spkc83/retail-bank-conversation-router-data@9618f2a8adef86a681624b7d3ce24e122a4323a2` |
+| Local artifact | `artifacts/banking-conversation-router-v9-surface-form` |
 | Base | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | Format | 4 |
 | Maximum input | 256 tokens; at most 3 visible exchanges |
@@ -229,26 +229,31 @@ layer down, by the absence of evidence, not by the router.
 
 ## Held-Out Results
 
-The release passed all gates on 4,921 test rows:
+The release passed all gates on 4,863 test rows:
 
 | Metric | Result |
 | --- | ---: |
-| Domain macro F1 | 0.997533 |
-| Lane macro F1 | 0.995155 |
-| Family macro F1 | 0.994552 |
-| Intent macro F1 | 0.996473 |
-| Relation macro F1 | 0.961950 |
-| Action macro F1 | 0.997865 |
-| Entity-resolution macro F1 | 0.999060 |
-| Exposed action macro F1 | 0.997996 |
-| Exposed entity-resolution macro F1 | 0.999250 |
-| OOD false-accept rate | 0.003232 |
-| In-domain false-refusal rate | 0.000000 |
+| Domain macro F1 | 0.991375 |
+| Lane macro F1 | 0.973272 |
+| Family macro F1 | 0.977515 |
+| Intent macro F1 | 0.994187 |
+| Relation macro F1 | 0.976941 |
+| Action macro F1 | 0.988008 |
+| Entity-resolution macro F1 | 0.966131 |
+| Exposed action macro F1 | 0.987500 |
+| Exposed entity-resolution macro F1 | 0.998079 |
+| OOD false-accept rate | 0.014509 |
+| In-domain false-refusal rate | 0.002374 |
 | Counterfactual action accuracy | 1.000000 |
 | Counterfactual entity accuracy | 1.000000 |
 | Counterfactual pair-flip accuracy | 1.000000 |
 | Held-out route/intent/relation error | 0 / 0 / 0 |
 | Trajectory runtime-transition error | 0.000000 |
+
+The same corpus is release eligible at seeds 11 and 23 as well. The previous
+release (v8, `dd5ea26674a0f9808d42110a9ee51a9af6762a76`) scored intent macro F1 0.996 and OOD
+false accept 0.0032 on its own, template-contaminated test split; see
+[runbook section 4](08-end-to-end-runbook.md#4-train-locally) for what changed and why.
 
 These results measure governed synthetic and CLINC-based data. They are not a
 production-traffic accuracy claim.
@@ -257,8 +262,8 @@ production-traffic accuracy claim.
 
 ```bash
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
+  --dataset-dir data/banking-conversation-router-v9-surface-form \
+  --output-dir artifacts/banking-conversation-router-v9-surface-form
 ```
 
 ```bash

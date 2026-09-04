@@ -213,7 +213,7 @@ The released Space should pin:
 - `RETAIL_BANK_MODEL_ID=spkc83/retail-bank-servicing-agent-9b`
 - `RETAIL_BANK_MODEL_REVISION=1d56824995aa1adecfe20f62ca42fb1c0c443817`
 - `RETAIL_BANK_ROUTER_ID=spkc83/retail-bank-conversation-router`
-- `RETAIL_BANK_ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76`
+- `RETAIL_BANK_ROUTER_REVISION=a666075f9193f4d4dcbca0391225571a59e3fda9`
 
 Verify deployment by checking the diagnostic block in
 `poc/retail-bank-customer-service-poc/app.py` for the exact model revision,

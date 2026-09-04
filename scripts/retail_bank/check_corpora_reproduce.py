@@ -38,15 +38,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: regression. Anything not listed here must reproduce exactly.
 FROZEN_RELEASE_ARTIFACTS = {
     "banking-conversation-router-v8-first-turn-mutation": (
-        "Frozen at 0ebbd73 (2026-08-20) and pinned to the deployed router "
+        "Frozen at 0ebbd73 (2026-08-20) and pinned to the previously deployed router "
         "spkc83/retail-bank-conversation-router@dd5ea266. It derives from "
         "data/banking-servicing-alignment-v5, which has moved repeatedly since "
         "-- the coreference phrase families on 2026-08-21 and the prompt "
         "realization passes on 2026-08-31 -- so a rebuild no longer matches its "
         "release lock. The corpus HEAD builds is "
-        "data/banking-conversation-router-v9-surface-form, documented in docs/02 "
-        "and checked here like any other; docs/08 section 4 records why the two "
-        "differ and why the deployed router is still the v8 artifact."
+        "data/banking-conversation-router-v9-surface-form, the release corpus, "
+        "documented in docs/02 and checked here like any other; docs/08 section 4 "
+        "records why the two differ."
     ),
 }
 #: The fenced block in the docs that holds both regeneration commands.

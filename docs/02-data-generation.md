@@ -10,10 +10,10 @@ examples.
 | Item | Value |
 | --- | --- |
 | Dataset | `spkc83/retail-bank-conversation-router-data` |
-| Immutable revision | `b33c27170e27cdb11783704ede14f7d25f70625e` |
-| Local directory | `data/banking-conversation-router-v8-first-turn-mutation` |
-| Source lock | `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json` |
-| Train rows | 20,439 |
+| Immutable revision | `9618f2a8adef86a681624b7d3ce24e122a4323a2` |
+| Local directory | `data/banking-conversation-router-v9-surface-form` |
+| Source lock | `data/sources/banking-conversation-router-v9-surface-form.lock.json` |
+| Train rows | 21,686 |
 | Validation rows | 4,158 |
 | Test rows | 4,921 |
 | Manifest SHA-256 | `2b991e9b21dd2fc241628c284e6754c457ac9604b676270864993cefc9669d8b` |
@@ -42,30 +42,22 @@ Generate the exact release data with:
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
-```
-
-The expected lock makes regeneration fail if split digests drift. Use
-`--skip-release-digest-check` only while deliberately creating a new candidate,
-never when reproducing this release.
-
-That command reproduces the corpus the deployed router was trained on, and it is
-pinned: HEAD no longer derives it, because the alignment corpus and the derivation
-have both moved since 2026-08-20. The corpus HEAD builds today is:
-
-```bash
-PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
-  --sft-dir data/banking-servicing-alignment-v5 \
   --output-dir data/banking-conversation-router-v9-surface-form \
   --source-lock data/sources/banking-conversation-router-v9-surface-form.lock.json \
   --expected-release-lock data/sources/banking-conversation-router-v9-surface-form.lock.json
 ```
 
-It must reproduce byte for byte, and `make corpora` checks that it does. A router
-trained on it passes every release gate ([runbook, section 4](08-end-to-end-runbook.md#4-train-locally)),
-but it is not published: the deployed router is still the v8 artifact.
+The expected lock makes regeneration fail if split digests drift. Use
+`--skip-release-digest-check` only while deliberately creating a new candidate,
+never when reproducing this release. `make corpora` checks that the command
+above reproduces the committed files byte for byte.
+
+The previous release corpus, `data/banking-conversation-router-v8-first-turn-mutation`
+(lock `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json`, router
+`dd5ea26674a0f9808d42110a9ee51a9af6762a76`), stays in the repository as a frozen artifact: HEAD no
+longer derives it, because the alignment corpus and the derivation have both moved
+since 2026-08-20, and [runbook section 4](08-end-to-end-runbook.md#4-train-locally)
+records why the two differ.
 
 ## Derivation Guards
 
@@ -234,7 +226,7 @@ to production traffic.
 ## Verify
 
 ```bash
-python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
+python -m json.tool data/banking-conversation-router-v9-surface-form/manifest.json >/dev/null
 python -m json.tool data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json >/dev/null
 
 PYTHONPATH=src uv run pytest -q \

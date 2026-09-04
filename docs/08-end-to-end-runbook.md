@@ -8,7 +8,7 @@ Stop at the first failed prerequisite or release gate.
 ```text
 Router data:
   spkc83/retail-bank-conversation-router-data
-  b33c27170e27cdb11783704ede14f7d25f70625e
+  9618f2a8adef86a681624b7d3ce24e122a4323a2
 
 Router base:
   distilbert/distilbert-base-uncased
@@ -16,7 +16,7 @@ Router base:
 
 Router release:
   spkc83/retail-bank-conversation-router
-  dd5ea26674a0f9808d42110a9ee51a9af6762a76
+  a666075f9193f4d4dcbca0391225571a59e3fda9
 
 Granite PEFT (deployed):
   spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized
@@ -63,23 +63,23 @@ Stop if taxonomy, dataset, joint decoder, artifact, harness, or POC tests fail.
 ```bash
 PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
   --sft-dir data/banking-servicing-alignment-v5 \
-  --output-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --source-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json \
-  --expected-release-lock data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json
+  --output-dir data/banking-conversation-router-v9-surface-form \
+  --source-lock data/sources/banking-conversation-router-v9-surface-form.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v9-surface-form.lock.json
 ```
 
 Validate the JSON and expected counts:
 
 ```bash
-python -m json.tool data/banking-conversation-router-v8-first-turn-mutation/manifest.json >/dev/null
-python -m json.tool data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json >/dev/null
+python -m json.tool data/banking-conversation-router-v9-surface-form/manifest.json >/dev/null
+python -m json.tool data/sources/banking-conversation-router-v9-surface-form.lock.json >/dev/null
 
 python - <<'PY'
 import json
 from pathlib import Path
 
 manifest = json.loads(
-    Path("data/banking-conversation-router-v8-first-turn-mutation/manifest.json").read_text()
+    Path("data/banking-conversation-router-v9-surface-form/manifest.json").read_text()
 )
 actual = manifest["report"]["split_counts"]
 expected = {"train": 20439, "validation": 4158, "test": 4921}
@@ -106,14 +106,14 @@ The training identity is already pinned:
 
 ```text
 spkc83/retail-bank-conversation-router-data
-b33c27170e27cdb11783704ede14f7d25f70625e
+9618f2a8adef86a681624b7d3ce24e122a4323a2
 ```
 
 For a future dataset, upload its directory and capture the returned commit:
 
 ```bash
 hf upload spkc83/retail-bank-conversation-router-data \
-  data/banking-conversation-router-v8-first-turn-mutation . \
+  data/banking-conversation-router-v9-surface-form . \
   --type dataset \
   --commit-message "Publish V6 hierarchical router data"
 ```
@@ -124,8 +124,8 @@ Do not train against `main`; use the immutable commit.
 
 ```bash
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation
+  --dataset-dir data/banking-conversation-router-v9-surface-form \
+  --output-dir artifacts/banking-conversation-router-v9-surface-form
 ```
 
 Check the gate:
@@ -136,7 +136,7 @@ import json
 from pathlib import Path
 
 metrics = json.loads(
-    Path("artifacts/banking-conversation-router-v8-first-turn-mutation/metrics.json").read_text()
+    Path("artifacts/banking-conversation-router-v9-surface-form/metrics.json").read_text()
 )
 assert metrics["release_eligible"] is True
 assert metrics["release_gate_failures"] == []
@@ -152,8 +152,8 @@ PY
 
 The release selected epoch 2 and passed every gate.
 
-> **A rebuild at HEAD is release eligible, but it is not the shipped router.**
-> Retraining from the shipped corpus reproduces the shipped metrics exactly: the
+> **The release corpus changed on 2026-09-03, and this is why.** Retraining from
+> the previous release corpus (v8) reproduces its metrics exactly: the
 > trainer is deterministic on one GPU at seed 7401. Retraining from the corpus HEAD
 > derived before 2026-09-03 failed five gates, and the cause was not the deictic
 > families (they only compound it). It was terminal punctuation acting as the
@@ -177,11 +177,13 @@ The release selected epoch 2 and passed every gate.
 > form for every servicing intent (+498 train, +99 validation), and a surface-form
 > pass rewrites a fixed share of train and validation rows into the other
 > punctuation form so the mark carries no signal. The result is
-> `data/banking-conversation-router-v9-surface-form`. A router trained on it at
-> seed 7401 clears every gate: repair and held-out regression at 0.0, in-domain
-> false refusal 0.0024, OOD false accept 0.0145 (shipped: 0.0061), intent macro-F1
-> 0.994 (shipped: 0.997). It is a local candidate. The shipped router stays pinned
-> and deployed until the candidate is published deliberately through section 5.
+> `data/banking-conversation-router-v9-surface-form`, the release corpus above. The
+> router trained on it clears every gate at seeds 7401, 11 and 23: repair and
+> held-out regression at 0.0, in-domain false refusal 0.0024, OOD false
+> accept 0.0145 (v8: 0.0061), intent macro-F1 0.994 (v8: 0.997). It was
+> published as `a666075f9193f4d4dcbca0391225571a59e3fda9` on 2026-09-04 and replaced the v8
+> router `dd5ea26674a0f9808d42110a9ee51a9af6762a76`, whose corpus stays in the repository as a frozen
+> artifact so its numbers remain reproducible.
 >
 > Excluding the deictic curricula is still **not** a fix: it drops train to 16,483
 > and `load_governed_data` then refuses outright, because the counterfactual
@@ -192,18 +194,18 @@ The release selected epoch 2 and passed every gate.
 Publication requires the exact dataset revision:
 
 ```bash
-ROUTER_DATA_REVISION=b33c27170e27cdb11783704ede14f7d25f70625e
+ROUTER_DATA_REVISION=9618f2a8adef86a681624b7d3ce24e122a4323a2
 
 PYTHONPATH=src uv run scripts/retail_bank/train_conversation_router.py \
-  --dataset-dir data/banking-conversation-router-v8-first-turn-mutation \
-  --output-dir artifacts/banking-conversation-router-v8-first-turn-mutation \
+  --dataset-dir data/banking-conversation-router-v9-surface-form \
+  --output-dir artifacts/banking-conversation-router-v9-surface-form \
   --publish \
   --data-revision "$ROUTER_DATA_REVISION" \
   --destination-id spkc83/retail-bank-conversation-router
 ```
 
 Capture the returned commit. For this release it is
-`dd5ea26674a0f9808d42110a9ee51a9af6762a76`. Re-read the published
+`a666075f9193f4d4dcbca0391225571a59e3fda9` (the previous release was `dd5ea26674a0f9808d42110a9ee51a9af6762a76`). Re-read the published
 `router_config.json` and confirm `format_version: 4` plus the exact data
 revision.
 
@@ -211,7 +213,7 @@ revision.
 
 ```bash
 export RETAIL_BANK_ROUTER_ID=spkc83/retail-bank-conversation-router
-export RETAIL_BANK_ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
+export RETAIL_BANK_ROUTER_REVISION=a666075f9193f4d4dcbca0391225571a59e3fda9
 uv run scripts/retail_bank/run_local_streamlit.py
 ```
 
@@ -231,7 +233,7 @@ exposed tool schema, model passes, and immutable revisions.
 
 ```bash
 ADAPTER_REVISION=47968b2b9ce02973b5676e464aafaa768cdbb05e
-ROUTER_REVISION=dd5ea26674a0f9808d42110a9ee51a9af6762a76
+ROUTER_REVISION=a666075f9193f4d4dcbca0391225571a59e3fda9
 
 PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
   --space-id spkc83/retail-bank-servicing-poc \
@@ -250,7 +252,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/deploy_zero_gpu_space.py \
 
 Review the plan, then repeat with `--execute --allow-publish`. The current
 Space source commit is
-`2a6501b6d5029d1e1991f7444c9f352eef31b000`; the pins it carries are in the
+`4e6f24bbf1740656db0d9e2f5c13ec35cd68528c`; the pins it carries are in the
 [artifact ledger](reference/artifacts.md). The Space runs on `zero-a10g` and reports `SLEEPING`
 between requests — the normal ZeroGPU idle state, not an outage.
 Authenticated chat smoke on ZeroGPU is pending -- the credentials are held in the

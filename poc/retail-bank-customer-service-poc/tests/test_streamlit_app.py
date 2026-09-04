@@ -25,7 +25,7 @@ def test_local_streamlit_prefers_the_canonical_hierarchical_router() -> None:
     artifact = resolve_local_router_artifact()
 
     assert artifact is not None
-    assert artifact.name == "banking-conversation-router-v8-first-turn-mutation"
+    assert artifact.name == "banking-conversation-router-v9-surface-form"
     assert (artifact / "classifier_heads.safetensors").is_file()
     assert (artifact / "router_config.json").is_file()
 
