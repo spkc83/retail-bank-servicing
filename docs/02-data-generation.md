@@ -51,6 +51,35 @@ The expected lock makes regeneration fail if split digests drift. Use
 `--skip-release-digest-check` only while deliberately creating a new candidate,
 never when reproducing this release.
 
+That command reproduces the corpus the deployed router was trained on, and it is
+pinned: HEAD no longer derives it, because the alignment corpus and the derivation
+have both moved since 2026-08-20. The corpus HEAD builds today is:
+
+```bash
+PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_data.py \
+  --sft-dir data/banking-servicing-alignment-v5 \
+  --output-dir data/banking-conversation-router-v9-surface-form \
+  --source-lock data/sources/banking-conversation-router-v9-surface-form.lock.json \
+  --expected-release-lock data/sources/banking-conversation-router-v9-surface-form.lock.json
+```
+
+It must reproduce byte for byte, and `make corpora` checks that it does. A router
+trained on it passes every release gate ([runbook, section 4](08-end-to-end-runbook.md#4-train-locally)),
+but it is not published: the deployed router is still the v8 artifact.
+
+## Derivation Guards
+
+Three passes in
+[`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py)
+shape what reaches the router beyond the label mapping. Each exists because a
+retrained router failed without it.
+
+| Pass | What it does | Why |
+| --- | --- | --- |
+| Retired-realizer filter | Drops any alignment record whose user turn has the shape "Can you what information is needed for a card dispute": a request opener stacked on a text that was already a question. Applies to every split. | The tool-SFT realizer produced that shape until 2026-08-20. Train lost it; the frozen test splits still carry 31 such prompts, and a router trained on clean text refuses them, so the false-refusal gate was measuring a retired template. The alignment fixtures themselves are untouched. |
+| First-turn phrasing family | Hand-written first turns for every servicing intent and policy: real questions ("What is my checking account balance?"), modal requests ("Could you pull up my transfers?"), greeting-led asks ("Hi, can you freeze my card?") and two-word asks ("Balance check."). Train and validation only. | The corpus was built around transitions between tasks; first-turn wh-questions were zero for six intents and modal requests numbered ten to twenty-six, while CLINC supplies thousands of "can you set an alarm" lines in the same shape. |
+| Surface-form pass | Rewrites a fixed 35% share of train and validation rows into the other punctuation form: banking and social rows lose their terminal mark and capital, out-of-domain rows gain them. The test split is never rewritten. | With an uncased encoder, terminal punctuation was the only surface cue left, and it predicted the domain almost perfectly. The same words scored 0.01 banking bare and 1.00 punctuated. |
+
 ## Record Structure
 
 Each JSONL record contains the source conversation plus supervised hierarchy:

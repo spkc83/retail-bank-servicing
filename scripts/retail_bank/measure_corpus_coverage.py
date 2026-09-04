@@ -31,7 +31,7 @@ from hello_slm.banking_corpus_coverage import (  # noqa: E402
 )
 
 CORPORA = {
-    "router": REPO_ROOT / "data/banking-conversation-router-v8-first-turn-mutation",
+    "router": REPO_ROOT / "data/banking-conversation-router-v9-surface-form",
     "alignment": REPO_ROOT / "data/banking-servicing-alignment-v5",
 }
 SPEC = REPO_ROOT / "configs/corpus-coverage.toml"

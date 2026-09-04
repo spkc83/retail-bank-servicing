@@ -4,6 +4,8 @@ import copy
 from collections import Counter
 from typing import Any
 
+import pytest
+
 from hello_slm.banking_conversation_router_data import (
     INTENT_LABELS,
     RELATION_LABELS,
@@ -921,3 +923,255 @@ def test_retrospective_status_questions_stay_converse_and_never_touch_test() -> 
         "dispute_transaction",
         "cancel_transfer",
     }
+
+
+# The tool-SFT realizer used to stack a request opener on a stem that was already a
+# question, producing "Can you what information is needed for a card dispute". Train
+# stopped carrying that shape on 2026-08-20, but the frozen test splits still do, so a
+# router trained on the current corpus refuses them as out-of-domain and the false-refusal
+# gate measures the retired template instead of the router.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Can you how does a card purchase dispute work so I can finish this banking task",
+        "Can you what information is needed for a card dispute",
+        "I need you to how do I safely report card fraud while I am checking the mobile app",
+        "Would you what should I do if I see card fraud",
+        "Could you how is delivery handled for a replacement card",
+        "Help me what are the usual steps to open a bank account so I can decide what to do next",
+        "Help me can you open another checking account for me while I am checking the mobile app",
+        "Could you can I add a new checking account in this chat",
+        "Can you can you help me open a mortgage account because I noticed something unexpected",
+        "Please what do banks usually require for a new account",
+        "Please how do I apply for a mortgage because I am reviewing my monthly budget",
+        "Would you how does interest on a savings account work",
+    ],
+)
+def test_retired_realizer_shape_is_detected(text: str) -> None:
+    from hello_slm.banking_conversation_router_data import is_retired_realizer_prompt
+
+    assert is_retired_realizer_prompt(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Can you tell me about replacement card timing while I am checking the app",
+        "Could you mark Bright Meadow Electronics for dispute",
+        "Please can you help me open a mortgage account",
+        "Please can this demo create a new deposit account",
+        "Help me choose the debit card to replace.",
+        "What information is needed for a card dispute?",
+        "Can you pull up my account list with balances?",
+        "hello can you help",
+        "why are you repeating yourself",
+        "Could you, when you have a moment, list my cards?",
+    ],
+)
+def test_well_formed_openers_are_not_mistaken_for_the_retired_shape(text: str) -> None:
+    from hello_slm.banking_conversation_router_data import is_retired_realizer_prompt
+
+    assert not is_retired_realizer_prompt(text)
+
+
+def test_retired_realizer_rows_never_reach_any_router_split() -> None:
+    records = sft_records_by_split()
+    for split in ("train", "validation", "test"):
+        records[split].append(
+            _record(
+                split=split,
+                record_id=f"{split}-mangled",
+                scenario_family="faq_card_dispute",
+                user="Can you what information is needed for a card dispute",
+                assistant="A dispute needs the merchant, amount, and date.",
+                path="retrieval_grounded_policy",
+            )
+        )
+        carried = _record(
+            split=split,
+            record_id=f"{split}-mangled-history",
+            scenario_family="service_cases",
+            user="And when was that case opened?",
+            assistant="It was opened last month.",
+        )
+        carried["messages"][1:1] = [
+            {"role": "user", "content": "Help me how do I safely report card fraud"},
+            {"role": "assistant", "content": "Report it through the fraud line."},
+        ]
+        records[split].append(carried)
+
+    splits, report = build_conversation_router_splits(records, clinc_payload(), seed=7404)
+
+    mangled = normalize_router_text("Can you what information is needed for a card dispute")
+    for split, rows in splits.items():
+        assert all(normalize_router_text(row["current_text"]) != mangled for row in rows), split
+        assert all(row["current_text"] != "And when was that case opened?" for row in rows), split
+    assert report["retired_realizer_rows_excluded"] == 6
+
+
+def test_targeted_repair_rows_vary_the_wrong_topic_and_the_assistant_voice() -> None:
+    """A router that only ever saw four mortgage sentences as the wrong answer
+    routed a short repair after a savings or fee line out of domain. Train now
+    rotates through many wrong answers; the user prompts are unchanged, the row
+    count is unchanged, and validation/test keep their original two histories."""
+    from hello_slm.banking_conversation_router_data import _targeted_use_case_rows
+
+    def repair_rows(split: str) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in _targeted_use_case_rows(split)
+            if row["example_kind"] in {"targeted_agent_repair", "targeted_wrong_topic_repair"}
+        ]
+
+    train = repair_rows("train")
+    assistant_lines = {row["history"][-1]["content"] for row in train}
+    assert len(assistant_lines) >= 12
+    assert "Mortgage applicants are typically at least 18." not in assistant_lines
+    topics = {
+        topic
+        for line in assistant_lines
+        for topic in ("mortgage", "loan", "savings", "overdraft", "card")
+        if topic in line.lower()
+    }
+    assert {"savings", "overdraft", "card"} <= topics
+    conversational = ("Great question", "Sure thing", "Happy to", "Of course")
+    assert any(line.startswith(conversational) for line in assistant_lines)
+    assert sum(row["example_kind"] == "targeted_agent_repair" for row in train) == 512
+    assert sum(row["example_kind"] == "targeted_wrong_topic_repair" for row in train) == 512
+    line_counts = Counter(row["history"][-1]["content"] for row in train)
+    assert max(line_counts.values()) - min(line_counts.values()) <= 16
+    for split in ("validation", "test"):
+        held = {row["history"][-1]["content"] for row in repair_rows(split)}
+        assert held == {
+            "Mortgage applications usually require an eligibility review.",
+            "Home-loan rates vary with the selected product.",
+        }
+
+
+def test_first_turn_phrasing_rows_cover_every_servicing_intent_in_question_and_modal_form() -> None:
+    """The plain first ask -- "What is my balance?", "Could you pull up my transfers?",
+    "Hi, can you freeze my card?" -- was the neglected case across the servicing
+    lane: first-turn wh-questions were zero for six intents and modal requests
+    numbered ten to twenty-six, while CLINC supplies thousands of "can you set an
+    alarm" out-of-domain rows. These rows are train/validation only and never test."""
+    from hello_slm.banking_conversation_router_data import (
+        _contains_screenshot_regression_ngram,
+        _first_turn_phrasing_rows,
+        _is_screenshot_regression_text,
+    )
+    from hello_slm.banking_corpus_coverage import phrasing_form
+
+    assert _first_turn_phrasing_rows("test") == []
+    train = _first_turn_phrasing_rows("train")
+    validation = _first_turn_phrasing_rows("validation")
+    assert train and validation
+    assert {row["current_text"] for row in train}.isdisjoint(
+        row["current_text"] for row in validation
+    )
+    servicing = {
+        "view_accounts",
+        "view_cards",
+        "view_transactions",
+        "view_transfers",
+        "view_service_cases",
+        "freeze_card",
+        "replace_card",
+        "dispute_transaction",
+        "cancel_transfer",
+    }
+    forms: Counter[tuple[str, str]] = Counter()
+    for row in train + validation:
+        assert row["history"] == []
+        assert row["domain_label"] == 1
+        assert row["example_kind"] == "first_turn_phrasing"
+        assert row["source"] == "self-authored-router-v9-first-turn-phrasing"
+        assert not _is_screenshot_regression_text(row["current_text"])
+        assert not _contains_screenshot_regression_ngram(row["current_text"])
+        forms[(row["intent"], phrasing_form(row["current_text"]))] += 1
+    reads = {name for name in servicing if name.startswith("view_")}
+    for intent in servicing:
+        # "Can I get a replacement card?" reads as a modal request, so the
+        # mutation intents carry fewer pure wh-questions than the reads.
+        assert forms[(intent, "wh_question")] >= (6 if intent in reads else 2), intent
+        assert forms[(intent, "modal_request")] >= 30, intent
+    assert forms[("policy_knowledge", "modal_request")] >= 20
+    by_intent = {row["intent"]: row for row in train}
+    assert (
+        by_intent["view_accounts"]["action_name"],
+        by_intent["view_accounts"]["entity_resolution_name"],
+    ) == ("execute_tool", "not_required")
+    assert (
+        by_intent["replace_card"]["action_name"],
+        by_intent["replace_card"]["entity_resolution_name"],
+    ) == ("clarify", "missing")
+    assert (
+        by_intent["dispute_transaction"]["action_name"],
+        by_intent["dispute_transaction"]["entity_resolution_name"],
+    ) == ("execute_tool", "resolved")
+    assert (
+        by_intent["policy_knowledge"]["action_name"],
+        by_intent["policy_knowledge"]["entity_resolution_name"],
+    ) == ("retrieve_policy", "not_required")
+
+
+def test_first_turn_phrasing_rows_reach_the_built_splits_but_not_test() -> None:
+    splits, report = build_conversation_router_splits(
+        sft_records_by_split(), clinc_payload(), seed=7404
+    )
+    assert report["kind_counts"]["train"]["first_turn_phrasing"] >= 400
+    assert report["kind_counts"]["validation"]["first_turn_phrasing"] >= 60
+    assert "first_turn_phrasing" not in report["kind_counts"]["test"]
+
+
+def test_terminal_punctuation_carries_no_domain_signal() -> None:
+    """Teacher-written banking prompts end in "?" or "."; CLINC lines are bare. With
+    an uncased encoder that mark was the domain label: the same words scored 0.01
+    banking bare and 1.00 punctuated. Train and validation now carry both surface
+    forms on both sides of the domain boundary; the test split is never rewritten."""
+    from hello_slm.banking_conversation_router_data import (
+        _bare_surface_form,
+        _punctuated_surface_form,
+    )
+
+    assert _bare_surface_form("Could you mark Bright Meadow Electronics for dispute?") == (
+        "could you mark Bright Meadow Electronics for dispute"
+    )
+    assert _punctuated_surface_form("can you set an alarm") == "Can you set an alarm?"
+    assert _punctuated_surface_form("tell me a joke") == "Tell me a joke."
+    assert _punctuated_surface_form("Explain photosynthesis.") == "Explain photosynthesis."
+
+    records = sft_records_by_split()
+    for split in ("train", "validation"):
+        for index in range(40):
+            records[split].append(
+                _record(
+                    split=split,
+                    record_id=f"{split}-surface-{index}",
+                    scenario_family="read_accounts",
+                    user=f"Show my balances for account number {index} please.",
+                    assistant="Main Checking has USD 10.00 available.",
+                )
+            )
+    clinc = clinc_payload()
+    clinc["train"] = [[f"tell me a joke about number {index}", "tell_joke"] for index in range(40)]
+    clinc["val"] = [[f"play song number {index}", "play_music"] for index in range(40)]
+    splits, _report = build_conversation_router_splits(records, clinc, seed=7404)
+
+    def punctuated_share(rows: list[dict[str, Any]]) -> float:
+        return sum(row["current_text"].endswith((".", "?", "!")) for row in rows) / len(rows)
+
+    for split in ("train", "validation"):
+        banking = [row for row in splits[split] if row["domain_label"] == 1 and not row["history"]]
+        external = [row for row in splits[split] if row["example_kind"] == "clinc_external_ood"]
+        assert 0.15 <= 1 - punctuated_share(banking) <= 0.6, split
+        assert 0.15 <= punctuated_share(external) <= 0.6, split
+        for row in splits[split]:
+            assert (
+                row["text"].split("\n")[1] == row["current_text"]
+                or "[PRIOR_DIALOGUE_STATE]" in row["text"]
+            )
+    assert all(
+        not row["current_text"].endswith((".", "?", "!"))
+        for row in splits["test"]
+        if row["example_kind"] == "clinc_external_ood"
+    )

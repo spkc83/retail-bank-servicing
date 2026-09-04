@@ -16,6 +16,7 @@ artifact.
 | Base encoder | `distilbert/distilbert-base-uncased@12040accade4e8a0f71eabdb258fecc2e7e948be` |
 | ZeroGPU Space source/pins | `spkc83/retail-bank-servicing-poc@2a6501b6d5029d1e1991f7444c9f352eef31b000` |
 | ZeroGPU runtime | RUNNING; authenticated model-generation smoke pending |
+| Rebuild candidate (local, unpublished) | `data/banking-conversation-router-v9-surface-form` (lock `data/sources/banking-conversation-router-v9-surface-form.lock.json`); a router trained on it passes every release gate, see [runbook section 4](../08-end-to-end-runbook.md#4-train-locally) |
 
 ### Dataset files
 

@@ -49,6 +49,10 @@ def router_row(text: str, **fields):
         ("Can you pull up my account list with balances", "modal_request"),
         ("Could you check my checking and savings summary?", "modal_request"),
         ("Would you show the accounts available to me", "modal_request"),
+        ("Hi there, can you show my cards?", "modal_request"),
+        ("Good morning, could you pull up my transfers?", "modal_request"),
+        ("Hello — can you freeze my card?", "modal_request"),
+        ("Good morning, what is my balance?", "wh_question"),
         ("Balance please", "elliptical"),
         ("Thanks.", "elliptical"),
         ("Freeze that one.", "deictic"),
@@ -121,9 +125,20 @@ def test_each_category_detector_stays_quiet_on_a_negative(row, category) -> None
 def test_every_declared_category_has_a_firing_test() -> None:
     """Adding a category without a detector test must fail here, not in prod."""
     covered = {
-        "in_domain", "social", "out_of_domain", "first_turn", "multi_turn", "long_running",
-        "counterfactual", "policy_question", "intent_drift", "loop_back", "agent_repair",
-        "clarification_answer", "adversarial", "multi_intent",
+        "in_domain",
+        "social",
+        "out_of_domain",
+        "first_turn",
+        "multi_turn",
+        "long_running",
+        "counterfactual",
+        "policy_question",
+        "intent_drift",
+        "loop_back",
+        "agent_repair",
+        "clarification_answer",
+        "adversarial",
+        "multi_intent",
     }
     assert set(CATEGORIES) == covered
 

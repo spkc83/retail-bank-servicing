@@ -68,13 +68,16 @@ CATEGORIES = (
     "multi_intent",
 )
 
+#: Up to two leading words ("Hi there,", "Good morning,", "Hello —") may precede
+#: the opener that decides the form.
+_LEAD_IN = r"(?:(?:[\w'’]+[,—–-]?|[—–-])\s+){0,2}"
 _WH_OPENER = re.compile(
-    r"^\s*(?:\w+,?\s+)?(what|what's|whats|how|how's|when|where|which|who|why|"
+    rf"^\s*{_LEAD_IN}(what|what's|whats|how|how's|when|where|which|who|why|"
     r"is|are|am|was|were|do|does|did|have|has)\b",
     re.IGNORECASE,
 )
 _MODAL_OPENER = re.compile(
-    r"^\s*(?:\w+,?\s+)?(can|could|would|will|should|may|might)\s+(?:you|u|we|i)\b",
+    rf"^\s*{_LEAD_IN}(can|could|would|will|should|may|might)\s+(?:you|u|we|i)\b",
     re.IGNORECASE,
 )
 _DEICTIC = re.compile(

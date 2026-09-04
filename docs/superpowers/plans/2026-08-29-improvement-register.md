@@ -434,6 +434,61 @@ finding), and the multi-intent regex counted a topic-switch scaffold sixty times
 Not done: the rows. Authoring them is the next data iteration, and the router cannot simply be
 rebuilt on them until the HEAD rebuild failure in section 4 of the runbook is resolved.
 
+## The router rebuild failure — root cause, and what the shipped pass was standing on
+
+Runbook section 4 said a rebuild at HEAD fails five gates because of the expanded deictic
+families. Measured on 2026-09-03, that attribution was wrong. Every run below is the unchanged
+trainer at seed 7401 on the TITAN V (about ten minutes each); T1 reproduces the shipped
+artifact's metrics exactly, so the pipeline is deterministic and the failure is data only.
+
+| run | corpus | result |
+| --- | --- | --- |
+| T1 | shipped corpus (20,439) | pass, identical to the shipped artifact |
+| T2 | HEAD derivation × alignment 0854312 (shipped source, +80 parked unsupported rows) | pass |
+| T3 | × alignment 5af9460 (2026-08-20 regeneration) | fail, five gates |
+| T4 | × alignment 5192e39 (+289 deictic-derived rows) | fail, eight gates |
+| T5 | T3 plus the 258 template-mangled rows spliced back | false refusal passes; repair fixture still fails |
+| T6 | T3 corpus, retired-realizer filter, repair histories re-voiced on the assistant side | false refusal 0.010; repair fixture still fails |
+| T7 | T6 plus 498 first-turn phrasing rows | false refusal 0.016; repair fixture still fails |
+| T8 | T7 plus the surface-form pass | **pass, every gate** |
+
+Two things were wrong, and the second explains the first.
+
+**The frozen test split is template-mangled.** `banking-v5-tool-sft/test.jsonl` and the alignment
+`test.jsonl` carry 31 prompts of the shape "Can you what information is needed for a card dispute":
+the retired realizer stacked an opener on a stem that was already a question. Train lost that shape
+on 2026-08-20. The router test split inherited 63 such rows; a router trained on clean text refused
+46 of them, and with a budget of 43 refusals in 2,162 in-domain rows no legitimate row could pass the
+gate. The shipped router passes because it trained on 129 of them. They are now filtered out of
+every router split at derivation (28 records, 84 derived test rows). The alignment and tool-SFT
+fixtures are untouched: rewriting them is a decision about the SLM's evaluation history, not the
+router's, and it is not taken here.
+
+**Terminal punctuation was the domain label.** Teacher-realized banking prompts end in `?` or `.`;
+CLINC out-of-domain lines are bare; the encoder is uncased, so the mark was the only surface cue
+left, and on first turns it predicted the domain almost perfectly (1,470 punctuated banking rows to
+24 bare; 4,043 bare OOD rows to 31 punctuated). The same words scored 0.01 banking bare and 1.00 with
+a `?` — "Could you mark Bright Meadow Electronics for dispute", "hello can you help", and both
+held-out repair fixture turns, which are bare. That is why 498 well-formed first-turn rows moved
+nothing (T7: the router classified every one of its own phrasing rows correctly and still refused
+the bare probe), why the mangled rows "fixed" it (they were the only unpunctuated banking text), and
+why the repair failure was stable across seeds 7401, 11 and 23. A surface-form pass now rewrites a
+fixed 35% share of train and validation rows into the other form. T8 clears every gate with the
+repair fixture at 0.998 banking / 0.98 agent_repair, at a measurable cost: OOD false accept 0.0145
+against the shipped 0.0061, intent macro-F1 0.994 against 0.997.
+
+Seed stability, since the zero-tolerance gates deserve the question: on the T3 corpus, seed 23
+tripped the trajectory and social gates that seed 7401 passes, so a single-seed pass there was a
+single-seed pass. The T8 corpus was retrained at seeds 11 and 23 as well; all three are release
+eligible with the repair gate at 0.0 (in-domain false refusal 0.0024 / 0.0014 / 0.0009, OOD false
+accept 0.0145 / 0.017 / 0.016). The definitive artifact is the seed-7401 run on the committed corpus,
+`artifacts/banking-conversation-router-v9-surface-form` (local; `artifacts/` is not tracked).
+
+Not done, deliberately: publishing the rebuilt router. The v8 artifact stays deployed; the candidate
+corpus is `data/banking-conversation-router-v9-surface-form` with its lock, reproducible by
+`make corpora`, and the coverage gate now measures it with raised minimums for the cells the
+phrasing family filled.
+
 ## Recommended order
 
 Findings 1 and 5–7 first: they are cheap, and until they land, no experiment result from this

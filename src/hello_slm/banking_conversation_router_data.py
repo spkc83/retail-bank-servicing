@@ -163,8 +163,12 @@ def build_conversation_router_splits(
     trajectory_to_split: dict[str, str] = {}
     counterfactual_pair_to_split: dict[str, str] = {}
 
+    retired_realizer_rows_excluded = 0
     for split in ROUTER_SPLITS:
         for record in sft_records_by_split.get(split, []):
+            if _carries_retired_realizer_prompt(record):
+                retired_realizer_rows_excluded += 1
+                continue
             row = _row_from_sft_record(record, split)
             if row is None:
                 continue
@@ -204,9 +208,12 @@ def build_conversation_router_splits(
         splits[split].extend(_ineligible_entity_rows(split))
     for split in ROUTER_SPLITS:
         splits[split].extend(_first_turn_mutation_opener_rows(split))
+        splits[split].extend(_first_turn_phrasing_rows(split))
         splits[split].extend(_retrospective_status_rows(split))
         splits[split].extend(_unsupported_capability_rows(split))
     splits["test"].extend(_held_out_regression_rows())
+    for split in ROUTER_SPLITS:
+        splits[split] = _surface_form_augmentation(splits[split], split, seed)
 
     deduplicated, duplicates_removed = _deduplicate_across_splits(splits)
     report = {
@@ -241,6 +248,7 @@ def build_conversation_router_splits(
             for split, rows in deduplicated.items()
         },
         "cross_split_duplicates_removed": duplicates_removed,
+        "retired_realizer_rows_excluded": retired_realizer_rows_excluded,
         "pii_matches": _count_pii_matches(
             str(row["text"]) for rows in deduplicated.values() for row in rows
         ),
@@ -300,6 +308,41 @@ _SFT_ONLY_SCENARIO_FAMILIES = frozenset(
         "deictic_replace_reinforcement_ambiguity",
     }
 )
+
+
+# The tool-SFT realizer once glued a request opener onto a stem that was already a
+# question, so "what information is needed for a card dispute" shipped as "Can you
+# what information is needed for a card dispute". Train stopped carrying that shape on
+# 2026-08-20; the frozen test splits still do (31 of the 215 alignment test rows), and a
+# router trained on the current corpus refuses them as out-of-domain. The gate was then
+# measuring the retired template, not the router: the shipped artifact passes it only
+# because it trained on 129 such rows. These rows are dropped from every router split
+# so the false-refusal denominator holds prompts the generator can still produce. The
+# alignment fixtures themselves stay byte-identical.
+_RETIRED_REALIZER_SHAPE = re.compile(
+    r"^\s*(?:"
+    r"(?:can you|could you|would you|help me|i need you to)\s+"
+    r"(?:what|what's|how|when|where|why|which|who|can|could|would|should|will|is|are|do|does|did)"
+    r"|please\s+(?:what|what's|how|when|where|why|which|who)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_retired_realizer_prompt(text: str) -> bool:
+    """True for the opener-on-a-question shape the retired realizer produced."""
+    return _RETIRED_REALIZER_SHAPE.match(text or "") is not None
+
+
+def _carries_retired_realizer_prompt(record: Mapping[str, Any]) -> bool:
+    messages = record.get("messages")
+    if not isinstance(messages, list):
+        return False
+    return any(
+        item.get("role") == "user" and is_retired_realizer_prompt(str(item.get("content", "")))
+        for item in messages
+        if isinstance(item, Mapping)
+    )
 
 
 def _row_from_sft_record(record: dict[str, Any], split: str) -> dict[str, Any] | None:
@@ -393,6 +436,102 @@ def _external_clinc_rows(
             )
         )
     return rows
+
+
+# Terminal punctuation was the domain label. Teacher-realized banking prompts end in
+# "?" or "."; CLINC out-of-domain lines are bare; the encoder is uncased, so
+# punctuation was the one surface cue left, and on first turns it predicted the
+# domain almost perfectly (1,470 punctuated banking rows against 24 bare; 4,043 bare
+# OOD rows against 31 punctuated). A router trained on that corpus scored "Could you
+# mark Bright Meadow Electronics for dispute" at 0.01 banking and the same words with
+# a "?" at 1.00, and it lost both held-out repair fixture turns -- "why are you
+# repeating yourself", "I didn't ask about mortgage" -- for the same reason. The
+# shipped router only escaped because 129 template-mangled, unpunctuated banking
+# prompts happened to break the cue. This pass rewrites a fixed share of train and
+# validation rows into the other surface form so the cue carries no signal. The test
+# split is never touched.
+SURFACE_FORM_SHARE = 0.35
+_QUESTION_OPENERS = (
+    "what",
+    "how",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "is",
+    "are",
+    "am",
+    "was",
+    "were",
+    "do",
+    "does",
+    "did",
+    "have",
+    "has",
+    "can",
+    "could",
+    "would",
+    "will",
+    "should",
+    "may",
+    "might",
+)
+
+
+def _selected_for_surface_form(seed: int, split: str, text: str) -> bool:
+    digest = _stable_rank(seed, split, "surface-form", text)
+    return int(digest[:8], 16) / 0xFFFFFFFF < SURFACE_FORM_SHARE
+
+
+def _bare_surface_form(current: str) -> str:
+    """The way a customer types in a hurry: no terminal mark, no capital."""
+    stripped = current.strip().rstrip(".?!").rstrip()
+    return stripped[:1].lower() + stripped[1:] if stripped else current
+
+
+def _punctuated_surface_form(current: str) -> str:
+    """The way a teacher writes: a capital and a terminal mark."""
+    stripped = current.strip()
+    if not stripped or stripped[-1] in ".?!":
+        return stripped
+    mark = "?" if stripped.split(maxsplit=1)[0].lower() in _QUESTION_OPENERS else "."
+    return stripped[:1].upper() + stripped[1:] + mark
+
+
+def _surface_form_augmentation(
+    rows: list[dict[str, Any]],
+    split: str,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if split == "test":
+        return rows
+    augmented: list[dict[str, Any]] = []
+    for row in rows:
+        current = str(row["current_text"])
+        if not _selected_for_surface_form(seed, split, str(row["text"])):
+            augmented.append(row)
+            continue
+        rewritten = (
+            _punctuated_surface_form(current)
+            if int(row["domain_label"]) == 0
+            else _bare_surface_form(current)
+        )
+        if rewritten == current:
+            augmented.append(row)
+            continue
+        augmented.append(
+            {
+                **row,
+                "current_text": rewritten,
+                "text": render_router_input(
+                    rewritten,
+                    row["history"],
+                    prior_dialogue_state=row.get("prior_dialogue_state"),
+                ),
+            }
+        )
+    return augmented
 
 
 def _synthetic_generalization_rows(
@@ -517,6 +656,14 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
             },
         ],
     )
+    # The first four histories are the original set and are the only ones the
+    # validation and test splits see. The rest exist because a router trained on
+    # them alone learned "repair" from these four mortgage sentences: with a terse
+    # wrong-topic line about savings or fees in history, "why are you repeating
+    # yourself" scored 0.18 banking and was routed as a topic shift out of domain.
+    # The extra histories vary the wrong topic and the assistant's voice (terse
+    # canned and conversational) while the user prompts stay exactly as they were,
+    # so the held-out repair fixture gains no new paraphrase neighbours.
     wrong_answer_histories = (
         [
             {"role": "user", "content": "Tell me about my address service case."},
@@ -546,6 +693,73 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
                 "content": "Loan applications are reviewed by a lender.",
             },
         ],
+        [
+            {"role": "user", "content": "Is my mailing-address case closed?"},
+            {"role": "assistant", "content": "Savings interest is usually credited monthly."},
+        ],
+        [
+            {"role": "user", "content": "What is the status of my address change?"},
+            {
+                "role": "assistant",
+                "content": "Overdraft fees apply when a payment takes the balance below zero.",
+            },
+        ],
+        [
+            {"role": "user", "content": "Look up my address-update case."},
+            {
+                "role": "assistant",
+                "content": "Card replacements usually arrive within five to seven business days.",
+            },
+        ],
+        [
+            {"role": "user", "content": "Has the address case been resolved?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Great question — mortgage applications go through an eligibility "
+                    "review first, and I can walk you through what that involves."
+                ),
+            },
+        ],
+        [
+            {"role": "user", "content": "Did the mailing-address request go through?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Sure thing! Savings interest is normally credited once a month, so "
+                    "you'd see it land at the start of each cycle."
+                ),
+            },
+        ],
+        [
+            {"role": "user", "content": "Where does my address case stand?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Happy to help with that — overdraft charges only kick in when a "
+                    "payment exceeds what's available, and there's a daily cap."
+                ),
+            },
+        ],
+        [
+            {"role": "user", "content": "Check my customer-service case about the address."},
+            {
+                "role": "assistant",
+                "content": (
+                    "Home-loan applicants generally need a credit check and proof of income."
+                ),
+            },
+        ],
+        [
+            {"role": "user", "content": "Can you find my address correction case?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Of course! Interest on a standard savings account compounds daily "
+                    "and posts to the balance monthly."
+                ),
+            },
+        ],
     )
     prompts = _targeted_prompts(split)
     modifiers = _targeted_modifiers(split)
@@ -571,7 +785,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
         (
             "repetition_repair",
             prompts["repetition_repair"],
-            wrong_answer_histories[:history_limit],
+            wrong_answer_histories if split == "train" else wrong_answer_histories[:history_limit],
             "view_service_cases",
             ["context_dependent", "agent_repair"],
             "targeted_agent_repair",
@@ -579,7 +793,7 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
         (
             "wrong_topic_repair",
             prompts["wrong_topic_repair"],
-            wrong_answer_histories[:history_limit],
+            wrong_answer_histories if split == "train" else wrong_answer_histories[:history_limit],
             "view_service_cases",
             ["context_dependent", "agent_repair", "topic_shift"],
             "targeted_wrong_topic_repair",
@@ -595,7 +809,17 @@ def _targeted_use_case_rows(split: str) -> list[dict[str, Any]]:
     ) in categories:
         for prompt_index, prompt in enumerate(category_prompts):
             for modifier_index, modifier in enumerate(modifiers):
-                for history_index, history in enumerate(histories):
+                # A category with more histories than the split's limit rotates
+                # through them so the row count stays what it was and every
+                # history is used equally; the others enumerate as before.
+                offset = prompt_index * len(modifiers) + modifier_index
+                picked = (
+                    [(offset + step) % len(histories) for step in range(history_limit)]
+                    if len(histories) > history_limit
+                    else range(len(histories))
+                )
+                for history_index in picked:
+                    history = histories[history_index]
                     rows.append(
                         _make_row(
                             current=f"{prompt}{modifier}",
@@ -2154,6 +2378,265 @@ def _first_turn_mutation_opener_rows(split: str) -> list[dict[str, Any]]:
     return rows
 
 
+# The plain first ask. The corpus is built around transitions between tasks, so a
+# customer's opening line -- a real question ("What is my checking balance?"), a
+# polite request ("Could you pull up my transfers?"), a greeting-led one ("Hi, can
+# you freeze my card?") or a two-word ask ("Balance check.") -- was the neglected
+# case: first-turn wh-questions were zero for six servicing intents and modal
+# requests numbered ten to twenty-six per intent, while CLINC supplies thousands of
+# "can you set an alarm" out-of-domain lines in the same shape. A router trained
+# without these scored "Could you mark Bright Meadow Electronics for dispute" at
+# 0.04 banking. Train and validation only; the test split stays frozen.
+_FIRST_TURN_QUESTIONS: dict[str, tuple[str, ...]] = {
+    "view_accounts": (
+        "What is my checking account balance?",
+        "What's the balance on my savings account?",
+        "How much money is in my checking account right now?",
+        "How much do I have across my accounts?",
+        "What accounts do I have with you?",
+        "Which accounts are on my profile?",
+        "What is my available balance?",
+        "How much is in savings at the moment?",
+        "What are my current account balances?",
+        "Is my checking balance above zero today?",
+        "Do I have anything in my savings account?",
+        "What's my total balance?",
+    ),
+    "view_cards": (
+        "Which cards do I have?",
+        "What cards are on my profile?",
+        "Is my debit card active?",
+        "What is the status of my debit card?",
+        "Which of my cards is currently frozen?",
+        "How many cards are linked to this account?",
+        "What are the last four digits of my active card?",
+        "Are any of my cards blocked right now?",
+        "Which card is set as active?",
+        "Do I have a card on file?",
+        "What cards are registered under my name?",
+        "Is my card still frozen?",
+    ),
+    "view_transactions": (
+        "What are my recent transactions?",
+        "What did I spend at the grocery store last week?",
+        "What was my last card purchase?",
+        "How much did I spend yesterday?",
+        "Which transactions posted today?",
+        "What charges are on my card this month?",
+        "Where did my last payment go?",
+        "What was the most recent charge on my debit card?",
+        "Are there any pending transactions?",
+        "What did I buy on Tuesday?",
+        "How many transactions were there this week?",
+        "What's the latest activity on my account?",
+    ),
+    "view_transfers": (
+        "What transfers have I made recently?",
+        "Which transfers are still pending?",
+        "When was my last transfer sent?",
+        "What is the status of my transfer to River Consulting?",
+        "How much did I transfer last week?",
+        "Did my transfer go through?",
+        "Which payments did I send this month?",
+        "Is the transfer to my landlord still scheduled?",
+        "What's the status of the payment I sent on Friday?",
+        "Are there any outgoing transfers waiting?",
+        "Where did my last transfer go?",
+        "What transfers left my account today?",
+    ),
+    "view_service_cases": (
+        "What support cases do I have open?",
+        "Which service requests are on my profile?",
+        "Is my address change case closed yet?",
+        "What is the status of my service request?",
+        "When was my last support case opened?",
+        "Are there any open cases on my account?",
+        "What happened with my address update request?",
+        "Which of my cases are still in progress?",
+        "How many service cases do I have?",
+        "What was my most recent service request about?",
+    ),
+    "freeze_card": (
+        "Can my card be frozen right now?",
+        "Is it possible to lock my debit card immediately?",
+        "Could my card ending in 4821 be frozen today?",
+        "Will you freeze my debit card for me?",
+        "Is there a way to block my card straight away?",
+        "Can I put a hold on my debit card?",
+    ),
+    "replace_card": (
+        "Can I get a replacement card?",
+        "Is it possible to order a new debit card?",
+        "Could I have my card replaced?",
+        "Will you order me a replacement debit card?",
+        "Is a replacement for my damaged card something you can arrange?",
+        "Can I request a new card?",
+    ),
+    "dispute_transaction": (
+        "Can I dispute the charge from Bright Meadow Electronics?",
+        "Is it possible to challenge the Lakeview Bakery transaction?",
+        "Could the payment to Harbor Coffee Roasters be disputed?",
+        "Will you raise a dispute for the Bright Meadow Electronics purchase?",
+        "Is there a way to contest the charge from Lakeview Bakery?",
+        "Can I challenge the Maple Street Hardware charge?",
+    ),
+    "cancel_transfer": (
+        "Can I cancel the transfer to River Consulting?",
+        "Is it possible to stop the payment to my landlord?",
+        "Could the transfer to Jordan Lee be cancelled?",
+        "Will you cancel my pending transfer to Jordan Lee?",
+        "Is there a way to stop the transfer to my landlord before it goes out?",
+        "Can I call off the payment to River Consulting?",
+    ),
+}
+_FIRST_TURN_STEMS: dict[str, tuple[str, ...]] = {
+    "view_accounts": (
+        "show my account balances",
+        "pull up my accounts",
+        "check my checking balance",
+        "tell me how much is in savings",
+        "list the accounts on my profile",
+    ),
+    "view_cards": (
+        "show my cards",
+        "see whether my debit card is active",
+        "list the cards on my profile",
+        "tell me the status of my card",
+        "look up my cards",
+    ),
+    "view_transactions": (
+        "show my recent transactions",
+        "pull up my latest card charges",
+        "list what I spent this week",
+        "check my recent purchases",
+        "look up my transaction history",
+    ),
+    "view_transfers": (
+        "show my recent transfers",
+        "check whether my last transfer went through",
+        "list my pending transfers",
+        "look up the payment I sent to River Consulting",
+        "pull up my outgoing payments",
+    ),
+    "view_service_cases": (
+        "show my service cases",
+        "check the status of my address update",
+        "list my open support requests",
+        "look up my recent service request",
+        "tell me whether my case is closed",
+    ),
+    "freeze_card": (
+        "freeze my debit card",
+        "lock my card ending in 4821",
+        "block my card right away",
+        "freeze my everyday debit card",
+        "put a hold on my debit card",
+    ),
+    "replace_card": (
+        "replace my debit card",
+        "order me a new card",
+        "send a replacement for my damaged card",
+        "get my card replaced",
+        "start a card replacement",
+    ),
+    "dispute_transaction": (
+        "dispute the Bright Meadow Electronics charge",
+        "file a dispute on the Lakeview Bakery transaction",
+        "challenge the payment to Maple Street Hardware",
+        "raise a dispute for the Harbor Coffee Roasters charge",
+        "contest the Bright Meadow Electronics purchase",
+    ),
+    "cancel_transfer": (
+        "cancel my transfer to River Consulting",
+        "stop the payment to Jordan Lee",
+        "cancel the pending transfer to my landlord",
+        "call off the transfer to River Consulting",
+        "cancel the payment I sent to Jordan Lee",
+    ),
+    "policy_knowledge": (
+        "explain how card disputes work",
+        "tell me what happens after I report card fraud",
+        "walk me through replacing a lost card",
+        "explain how overdraft fees are charged",
+        "tell me how savings interest is credited",
+    ),
+}
+_FIRST_TURN_SHORT_ASKS: dict[str, tuple[str, ...]] = {
+    "view_accounts": ("Show my accounts.", "Account balances, please.", "Balance check."),
+    "view_cards": ("Show my cards.", "Card status, please.", "List my cards."),
+    "view_transactions": ("Show my transactions.", "Recent activity, please.", "Latest charges."),
+    "view_transfers": ("Show my transfers.", "Transfer history, please.", "Pending transfers."),
+    "view_service_cases": ("Show my service cases.", "Open cases, please.", "Case history."),
+}
+_FIRST_TURN_MODAL_FRAMES = (
+    "Can you {stem}?",
+    "Could you {stem}?",
+    "Would you {stem}?",
+    "Can you please {stem}?",
+    "Could you {stem} for me?",
+    "Hi, can you {stem}?",
+    "Hello, could you {stem}?",
+    "Hi there, can you {stem}?",
+    "Hey, could you {stem}?",
+    "Good morning, can you {stem}?",
+)
+_FIRST_TURN_LABELS: dict[str, tuple[str, str]] = {
+    "view_accounts": ("execute_tool", "not_required"),
+    "view_cards": ("execute_tool", "not_required"),
+    "view_transactions": ("execute_tool", "not_required"),
+    "view_transfers": ("execute_tool", "not_required"),
+    "view_service_cases": ("execute_tool", "not_required"),
+    "freeze_card": ("execute_tool", "resolved"),
+    "replace_card": ("clarify", "missing"),
+    "dispute_transaction": ("execute_tool", "resolved"),
+    "cancel_transfer": ("execute_tool", "resolved"),
+    "policy_knowledge": ("retrieve_policy", "not_required"),
+}
+
+
+def _first_turn_phrasing_rows(split: str) -> list[dict[str, Any]]:
+    if split == "test":
+        return []
+    candidates: list[tuple[str, str]] = []
+    for intent, questions in _FIRST_TURN_QUESTIONS.items():
+        candidates.extend((question, intent) for question in questions)
+    for intent, asks in _FIRST_TURN_SHORT_ASKS.items():
+        candidates.extend((ask, intent) for ask in asks)
+    for intent, stems in _FIRST_TURN_STEMS.items():
+        for stem in stems:
+            candidates.extend(
+                (frame.format(stem=stem), intent) for frame in _FIRST_TURN_MODAL_FRAMES
+            )
+
+    rows: list[dict[str, Any]] = []
+    for index, (current, intent) in enumerate(candidates):
+        if (index % 6 == 5) != (split == "validation"):
+            continue
+        if _is_screenshot_regression_text(current) or _contains_screenshot_regression_ngram(
+            current
+        ):
+            continue
+        if normalize_router_text(current) in _FIRST_TURN_OPENER_EVAL_PROBES:
+            continue
+        action, entity_resolution = _FIRST_TURN_LABELS[intent]
+        rows.append(
+            _make_row(
+                current=current,
+                history=[],
+                domain_label=1,
+                intent=intent,
+                relation_names=[],
+                example_kind="first_turn_phrasing",
+                source="self-authored-router-v9-first-turn-phrasing",
+                source_split=split,
+                group_id=f"ft-phrasing|{split}|{intent}|{index}",
+                action=action,
+                entity_resolution=entity_resolution,
+            )
+        )
+    return rows
+
+
 # Unsupported banking capabilities: requests that are in-domain banking but have no
 # tool behind them. The shipped ``other_banking`` rows only ever meant "customer asked
 # for a private identifier", so capability asks fell through to the nearest confident
@@ -2162,138 +2645,210 @@ def _first_turn_mutation_opener_rows(split: str) -> list[dict[str, Any]]:
 # address changed") stay with ``view_service_cases``, which really can answer them.
 _UNSUPPORTED_CAPABILITY_PROMPTS = {
     "train": (
-        ("statement_artifact", (
-            "Email me my January statement.",
-            "I need a PDF of my account statement.",
-            "Download my statements for the last quarter.",
-            "Post a paper statement to my address.",
-            "Export my statement as a PDF.",
-            "Send me a copy of last month's statement.",
-        )),
-        ("pin_management", (
-            "I want to change my card PIN.",
-            "Reset the PIN on my debit card.",
-            "Set a new PIN for my card.",
-            "Unblock my PIN.",
-            "I forgot my PIN, please reset it.",
-            "Choose a new PIN for this card.",
-        )),
-        ("standing_order_setup", (
-            "Set up a standing order for my rent.",
-            "I want to create a monthly standing order.",
-            "Change the amount on my standing order.",
-            "Create a recurring payment to my landlord.",
-            "Set up a direct debit for my utilities.",
-            "Amend my existing standing order amount.",
-        )),
-        ("personal_details", (
-            "Update my address on file.",
-            "Change my registered phone number.",
-            "I moved, please update my address.",
-            "Update the email address on my account.",
-            "Change my name on the account.",
-            "Correct my date of birth on file.",
-        )),
-        ("account_lifecycle", (
-            "Open a new savings account for me.",
-            "Close my current account.",
-            "I want to open a joint account.",
-            "Can you open an ISA for me?",
-            "Please close my savings account.",
-            "Open a second current account.",
-        )),
-        ("lending", (
-            "Apply for an overdraft on my current account.",
-            "I want to increase my credit limit.",
-            "Apply for a personal loan.",
-            "Raise my overdraft limit.",
-            "Approve a loan for me.",
-            "Increase the limit on my credit card.",
-        )),
-        ("money_movement", (
-            "Send fifty pounds to my mum.",
-            "Make a payment to my landlord today.",
-            "Transfer money into my savings account.",
-            "Pay my credit card bill now.",
-            "Move funds between my accounts.",
-            "Send a wire transfer abroad.",
-        )),
-        ("misc_services", (
-            "Order a new cheque book.",
-            "I am travelling next week, add a travel notice.",
-            "Add a new payee to my account.",
-            "Register my trip abroad for card use.",
-            "Remove a saved payee.",
-            "Order a replacement cheque book.",
-        )),
+        (
+            "statement_artifact",
+            (
+                "Email me my January statement.",
+                "I need a PDF of my account statement.",
+                "Download my statements for the last quarter.",
+                "Post a paper statement to my address.",
+                "Export my statement as a PDF.",
+                "Send me a copy of last month's statement.",
+            ),
+        ),
+        (
+            "pin_management",
+            (
+                "I want to change my card PIN.",
+                "Reset the PIN on my debit card.",
+                "Set a new PIN for my card.",
+                "Unblock my PIN.",
+                "I forgot my PIN, please reset it.",
+                "Choose a new PIN for this card.",
+            ),
+        ),
+        (
+            "standing_order_setup",
+            (
+                "Set up a standing order for my rent.",
+                "I want to create a monthly standing order.",
+                "Change the amount on my standing order.",
+                "Create a recurring payment to my landlord.",
+                "Set up a direct debit for my utilities.",
+                "Amend my existing standing order amount.",
+            ),
+        ),
+        (
+            "personal_details",
+            (
+                "Update my address on file.",
+                "Change my registered phone number.",
+                "I moved, please update my address.",
+                "Update the email address on my account.",
+                "Change my name on the account.",
+                "Correct my date of birth on file.",
+            ),
+        ),
+        (
+            "account_lifecycle",
+            (
+                "Open a new savings account for me.",
+                "Close my current account.",
+                "I want to open a joint account.",
+                "Can you open an ISA for me?",
+                "Please close my savings account.",
+                "Open a second current account.",
+            ),
+        ),
+        (
+            "lending",
+            (
+                "Apply for an overdraft on my current account.",
+                "I want to increase my credit limit.",
+                "Apply for a personal loan.",
+                "Raise my overdraft limit.",
+                "Approve a loan for me.",
+                "Increase the limit on my credit card.",
+            ),
+        ),
+        (
+            "money_movement",
+            (
+                "Send fifty pounds to my mum.",
+                "Make a payment to my landlord today.",
+                "Transfer money into my savings account.",
+                "Pay my credit card bill now.",
+                "Move funds between my accounts.",
+                "Send a wire transfer abroad.",
+            ),
+        ),
+        (
+            "misc_services",
+            (
+                "Order a new cheque book.",
+                "I am travelling next week, add a travel notice.",
+                "Add a new payee to my account.",
+                "Register my trip abroad for card use.",
+                "Remove a saved payee.",
+                "Order a replacement cheque book.",
+            ),
+        ),
     ),
     "validation": (
-        ("statement_artifact", (
-            "Mail me my quarterly statement.",
-            "I want a printed copy of my statement.",
-        )),
-        ("pin_management", (
-            "Change the PIN on my credit card.",
-            "Give this card a different PIN.",
-        )),
-        ("standing_order_setup", (
-            "Create a standing order for my gym membership.",
-            "Increase my monthly direct debit.",
-        )),
-        ("personal_details", (
-            "Please change my postal address.",
-            "Update my contact number.",
-        )),
-        ("account_lifecycle", (
-            "I want to open a new checking account.",
-            "Close the account I no longer use.",
-        )),
-        ("lending", (
-            "Apply for a mortgage in principle.",
-            "I want a bigger overdraft.",
-        )),
-        ("money_movement", (
-            "Pay two hundred pounds to my brother.",
-            "Transfer funds to my other account.",
-        )),
-        ("misc_services", (
-            "Set up a travel notification.",
-            "Add my landlord as a payee.",
-        )),
+        (
+            "statement_artifact",
+            (
+                "Mail me my quarterly statement.",
+                "I want a printed copy of my statement.",
+            ),
+        ),
+        (
+            "pin_management",
+            (
+                "Change the PIN on my credit card.",
+                "Give this card a different PIN.",
+            ),
+        ),
+        (
+            "standing_order_setup",
+            (
+                "Create a standing order for my gym membership.",
+                "Increase my monthly direct debit.",
+            ),
+        ),
+        (
+            "personal_details",
+            (
+                "Please change my postal address.",
+                "Update my contact number.",
+            ),
+        ),
+        (
+            "account_lifecycle",
+            (
+                "I want to open a new checking account.",
+                "Close the account I no longer use.",
+            ),
+        ),
+        (
+            "lending",
+            (
+                "Apply for a mortgage in principle.",
+                "I want a bigger overdraft.",
+            ),
+        ),
+        (
+            "money_movement",
+            (
+                "Pay two hundred pounds to my brother.",
+                "Transfer funds to my other account.",
+            ),
+        ),
+        (
+            "misc_services",
+            (
+                "Set up a travel notification.",
+                "Add my landlord as a payee.",
+            ),
+        ),
     ),
     "test": (
-        ("statement_artifact", (
-            "Send my annual statement as a document.",
-            "Generate a statement PDF for me.",
-        )),
-        ("pin_management", (
-            "I need a new PIN for my debit card.",
-            "Reset my card PIN now.",
-        )),
-        ("standing_order_setup", (
-            "Set up a repeating monthly payment.",
-            "Change the date of my standing order.",
-        )),
-        ("personal_details", (
-            "I need to change my mailing address.",
-            "Update my email on the account.",
-        )),
-        ("account_lifecycle", (
-            "Open a business account for me.",
-            "Please shut down this account.",
-        )),
-        ("lending", (
-            "Request a credit limit increase.",
-            "Apply for a car loan.",
-        )),
-        ("money_movement", (
-            "Send money to my friend's account.",
-            "Make an international payment.",
-        )),
-        ("misc_services", (
-            "Order more cheques.",
-            "Delete a payee from my list.",
-        )),
+        (
+            "statement_artifact",
+            (
+                "Send my annual statement as a document.",
+                "Generate a statement PDF for me.",
+            ),
+        ),
+        (
+            "pin_management",
+            (
+                "I need a new PIN for my debit card.",
+                "Reset my card PIN now.",
+            ),
+        ),
+        (
+            "standing_order_setup",
+            (
+                "Set up a repeating monthly payment.",
+                "Change the date of my standing order.",
+            ),
+        ),
+        (
+            "personal_details",
+            (
+                "I need to change my mailing address.",
+                "Update my email on the account.",
+            ),
+        ),
+        (
+            "account_lifecycle",
+            (
+                "Open a business account for me.",
+                "Please shut down this account.",
+            ),
+        ),
+        (
+            "lending",
+            (
+                "Request a credit limit increase.",
+                "Apply for a car loan.",
+            ),
+        ),
+        (
+            "money_movement",
+            (
+                "Send money to my friend's account.",
+                "Make an international payment.",
+            ),
+        ),
+        (
+            "misc_services",
+            (
+                "Order more cheques.",
+                "Delete a payee from my list.",
+            ),
+        ),
     ),
 }
 
@@ -2324,18 +2879,30 @@ _CAPABILITY_POLICY_CONTRASTS = {
 # half of these rows carry a servicing exchange the capability ask must survive.
 _UNSUPPORTED_CAPABILITY_HISTORIES = {
     "train": (
-        ("cards_train", "List the debit cards on my profile.",
-         "Your active debit card ends in 4821."),
-        ("transfers_train", "Bring up my outgoing bank transfers.",
-         "I found two completed transfers and one scheduled transfer."),
+        (
+            "cards_train",
+            "List the debit cards on my profile.",
+            "Your active debit card ends in 4821.",
+        ),
+        (
+            "transfers_train",
+            "Bring up my outgoing bank transfers.",
+            "I found two completed transfers and one scheduled transfer.",
+        ),
     ),
     "validation": (
-        ("accounts_validation", "Display my deposit accounts.",
-         "Pioneer Checking and Meadow Savings are active."),
+        (
+            "accounts_validation",
+            "Display my deposit accounts.",
+            "Pioneer Checking and Meadow Savings are active.",
+        ),
     ),
     "test": (
-        ("cases_test", "Show my open service cases.",
-         "Case CS-219 for card delivery is still open."),
+        (
+            "cases_test",
+            "Show my open service cases.",
+            "Case CS-219 for card delivery is still open.",
+        ),
     ),
 }
 

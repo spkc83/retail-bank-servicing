@@ -13,6 +13,10 @@
 #
 # Measure with:  PYTHONPATH=src uv run python scripts/retail_bank/measure_corpus_coverage.py
 # Raise a minimum only after the rows exist and the router has been retrained on them.
+# The router corpus measured is the one HEAD builds,
+# data/banking-conversation-router-v9-surface-form; the minimums below were
+# raised on 2026-09-03 after the first-turn phrasing family landed and a router
+# retrained on it passed every release gate (docs/08, section 4).
 
 [router]
 
@@ -41,35 +45,35 @@ multi_intent = 0
 intent = "view_accounts"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 10
 target = 60
 
 [[router.cell]]
 intent = "view_cards"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 10
 target = 60
 
 [[router.cell]]
 intent = "view_transactions"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 10
 target = 60
 
 [[router.cell]]
 intent = "view_transfers"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 10
 target = 60
 
 [[router.cell]]
 intent = "view_service_cases"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 60
 
 # The same reads as polite modal requests ("Could you pull up...").
@@ -77,35 +81,35 @@ target = 60
 intent = "view_accounts"
 form = "modal_request"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 40
 
 [[router.cell]]
 intent = "view_cards"
 form = "modal_request"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 40
 
 [[router.cell]]
 intent = "view_transactions"
 form = "modal_request"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 40
 
 [[router.cell]]
 intent = "view_transfers"
 form = "modal_request"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 40
 
 [[router.cell]]
 intent = "view_service_cases"
 form = "modal_request"
 turn = "first_turn"
-minimum = 0
+minimum = 40
 target = 40
 
 # The same reads, asked imperatively on the first turn -- the presets' shape.
@@ -149,28 +153,28 @@ target = 60
 intent = "freeze_card"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 15
 target = 40
 
 [[router.cell]]
 intent = "replace_card"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 15
 target = 40
 
 [[router.cell]]
 intent = "dispute_transaction"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 4
 target = 40
 
 [[router.cell]]
 intent = "cancel_transfer"
 form = "wh_question"
 turn = "first_turn"
-minimum = 0
+minimum = 4
 target = 40
 
 # Deictic follow-ups per mutation: the counterfactual pairs live here.

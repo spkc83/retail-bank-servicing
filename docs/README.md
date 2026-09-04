@@ -13,6 +13,7 @@ contract, and run either interface.
 | Router dataset | `spkc83/retail-bank-conversation-router-data@b33c27170e27cdb11783704ede14f7d25f70625e` |
 | Local router artifact | `artifacts/banking-conversation-router-v8-first-turn-mutation`; release eligible |
 | Router dataset rows | train 20,439; validation 4,158; test 4,921 |
+| Router rebuild candidate (local, unpublished) | `data/banking-conversation-router-v9-surface-form`: train 21,686; validation 4,283; test 4,863; release eligible when retrained, not published |
 | Granite SFT dataset | `spkc83/retail-bank-servicing-alignment-sft@a649b7664844e029fddbb993917f9e58f0bddf93` (this checkout; `@ce0d4429` is the same data one commit earlier, before the card was added, and is the revision v14 trained on; v11, deployed until 2026-09-01, was trained on `@b5ec0489f96cf783a0bc993bc29898c6e9b35ba5`) |
 | Granite PEFT adapter (deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e`; `RETAIL_BANK_ADAPTER_SUBFOLDER=adapter`. First run to pass all three training gates, including bare probes 11/11; deployed 2026-09-01 |
 | Granite PEFT adapter (previously deployed) | `spkc83/retail-bank-servicing-agent-9b-peft-v11-alignment@03a7b44633fadab7ad672b009925cc68b52494d4` |

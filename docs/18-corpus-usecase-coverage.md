@@ -126,6 +126,10 @@ measurement, in order:
 
 New rows for the router corpus derive from the alignment corpus through
 `prepare_conversation_router_data.py`, so the first three items are authored
-there. The router cannot simply be rebuilt on the result: at HEAD a rebuild
-fails five release gates for unrelated reasons recorded in the
-[runbook](08-end-to-end-runbook.md), and that has to be resolved first.
+there. The first-turn cells were filled on 2026-09-03 by a hand-written
+phrasing family in the router derivation, and the router rebuilt on the result
+passes every release gate; the rebuild failure that used to block this is
+diagnosed and fixed in the [runbook](08-end-to-end-runbook.md#4-train-locally).
+The coverage measurement now reads that corpus,
+`data/banking-conversation-router-v9-surface-form`, and the minimums for the
+filled cells were raised so they cannot silently empty again.

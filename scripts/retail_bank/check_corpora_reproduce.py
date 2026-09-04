@@ -43,8 +43,10 @@ FROZEN_RELEASE_ARTIFACTS = {
         "data/banking-servicing-alignment-v5, which has moved repeatedly since "
         "-- the coreference phrase families on 2026-08-21 and the prompt "
         "realization passes on 2026-08-31 -- so a rebuild no longer matches its "
-        "release lock. docs/08 records why the router must not be republished "
-        "from HEAD: a rebuilt router fails five release gates."
+        "release lock. The corpus HEAD builds is "
+        "data/banking-conversation-router-v9-surface-form, documented in docs/02 "
+        "and checked here like any other; docs/08 section 4 records why the two "
+        "differ and why the deployed router is still the v8 artifact."
     ),
 }
 #: The fenced block in the docs that holds both regeneration commands.

@@ -152,22 +152,39 @@ PY
 
 The release selected epoch 2 and passed every gate.
 
-> **A rebuild at HEAD does not reproduce that result.** Retraining the router from
-> the current corpus fails five gates -- `in_domain_false_refusal_rate` 0.021,
-> `repair_false_refusal_rate` 0.024, and `heldout_regression_{route,intent,relation}`
-> 0.222 / 0.250 / 0.111, all of which the shipped artifact scores at 0.0. The
-> cause is the expanded `deictic_replace_*` phrase families in the alignment
-> corpus: the router inherits them through `_row_from_sft_record`,
-> `_synthetic_generalization_rows` amplifies them into +669 train rows, and
-> agent-repair turns fall below the in-domain threshold.
-> `LearnedConversationRouter.from_artifact_dir` refuses to load a gate-failing
-> artifact, so a rebuilt router cannot be used even accidentally. Until this is
-> resolved, keep using the shipped artifact and do not republish the router.
-> The investigation is recorded in the
-> [improvement register](superpowers/plans/2026-08-29-improvement-register.md).
+> **A rebuild at HEAD is release eligible, but it is not the shipped router.**
+> Retraining from the shipped corpus reproduces the shipped metrics exactly: the
+> trainer is deterministic on one GPU at seed 7401. Retraining from the corpus HEAD
+> derived before 2026-09-03 failed five gates, and the cause was not the deictic
+> families (they only compound it). It was terminal punctuation acting as the
+> domain label. Teacher-realized banking prompts end in `?` or `.`, CLINC
+> out-of-domain lines are bare, and the encoder is uncased, so on first turns the
+> mark predicted the domain almost perfectly (1,470 punctuated banking rows against
+> 24 bare; 4,043 bare OOD rows against 31 punctuated). A router trained on that
+> corpus scored "Could you mark Bright Meadow Electronics for dispute" at 0.01
+> banking and the same words with a `?` at 1.00, and lost both held-out repair
+> fixture turns, which are bare, for the same reason, stably across three seeds. The
+> shipped router escaped only because 129 template-mangled, unpunctuated banking
+> prompts ("Can you what information is needed for a card dispute") were still in
+> its train split; the frozen test splits carry 31 of them to this day.
 >
-> Excluding the deictic curricula is **not** the fix: it drops train to 16,483 and
-> `load_governed_data` then refuses outright, because the counterfactual
+> Three derivation changes fix it, all in
+> [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py)
+> and described in [Data generation](02-data-generation.md#derivation-guards):
+> the retired-realizer shape is filtered from every router split (28 records, 84
+> derived test rows; the alignment fixtures stay byte-identical), a first-turn
+> phrasing family adds the plain first ask in question, modal and greeting-led
+> form for every servicing intent (+498 train, +99 validation), and a surface-form
+> pass rewrites a fixed share of train and validation rows into the other
+> punctuation form so the mark carries no signal. The result is
+> `data/banking-conversation-router-v9-surface-form`. A router trained on it at
+> seed 7401 clears every gate: repair and held-out regression at 0.0, in-domain
+> false refusal 0.0024, OOD false accept 0.0145 (shipped: 0.0061), intent macro-F1
+> 0.994 (shipped: 0.997). It is a local candidate. The shipped router stays pinned
+> and deployed until the candidate is published deliberately through section 5.
+>
+> Excluding the deictic curricula is still **not** a fix: it drops train to 16,483
+> and `load_governed_data` then refuses outright, because the counterfactual
 > action/entity pairs every split requires come from that curriculum.
 
 ## 5. Publish the Router
