@@ -34,8 +34,8 @@ exists and from wording only where nothing better does:
 balance?"), `modal_request` ("Could you pull up my accounts?"), `elliptical`
 ("Balance?"), `deictic` ("Freeze that one."). `wh_question` and
 `modal_request` are kept apart deliberately: the router handles modal requests
-as the polite imperatives they are, and it is the real question that it had
-never seen.
+as the polite imperatives they are, so the real question is the form a corpus
+built from commands is most likely to under-supply.
 
 A **cell** is `(intent, form, first_turn | multi_turn)`. Every detector has a
 test that plants a row and proves it fires, and a negative that proves it stays
@@ -61,19 +61,20 @@ on them; a minimum describes what the shipped artifact learned from.
 
 ## What the router corpus contains today
 
-20,439 training rows. The corpus is built around **transitions** — 45% of rows
-carry `topic_shift`, 75% are multi-turn — and the plain first ask is the
-neglected case across every intent.
+21,686 training rows in `data/banking-conversation-router-v9-surface-form`. The
+corpus is built around **transitions** — 45% of rows carry `topic_shift`, 74%
+are multi-turn — so the plain first ask stays the thinner side of the corpus
+even where it is covered.
 
 | category | rows | share |
 | --- | ---: | ---: |
-| in_domain / social / out_of_domain | 10,408 / 1,986 / 8,045 | 51% / 10% / 39% |
-| first_turn / multi_turn | 5,092 / 15,347 | 25% / 75% |
-| long_running (≥6 turns) | 32 | 0.2% |
-| counterfactual | 1,344 | 6.6% |
-| policy_question | 1,152 | 5.6% |
-| intent_drift / loop_back | 9,276 / 360 | 45% / 1.8% |
-| agent_repair / clarification_answer | 1,100 / 546 | 5.4% / 2.7% |
+| in_domain / social / out_of_domain | 11,440 / 1,978 / 8,268 | 53% / 9% / 38% |
+| first_turn / multi_turn | 5,646 / 16,040 | 26% / 74% |
+| long_running (≥6 turns) | 32 | 0.1% |
+| counterfactual | 1,568 | 7.2% |
+| policy_question | 1,202 | 5.5% |
+| intent_drift / loop_back | 9,746 / 360 | 45% / 1.7% |
+| agent_repair / clarification_answer | 1,103 / 571 | 5.1% / 2.6% |
 | **adversarial** | **0** | — |
 | **multi_intent** | **0** | — |
 
@@ -81,26 +82,27 @@ First-turn rows per servicing intent, by form:
 
 | intent | imperative | wh_question | modal_request | deictic |
 | --- | ---: | ---: | ---: | ---: |
-| view_accounts | 14 | **0** | 10 | 0 |
-| view_cards | 33 | **0** | 11 | 0 |
-| view_transactions | 41 | **0** | 18 | 0 |
-| view_transfers | 16 | **0** | 12 | 0 |
-| view_service_cases | 28 | 32 | 9 | 0 |
-| freeze_card | 58 | **0** | 14 | 0 |
-| replace_card | 114 | **0** | 26 | 8 |
-| dispute_transaction | 41 | 4 | 22 | 3 |
-| cancel_transfer | 93 | 2 | 28 | 8 |
+| view_accounts | 10 | 15 | 51 | 0 |
+| view_cards | 24 | 21 | 51 | 0 |
+| view_transactions | 35 | 21 | 54 | 0 |
+| view_transfers | 2 | 13 | 55 | 10 |
+| view_service_cases | 22 | 50 | 49 | 0 |
+| freeze_card | 49 | 22 | 47 | 0 |
+| replace_card | 110 | 19 | 58 | 8 |
+| dispute_transaction | 35 | 5 | 72 | 5 |
+| cancel_transfer | 90 | 5 | 65 | 17 |
 
-Read the `wh_question` column. Six servicing intents have **no** first-turn
-question at all; only `view_service_cases` has a meaningful number. The
-question a human types most — "What is my balance?" — is one instance of a
-class that is absent for the whole servicing lane. The demo presets never
-showed it because every preset is imperative.
+Every servicing intent now has first-turn questions and modal requests, which
+is what the phrasing family in the router derivation supplies. The `wh_question`
+column is still the thinnest across the reads, and `dispute_transaction` and
+`cancel_transfer` sit at five rows each, so the class is covered rather than
+saturated. The imperative column is uneven for the same reason it always was:
+the demo presets are all imperative and the reads inherited whatever the
+transition curricula happened to produce.
 
 The two cells with the largest absolute shortfall are the deictic follow-ups
-for `cancel_transfer` (18) and `dispute_transaction` (29), against 1,685 and
-162 for `replace_card` and `freeze_card`: the counterfactual pairs are
-concentrated on cards.
+for `cancel_transfer` (19) and `dispute_transaction` (31), against 2,005 for
+`replace_card`: the counterfactual pairs are concentrated on cards.
 
 ## What the alignment corpus contains today
 
@@ -111,25 +113,25 @@ absences: **multi-intent is 0**, and question-form first asks are thin.
 
 ## Authoring order
 
-The report ranks every declared cell below its target. As of this
-measurement, in order:
+The report ranks every declared cell below its target, and that ranking is the
+authoring order:
 
-1. `wh_question × first_turn` for all six empty servicing intents — the class
-   that shipped;
-2. deictic follow-ups for `cancel_transfer` and `dispute_transaction`;
-3. `modal_request × first_turn` for the reads;
-4. adversarial turns in the **router** corpus — today the router has no notion
-   of an instruction-override or credential request and routes it as whatever
-   it superficially resembles;
+1. deictic follow-ups for `cancel_transfer` and `dispute_transaction`, the two
+   largest shortfalls;
+2. first-turn rows for the reads, imperative and `wh_question` alike, all of
+   which sit well under a 60-row target;
+3. `wh_question × first_turn` for `dispute_transaction` and `cancel_transfer`,
+   at five rows each;
+4. adversarial turns in the **router** corpus — the router has no notion of an
+   instruction-override or credential request and routes one as whatever it
+   superficially resembles;
 5. multi-intent turns, absent from both corpora;
 6. long-running conversations beyond six turns.
 
 New rows for the router corpus derive from the alignment corpus through
 `prepare_conversation_router_data.py`, so the first three items are authored
-there. The first-turn cells were filled on 2026-09-03 by a hand-written
-phrasing family in the router derivation, and the router rebuilt on the result
-passes every release gate; the rebuild failure that used to block this is
-diagnosed and fixed in the [runbook](08-end-to-end-runbook.md#4-train-locally).
-The coverage measurement now reads that corpus,
-`data/banking-conversation-router-v9-surface-form`, and the minimums for the
-filled cells were raised so they cannot silently empty again.
+there. The first-turn cells are filled by a hand-written phrasing family in the
+router derivation, described in
+[Data generation](02-data-generation.md#derivation-guards). Coverage is
+measured against the release corpus, and the minimums for those cells are set
+high enough that they cannot silently empty again.

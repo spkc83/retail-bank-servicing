@@ -94,8 +94,8 @@ validates exact source, dataset, and base revisions, checks that the bootstrap
 URL resolves, requests an RTX PRO 6000, applies the `JOB_TIMEOUT` cap (default
 five hours), mounts the persistent artifact bucket, and forwards `HF_TOKEN` as a
 secret. It also requires `HF_HUB_DEST` to be set explicitly and to differ from
-`BASE_MODEL`, so a from-scratch run can no longer overwrite the repository it
-trains from.
+`BASE_MODEL`, so a from-scratch run cannot overwrite the repository it trains
+from.
 
 ### The spend gate
 

@@ -152,41 +152,38 @@ PY
 
 The release selected epoch 2 and passed every gate.
 
-> **The release corpus changed on 2026-09-03, and this is why.** Retraining from
-> the previous release corpus (v8) reproduces its metrics exactly: the
-> trainer is deterministic on one GPU at seed 7401. Retraining from the corpus HEAD
-> derived before 2026-09-03 failed five gates, and the cause was not the deictic
-> families (they only compound it). It was terminal punctuation acting as the
-> domain label. Teacher-realized banking prompts end in `?` or `.`, CLINC
-> out-of-domain lines are bare, and the encoder is uncased, so on first turns the
-> mark predicted the domain almost perfectly (1,470 punctuated banking rows against
-> 24 bare; 4,043 bare OOD rows against 31 punctuated). A router trained on that
-> corpus scored "Could you mark Bright Meadow Electronics for dispute" at 0.01
-> banking and the same words with a `?` at 1.00, and lost both held-out repair
-> fixture turns, which are bare, for the same reason, stably across three seeds. The
-> shipped router escaped only because 129 template-mangled, unpunctuated banking
-> prompts ("Can you what information is needed for a card dispute") were still in
-> its train split; the frozen test splits carry 31 of them to this day.
+> **Why the release corpus neutralizes punctuation.** The router is an uncased
+> encoder, so terminal punctuation is a visible surface cue. Teacher-realized
+> banking prompts end in `?` or `.` and CLINC out-of-domain lines are bare, which
+> makes the mark a near-perfect predictor of the domain on first turns unless the
+> derivation breaks the correlation. A router trained on a corpus that leaves it
+> intact scores "Could you mark Bright Meadow Electronics for dispute" at 0.01
+> banking and the same words with a `?` at 1.00, and refuses both held-out repair
+> fixture turns, which are bare. That failure is stable across seeds, and it is not
+> caused by the deictic families.
 >
-> Three derivation changes fix it, all in
-> [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py)
-> and described in [Data generation](02-data-generation.md#derivation-guards):
-> the retired-realizer shape is filtered from every router split (28 records, 84
-> derived test rows; the alignment fixtures stay byte-identical), a first-turn
-> phrasing family adds the plain first ask in question, modal and greeting-led
-> form for every servicing intent (+498 train, +99 validation), and a surface-form
-> pass rewrites a fixed share of train and validation rows into the other
-> punctuation form so the mark carries no signal. The result is
-> `data/banking-conversation-router-v9-surface-form`, the release corpus above. The
-> router trained on it clears every gate at seeds 7401, 11 and 23: repair and
-> held-out regression at 0.0, in-domain false refusal 0.0024, OOD false
-> accept 0.0145 (v8: 0.0061), intent macro-F1 0.994 (v8: 0.997). It was
-> published as `a666075f9193f4d4dcbca0391225571a59e3fda9` on 2026-09-04 and replaced the v8
-> router `dd5ea26674a0f9808d42110a9ee51a9af6762a76`, whose corpus stays in the repository as a frozen
-> artifact so its numbers remain reproducible.
+> Three passes in
+> [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py),
+> described in [Data generation](02-data-generation.md#derivation-guards), remove
+> the cue: the retired-realizer filter drops a template shape from every router
+> split (28 records, 84 derived test rows; the alignment fixtures stay
+> byte-identical), a first-turn phrasing family supplies the plain first ask in
+> question, modal and greeting-led form for every servicing intent (+498 train,
+> +99 validation), and a surface-form pass rewrites a fixed share of train and
+> validation rows into the other punctuation form. The result is
+> `data/banking-conversation-router-v9-surface-form`, the release corpus above,
+> and a router trained on it clears every gate at seeds 7401, 11 and 23.
 >
-> Excluding the deictic curricula is still **not** a fix: it drops train to 16,483
-> and `load_governed_data` then refuses outright, because the counterfactual
+> The v8 corpus and its router `dd5ea26674a0f9808d42110a9ee51a9af6762a76` stay in
+> the repository as frozen artifacts so their numbers remain reproducible;
+> retraining from v8 reproduces its metrics exactly, because the trainer is
+> deterministic on one GPU at a fixed seed. The current release trades a little
+> out-of-domain precision for that robustness: OOD false accept 0.0145 against
+> v8's 0.0061, intent macro-F1 0.994 against 0.997, with repair and held-out
+> regression at 0.0 and in-domain false refusal 0.0024.
+>
+> Excluding the deictic curricula is **not** an alternative fix: it drops train to
+> 16,483 and `load_governed_data` refuses outright, because the counterfactual
 > action/entity pairs every split requires come from that curriculum.
 
 ## 5. Publish the Router

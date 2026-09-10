@@ -54,21 +54,20 @@ above reproduces the committed files byte for byte.
 
 The previous release corpus, `data/banking-conversation-router-v8-first-turn-mutation`
 (lock `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json`, router
-`dd5ea26674a0f9808d42110a9ee51a9af6762a76`), stays in the repository as a frozen artifact: HEAD no
-longer derives it, because the alignment corpus and the derivation have both moved
-since 2026-08-20, and [runbook section 4](08-end-to-end-runbook.md#4-train-locally)
-records why the two differ.
+`dd5ea26674a0f9808d42110a9ee51a9af6762a76`), stays in the repository as a frozen artifact. HEAD does
+not derive it: it is pinned to an earlier alignment corpus and an earlier derivation, and
+[runbook section 4](08-end-to-end-runbook.md#4-train-locally) explains why the two differ.
 
 ## Derivation Guards
 
 Three passes in
 [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py)
-shape what reaches the router beyond the label mapping. Each exists because a
-retrained router failed without it.
+shape what reaches the router beyond the label mapping. Each removes a surface
+cue the router would otherwise learn in place of the task.
 
 | Pass | What it does | Why |
 | --- | --- | --- |
-| Retired-realizer filter | Drops any alignment record whose user turn has the shape "Can you what information is needed for a card dispute": a request opener stacked on a text that was already a question. Applies to every split. | The tool-SFT realizer produced that shape until 2026-08-20. Train lost it; the frozen test splits still carry 31 such prompts, and a router trained on clean text refuses them, so the false-refusal gate was measuring a retired template. The alignment fixtures themselves are untouched. |
+| Retired-realizer filter | Drops any alignment record whose user turn has the shape "Can you what information is needed for a card dispute": a request opener stacked on a text that was already a question. Applies to every split. | The shape is an artefact of a retired realizer template, not something a customer types. The frozen test splits still carry 31 such prompts, and a router trained on clean text refuses them, so without the filter the false-refusal gate scores the template rather than the router. The alignment fixtures themselves are untouched. |
 | First-turn phrasing family | Hand-written first turns for every servicing intent and policy: real questions ("What is my checking account balance?"), modal requests ("Could you pull up my transfers?"), greeting-led asks ("Hi, can you freeze my card?") and two-word asks ("Balance check."). Train and validation only. | The corpus was built around transitions between tasks; first-turn wh-questions were zero for six intents and modal requests numbered ten to twenty-six, while CLINC supplies thousands of "can you set an alarm" lines in the same shape. |
 | Surface-form pass | Rewrites a fixed 35% share of train and validation rows into the other punctuation form: banking and social rows lose their terminal mark and capital, out-of-domain rows gain them. The test split is never rewritten. | With an uncased encoder, terminal punctuation was the only surface cue left, and it predicted the domain almost perfectly. The same words scored 0.01 banking bare and 1.00 punctuated. |
 
@@ -441,13 +440,13 @@ Two consequences for the generators:
 ### Ambiguity clarification template
 
 `_deictic_replace_curriculum` emits one clarification template for every
-`deictic_replace_ambiguity` row in all splits. A 32-phrasing conversational pool
-was tried for train/validation in the v9 iteration and regressed the coreference
-dev gate (ambiguity accuracy 0.44 after 964 continuation steps: the parent
-adapter's prior was not overwritten at the continuation learning rate), so the
-single template was restored. It names both candidate cards and keeps `which`
-and `card` early, which is what the gate matches on. Train and validation close
-with `Please share its last four digits.`; the shadow split keeps the frozen
+`deictic_replace_ambiguity` row in all splits. The single template is
+deliberate: it names both candidate cards and keeps `which` and `card` early,
+which is what the coreference gate matches on. Diversifying it across a large
+phrasing pool costs more than it buys, because a continuation run does not
+reach a learning rate high enough to overwrite the parent adapter's prior, and
+ambiguity accuracy collapses to roughly 0.44. Train and validation close with
+`Please share its last four digits.`; the shadow split keeps the frozen
 `Please share the last four digits shown in the app.`
 
 ### Documented limitations
@@ -456,8 +455,9 @@ with `Please share its last four digits.`; the shadow split keeps the frozen
   without a separating space, so alignment user turns read `get createdon my
   account?` in train and `get createdfrom my profile?` in test. The same defect is
   present in the frozen `test.jsonl`, so correcting it would change a
-  byte-identical split; it is deferred to the next frozen-split rotation.
-- Alignment user turns remain scaffolded ("... I am going through my accounts.
-  Please keep the answer concise."). Only assistant finals were rewritten in
-  this pass, for the leakage-gate reason above; the scaffolding itself is now
-  app-free but still reads as a template.
+  byte-identical split. It can only be fixed in a versioned rotation of the
+  frozen fixtures.
+- Alignment user turns are scaffolded ("... I am going through my accounts.
+  Please keep the answer concise."). The teacher rewrites assistant finals
+  only, for the leakage-gate reason above, so the scaffolding is app-free but
+  still reads as a template.

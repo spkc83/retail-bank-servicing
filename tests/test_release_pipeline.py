@@ -117,9 +117,21 @@ def test_the_deploy_stage_states_every_runtime_identity() -> None:
 
 
 def test_the_config_pins_the_router_the_space_actually_serves() -> None:
-    """These pins were two releases stale and nothing recomputed them."""
+    """The config's router pins must name the deployed revisions.
+
+    Nothing recomputes these from the Hub, so a release that publishes a new
+    router and forgets the config leaves the Space serving one revision while
+    the release pipeline claims another. The POC's own default revision is
+    asserted alongside, because that is what the Space loads when the
+    environment does not override it.
+    """
     config = pipeline.load_config(Path("configs/retail-bank-release.toml"))
     router = config["router"]
 
-    assert router["model_revision"] == "dd5ea26674a0f9808d42110a9ee51a9af6762a76"
-    assert router["dataset_revision"] == "b33c27170e27cdb11783704ede14f7d25f70625e"
+    assert router["model_revision"] == "a666075f9193f4d4dcbca0391225571a59e3fda9"
+    assert router["dataset_revision"] == "9618f2a8adef86a681624b7d3ce24e122a4323a2"
+
+    poc_router = Path("poc/retail-bank-customer-service-poc/router.py").read_text(
+        encoding="utf-8"
+    )
+    assert router["model_revision"] in poc_router
