@@ -348,7 +348,9 @@ def test_zero_tool_answers_must_not_claim_completed_actions() -> None:
 
     assert not fabricated.valid
     assert not frozen_state.valid
-    assert any("without tool evidence" in error for error in fabricated.errors)
+    # The rejection names the tool the claim needed, so a reader of the trace can
+    # tell "nothing was called" from "the wrong thing was called".
+    assert any("no result from freeze_card" in error for error in fabricated.errors)
 
 
 def test_zero_tool_answers_may_ask_and_describe_without_action_claims() -> None:
@@ -594,14 +596,47 @@ def test_zero_tool_answers_may_clarify_offer_and_cite_policy() -> None:
     assert policy.valid
 
 
-def test_action_claims_are_allowed_when_any_tool_evidence_exists() -> None:
-    evidence = ({"ok": True, "result": {"card": {"last4": "4821", "status": "frozen"}}},)
+def test_an_action_claim_needs_the_tool_that_performs_that_action() -> None:
+    """A raw execution envelope carries no tool name, so the caller supplies it.
 
-    validation = validate_no_unsupported_action_claims(
-        "Your Everyday Visa Debit ending in 4821 is now frozen.", evidence
+    Without ``evidence_tools`` the turn holds evidence of something unnameable,
+    which grounds no specific action -- and the runtime always has the names,
+    because it holds the calls beside their results.
+    """
+
+    evidence = ({"ok": True, "result": {"card": {"last4": "4821", "status": "frozen"}}},)
+    answer = "Your Everyday Visa Debit ending in 4821 is now frozen."
+
+    named = validate_no_unsupported_action_claims(
+        answer, evidence, evidence_tools=("freeze_card",)
+    )
+    wrong_tool = validate_no_unsupported_action_claims(
+        answer, evidence, evidence_tools=("list_cards",)
+    )
+    unnamed = validate_no_unsupported_action_claims(answer, evidence)
+
+    assert named.valid, named.errors
+    assert not wrong_tool.valid
+    assert not unnamed.valid
+
+
+def test_an_offered_action_is_not_a_completed_action_claim() -> None:
+    """The shipped corpus closes replace_card turns with exactly this offer."""
+
+    offer = validate_no_unsupported_action_claims(
+        "That's now replacement pending on your Everyday Visa Debit ending in 4821. "
+        "If you'd rather I froze that card as well, just say so and I'll take care of it.",
+        ({"ok": True, "result": {}},),
+        evidence_tools=("replace_card",),
+    )
+    trailing_condition_does_not_launder = validate_no_unsupported_action_claims(
+        "I've frozen your card, if you need anything else let me know.",
+        (),
+        evidence_tools=("list_cards",),
     )
 
-    assert validation.valid
+    assert offer.valid, offer.errors
+    assert not trailing_condition_does_not_launder.valid
 
 
 def test_action_claim_is_grounded_by_a_prior_tool_message_in_the_conversation() -> None:
@@ -918,3 +953,74 @@ def test_evidence_does_not_launder_prose_about_the_demo() -> None:
 
     assert not prose.valid
     assert not other_terms.valid  # "model" and "tool" have no evidence exemption here
+
+
+# A completed-action claim names a mutation the assistant says it performed. The
+# evidence that grounds it is a result from the tool that performs THAT action,
+# not the mere presence of some earlier tool call in the session. A read earlier
+# in the conversation must not license "I have frozen your card" on a turn that
+# froze nothing -- that is the turn where an ungrounded claim costs most.
+FREEZE_CLAIM = "I've frozen your card ending 6101, so nothing further can be charged to it."
+
+
+def test_a_prior_read_does_not_ground_a_completed_action_claim() -> None:
+    after_a_read = validate_no_unsupported_action_claims(
+        FREEZE_CLAIM,
+        (),
+        (
+            *LIVE_TURN,
+            {"role": "tool", "tool_call_id": "c1", "name": "list_cards", "content": "{}"},
+        ),
+    )
+
+    assert not after_a_read.valid
+    assert "freeze" in " ".join(after_a_read.errors).lower()
+
+
+def test_a_read_in_this_turn_does_not_ground_a_completed_action_claim() -> None:
+    wrong_tool_this_turn = validate_no_unsupported_action_claims(
+        FREEZE_CLAIM,
+        ({"tool": "list_cards", "content": "{}"},),
+        LIVE_TURN,
+    )
+
+    assert not wrong_tool_this_turn.valid
+
+
+def test_the_matching_mutation_grounds_the_claim_in_either_place() -> None:
+    this_turn = validate_no_unsupported_action_claims(
+        FREEZE_CLAIM,
+        ({"tool": "freeze_card", "content": "{}"},),
+        LIVE_TURN,
+    )
+    earlier_turn = validate_no_unsupported_action_claims(
+        "Yes, your card ending 6101 is now frozen.",
+        (),
+        (
+            *LIVE_TURN,
+            {"role": "tool", "tool_call_id": "c1", "name": "freeze_card", "content": "{}"},
+        ),
+    )
+
+    assert this_turn.valid, this_turn.errors
+    assert earlier_turn.valid, earlier_turn.errors
+
+
+def test_every_completed_action_verb_maps_to_the_tool_that_performs_it() -> None:
+    cases = (
+        ("I've replaced your card.", "replace_card"),
+        ("The replacement is pending.", "replace_card"),
+        ("I've cancelled that transfer.", "cancel_transfer"),
+        ("I've disputed that transaction.", "dispute_transaction"),
+    )
+
+    for answer, tool in cases:
+        grounded = validate_no_unsupported_action_claims(
+            answer, ({"tool": tool, "content": "{}"},), LIVE_TURN
+        )
+        ungrounded = validate_no_unsupported_action_claims(
+            answer, ({"tool": "list_accounts", "content": "{}"},), LIVE_TURN
+        )
+
+        assert grounded.valid, (answer, tool, grounded.errors)
+        assert not ungrounded.valid, (answer, tool)

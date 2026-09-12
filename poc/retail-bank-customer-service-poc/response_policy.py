@@ -328,6 +328,73 @@ COMPLETED_ACTION_CLAIMS = re.compile(
     re.IGNORECASE,
 )
 
+# A completed-action claim is grounded by a result from the tool that performs
+# THAT action, never by the presence of some unrelated tool result. The session
+# is the wrong unit: a read earlier in the conversation says nothing about
+# whether a card was frozen, and "I have frozen your card" on a turn that froze
+# nothing is the most expensive sentence this assistant can produce.
+_ACTION_CLAIM_TOOLS: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
+    (re.compile(r"froze|frozen", re.IGNORECASE), frozenset({"freeze_card"})),
+    (re.compile(r"replaced|replacement", re.IGNORECASE), frozenset({"replace_card"})),
+    (re.compile(r"cancell?ed", re.IGNORECASE), frozenset({"cancel_transfer"})),
+    (re.compile(r"disputed", re.IGNORECASE), frozenset({"dispute_transaction"})),
+)
+
+
+def _evidence_tool_names(
+    results: Sequence[Mapping[str, Any]],
+    conversation: Sequence[Mapping[str, Any]],
+    evidence_tools: Sequence[str] = (),
+) -> set[str]:
+    """Every tool named by this turn's evidence or by a prior tool message.
+
+    Three sources, because the name reaches this function three ways. A raw
+    execution envelope (``{"ok": ..., "result": ...}``) carries no name at all,
+    which is why the caller passes ``evidence_tools`` alongside it; a rendered
+    tool message carries ``name``; a test fixture carries ``tool``.
+
+    A tool message with no ``name`` contributes nothing. The runtime always
+    sets one (``render_tool_result``) and the canonicalizer drops tool messages
+    without it, so an unnamed message is evidence of something we cannot
+    identify, and unidentified evidence grounds no specific action.
+    """
+
+    names: set[str] = {
+        name.strip() for name in evidence_tools if isinstance(name, str) and name.strip()
+    }
+    for result in results:
+        if not isinstance(result, Mapping):
+            continue
+        name = result.get("tool") or result.get("name")
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    for message in conversation:
+        if not isinstance(message, Mapping) or message.get("role") != "tool":
+            continue
+        name = message.get("name")
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+def _action_claim_is_grounded(claim: str, evidence_tools: set[str]) -> tuple[bool, str]:
+    """Whether ``claim`` is backed by a result from the tool that performs it.
+
+    Returns the required tool names alongside the verdict so the rejection can
+    say what was missing rather than only that something was.
+    """
+
+    required: set[str] = set()
+    for pattern, tools in _ACTION_CLAIM_TOOLS:
+        if pattern.search(claim):
+            required |= tools
+    if not required:
+        # A claim shape with no mapped tool keeps the old, weaker rule: any
+        # tool evidence at all. Adding a verb to COMPLETED_ACTION_CLAIMS
+        # without adding its tool here therefore loosens nothing silently.
+        return bool(evidence_tools), ""
+    return bool(required & evidence_tools), ", ".join(sorted(required))
+
 
 # Credentials are absolute. No tool in the published manifest returns a PIN,
 # passcode, password, security code or a full account/card number, so NO evidence
@@ -418,6 +485,29 @@ def _clauses_with_spans(sentence: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+# An offer is not a claim. "If you'd rather I froze that card as well, just say
+# so" names the action without asserting it happened, and the shipped corpus
+# closes replace_card turns exactly that way. The marker must sit BEFORE the
+# claim inside its own clause, so a trailing "... if you need anything else"
+# cannot launder "I have frozen your card" into a hypothetical.
+_HYPOTHETICAL = re.compile(
+    r"\b(?:if|whether|unless|would you like|want me to|shall i|rather i|should i|"
+    r"do you want|happy to|able to)\b",
+    re.IGNORECASE,
+)
+
+
+def _claim_is_hypothetical(sentence: str, position: int) -> bool:
+    """True when the claim at ``position`` is offered rather than asserted."""
+
+    for start, end, clause in _clauses_with_spans(sentence):
+        if start <= position < end:
+            marker = _HYPOTHETICAL.search(clause)
+            return marker is not None and start + marker.start() < position
+    marker = _HYPOTHETICAL.search(sentence)
+    return marker is not None and marker.start() < position
+
+
 def _claim_is_denied(sentence: str, position: int) -> bool:
     """True when the clause containing ``position`` denies the claim."""
 
@@ -470,17 +560,33 @@ def validate_no_unsupported_action_claims(
     answer: str,
     results: Sequence[Mapping[str, Any]],
     conversation: Sequence[Mapping[str, Any]] = (),
+    evidence_tools: Sequence[str] = (),
 ) -> GroundingValidation:
     """Reject claims a turn cannot support: completed actions, retrieved account
     data, and -- unconditionally -- knowledge of a credential.
 
-    Evidence for the first two is a current-turn tool result in ``results`` or a
-    prior ``role == "tool"`` message anywhere in ``conversation`` -- the same
-    trusted channel ``ground_servicing_decision`` consumes (entity_grounding.py).
+    Evidence comes from a current-turn tool result in ``results`` or a prior
+    ``role == "tool"`` message in ``conversation`` -- the same trusted channel
+    ``ground_servicing_decision`` consumes (entity_grounding.py).
 
-    Known limitation: that evidence test is per session, not per datum, so a
-    stale ``list_accounts`` result also clears a later claim about, say, cards.
-    Credentials are deliberately outside it, because no tool returns one.
+    A **completed-action** claim is held to the tool that performs that action:
+    saying a card is frozen requires a ``freeze_card`` result, in this turn or
+    an earlier one. Any other tool, however recent, grounds nothing. An offered
+    action ("if you'd rather I froze that card") asserts nothing and is exempt.
+
+    ``evidence_tools`` names the tools behind ``results``. It exists because a
+    raw execution envelope carries no name, so a caller holding both the calls
+    and their results has to say which is which; without it a same-turn
+    mutation cannot ground its own claim.
+
+    Retrieved account data and account-state claims keep the weaker test -- any
+    tool evidence in the session clears them -- so a stale ``list_accounts``
+    result still clears a later claim about cards. Credentials are outside both
+    tests, because no tool returns one.
+
+    Known limitation: an action claim is grounded by the *presence* of a result
+    from the right tool, not by that result having succeeded, so a failed
+    ``freeze_card`` still clears "I have frozen your card".
     """
 
     if not isinstance(answer, str):
@@ -496,18 +602,28 @@ def validate_no_unsupported_action_claims(
                     f"({credential.group(0)!r}); no tool can supply one",
                 ),
             )
+    grounding_tools = _evidence_tool_names(results, conversation, evidence_tools)
+    for sentence in _CLAIM_SENTENCE_SPLIT.split(answer):
+        for action in COMPLETED_ACTION_CLAIMS.finditer(sentence):
+            if _claim_is_hypothetical(sentence, action.start()):
+                continue
+            if _claim_is_denied(sentence, action.start()):
+                continue
+            grounded, required = _action_claim_is_grounded(action.group(0), grounding_tools)
+            if grounded:
+                continue
+            missing = f"; no result from {required}" if required else " without tool evidence"
+            return GroundingValidation(
+                False,
+                (f"answer claims a completed action ({action.group(0)!r}){missing}",),
+            )
+
     has_prior_tool_evidence = any(
         isinstance(message, Mapping) and message.get("role") == "tool"
         for message in conversation
     )
     if results or has_prior_tool_evidence:
         return GroundingValidation(True, ())
-    match = COMPLETED_ACTION_CLAIMS.search(answer)
-    if match is not None:
-        return GroundingValidation(
-            False,
-            (f"answer claims a completed action ({match.group(0)!r}) without tool evidence",),
-        )
     sentences = _CLAIM_SENTENCE_SPLIT.split(answer)
     for sentence in sentences:
         for clause in _CLAIM_CLAUSE_SPLIT.split(sentence):

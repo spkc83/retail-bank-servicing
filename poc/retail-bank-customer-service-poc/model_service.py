@@ -574,7 +574,10 @@ class ConversationalBankingAgent:
                     if not validate_customer_facing_answer(stripped, results).valid:
                         return False
                     return validate_no_unsupported_action_claims(
-                        stripped, tuple(results), conversation=()
+                        stripped,
+                        tuple(results),
+                        conversation=(),
+                        evidence_tools=tuple(call.name for call in all_calls),
                     ).valid
 
                 # Sampled candidates with tools still exposed mostly re-emit a tool
@@ -628,6 +631,7 @@ class ConversationalBankingAgent:
                 response_path=response_path,
                 model_passes=model_passes,
                 authoritative_evidence=results,
+                evidence_tools=tuple(call.name for call in all_calls),
             )
         except (AgentProtocolError, RuntimeError, TypeError, ValueError) as error:
             raise AgentExecutionError(
@@ -785,11 +789,15 @@ class ConversationalBankingAgent:
         model_passes: list[ModelPassTrace],
         authoritative_evidence: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
         conversation: Sequence[Mapping[str, Any]] = (),
+        evidence_tools: Sequence[str] = (),
     ) -> tuple[str, str]:
         draft = strip_realizer_filler(draft) or draft
         validation = validate_customer_facing_answer(draft, authoritative_evidence)
         action_validation = validate_no_unsupported_action_claims(
-            draft, tuple(authoritative_evidence), conversation=conversation
+            draft,
+            tuple(authoritative_evidence),
+            conversation=conversation,
+            evidence_tools=evidence_tools,
         )
         errors = (*validation.errors, *action_validation.errors)
         if validation.valid and action_validation.valid:
@@ -806,7 +814,10 @@ class ConversationalBankingAgent:
         model_passes.append(repair_trace)
         repaired_validation = validate_customer_facing_answer(repaired, authoritative_evidence)
         repaired_action_validation = validate_no_unsupported_action_claims(
-            repaired, tuple(authoritative_evidence), conversation=conversation
+            repaired,
+            tuple(authoritative_evidence),
+            conversation=conversation,
+            evidence_tools=evidence_tools,
         )
         if not repaired_validation.valid or not repaired_action_validation.valid:
             raise AgentProtocolError(
