@@ -3,8 +3,9 @@
 **Goal:** remove 31 template-mangled prompts from the two frozen evaluation
 splits without destroying the evidence for any number already published.
 
-**Status:** design only. Execution is blocked on one priced decision, stated at
-the end.
+**Status:** design, revised after a failed execution attempt on 2026-09-12.
+The mechanical version does not work and the reasons are recorded below. What
+remains is a bounded authoring task plus one priced decision, both stated below.
 
 ## What is wrong with the fixtures
 
@@ -29,7 +30,8 @@ strict filter in `banking_conversation_router_data.is_retired_realizer_prompt`
 matches **28** rows in each split. Three more rows match the same defect
 through a looser shape that begins "Please can you ..." and were deliberately
 excluded from the filter, since "Please can you freeze my card" is ordinary
-English. **31** is the total, and it is 14% of the alignment test split.
+English. **31** is the total, and it is 14% of the alignment test split. Only 28 of them
+are defective; see the rotation scope below.
 
 Two consequences, both already paid for:
 
@@ -79,30 +81,88 @@ nothing that A does not, at a much higher cost.
 
 ## How the rows get regenerated
 
-No new authoring is required and no API spend is involved. The two mangled
-shapes are produced by `_realize_user` in `banking_tool_sft_data.py`, which
-picks an opener from `REALIZER_OPENERS` and prepends it to a stem. For the 31
-affected records the stem is already a well-formed question, so the correct
-realization is the stem itself, with the opener dropped and the existing
-context and closer preserved. That is a deterministic transformation of rows
-the generator already produces, not a teacher call.
-
 The teacher pass stays available for voice, through the existing
 `--prompt-responses` / `--prompt-teacher-model` route, but it is not needed to
-fix the defect and adding it would move 31 rows twice.
+fix the defect and adding it would move these rows twice.
+
+### What the first attempt assumed, and what it cost
+
+This section originally read: "no new authoring is required ... the correct
+realization is the stem itself, with the opener dropped ... a deterministic
+transformation of rows the generator already produces". That was tried on
+2026-09-12 and is wrong. Three things came out of the attempt, each caught by a
+gate rather than by review, and all three are why the mechanical version cannot
+work.
+
+**Dropping the opener collapses rows into duplicates.** `_realize_user` cycles
+the stem every occurrence, the opener every `len(stems)` occurrences and the
+closer every `len(stems) * len(openers)`. Occurrences `n` and `n + len(stems)`
+therefore share a stem and a closer and differ **only** by opener. Remove it and
+they normalize to the same text, which
+`validate_records` rejects. The opener is load-bearing for uniqueness, so the
+variety it provides is real even where the wording it produces is not.
+
+**An inverted question cannot be embedded.** Bridging the opener into the
+question instead of dropping it preserves uniqueness one-to-one, and it works
+for stems like "what information is needed for a card dispute": "Can you tell me
+what information is needed for a card dispute" is correct. It fails for every
+stem that keeps subject-auxiliary inversion. "Can you tell me how does a card
+purchase dispute work" is as wrong as the shape being replaced, and roughly half
+the affected stems are of that form.
+
+**The product-wording scrub is case-sensitive.** `TRAINABLE_TEXT_SUBSTITUTIONS`
+rewrites literal lowercase substrings after split assignment. A stem promoted to
+the start of a prompt capitalises, the substring stops matching, and "demo"
+survives into trainable text. The banned-wording gate caught it on the first
+run. Any change that moves a stem to the front of a prompt has to account for
+this.
+
+A measurement worth keeping from the attempt: with the generator changed,
+**train and validation did not move at all** — zero rows in either. The teacher
+realization file overwrites those prompts, so the generator's wording reaches
+only the test split. The rotation really is confined to the fixture, which is
+the one thing the original design got right.
+
+### What it actually takes
+
+Each question stem needs an authored **embedded form** alongside its direct
+form, so the bridge has something grammatical to embed:
+
+| direct stem | embedded form |
+| --- | --- |
+| how does a card purchase dispute work | how a card purchase dispute works |
+| how do I safely report card fraud | how to safely report card fraud |
+| what should I do if I see card fraud | what to do about card fraud |
+| when is savings interest usually credited | when savings interest is usually credited |
+
+That is roughly 30 strings across the six FAQ families, hand-written. It is
+bounded and it is the honest fix: these rows are questions, and a question needs
+either to stand on its own or to be de-inverted before something embeds it.
+There is no rule that derives one from the other reliably.
+
+The count also drops. Of the 31 prompts, the three of the form "Please can you
+open another checking account" are ordinary English and are left alone, which is
+exactly why the router's retired-realizer filter excludes that shape. **28 rows
+move, not 31.**
 
 ## Steps
 
-1. Teach `_realize_user` not to stack an opener on a stem that is already a
-   question. Unconditionally: an earlier draft of this plan put the change
-   behind a rotation flag so the old bytes stayed reproducible from HEAD, but
-   that is complexity this repository does not need. It already has a place for
-   an artifact HEAD no longer derives — `FROZEN_RELEASE_ARTIFACTS` in
-   `check_corpora_reproduce.py`, which is how the v8 router corpus is handled —
-   and the archived fixture belongs there for the same reason.
-2. Regenerate both test splits. Assert exactly 31 rows moved in each, and that
-   no other row's bytes changed. The second assertion is the one that matters:
-   it proves the realizer change is surgical rather than a re-voicing.
+1. Author an embedded form for every interrogative stem in the six FAQ
+   families, and teach `_realize_user` to bridge the opener into that form
+   rather than stacking it on the direct one. Unconditionally: an earlier draft
+   put the change behind a rotation flag so the old bytes stayed reproducible
+   from HEAD, but that is complexity this repository does not need. It already
+   has a place for an artifact HEAD no longer derives —
+   `FROZEN_RELEASE_ARTIFACTS` in `check_corpora_reproduce.py`, which is how the
+   v8 router corpus is handled — and the archived fixture belongs there for the
+   same reason. Extend `TRAINABLE_TEXT_SUBSTITUTIONS` for any stem the change
+   promotes to the front of a prompt.
+2. Regenerate both test splits. Assert exactly 28 rows moved in each, that
+   train and validation do not move at all, and that no other row's bytes
+   changed. The second and third assertions are the ones that matter: they
+   prove the change is surgical rather than a re-voicing. The first attempt
+   confirmed train and validation hold still, because the teacher realization
+   file overwrites their prompts.
 3. Archive the superseded files as `test-v1-2026-08-20.jsonl` and record their
    digests in the manifest under a `superseded` key.
 4. Update the pinned digests. The composite 215-row test keeps its old value
