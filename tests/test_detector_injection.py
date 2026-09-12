@@ -137,3 +137,67 @@ def test_normalized_text_helper_is_not_what_the_pii_gate_relies_on() -> None:
     """
     normalized = tool_sft_data.normalized_user_text("123-45-6789")
     assert not re.search(r"\d{3}-\d{2}-\d{4}", normalized)
+
+
+# The two alignment gates the 2026-08-29 audit named as unfired. Both are
+# asserted here by planting the violation into real built splits, so deleting
+# either detector body fails these tests.
+
+
+def _alignment_splits() -> dict[str, list[dict[str, Any]]]:
+    splits, _report = alignment_data.build_servicing_alignment_splits()
+    return {split: list(rows) for split, rows in splits.items()}
+
+
+def test_the_split_group_gate_fires_when_a_group_straddles_two_splits() -> None:
+    splits = _alignment_splits()
+    smuggled = deepcopy(splits["train"][0])
+    smuggled["record_id"] = f"{smuggled['record_id']}__smuggled"
+    splits["test"].append(smuggled)
+
+    with pytest.raises(ValueError, match="split group leaked across splits"):
+        alignment_data._assert_no_cross_split_leakage(splits)
+
+
+def test_the_split_group_gate_cannot_fire_on_the_real_corpus() -> None:
+    """What the gate actually certifies, stated so nobody over-reads it.
+
+    ``split_group`` embeds the state-seed index, and the splitter assigns a
+    record to a split by that same index, so on a correctly built corpus a
+    group is partitioned by construction and this gate is a check on the
+    *splitter*, not on content. It says nothing about two splits sharing
+    wording -- that is what the held-out n-gram and contamination measures are
+    for. Both facts are asserted together so neither can be quoted alone.
+    """
+
+    splits = _alignment_splits()
+    owners: dict[str, set[str]] = {}
+    for split, records in splits.items():
+        for record in records:
+            owners.setdefault(str(record["metadata"]["split_group"]), set()).add(split)
+
+    assert all(len(where) == 1 for where in owners.values())
+
+    shared_wording = {
+        alignment_data._normalize(alignment_data._last_user_text(record))
+        for record in splits["train"]
+    } & {
+        alignment_data._normalize(alignment_data._last_user_text(record))
+        for record in splits["test"]
+    }
+    assert shared_wording == set(), (
+        "exact user turns are shared across train and test; the split-group gate "
+        "would not have reported it either way"
+    )
+
+
+def test_the_duplicate_current_gate_fires_on_a_repeated_user_turn() -> None:
+    splits = _alignment_splits()
+    records = list(splits["test"])
+    repeated = deepcopy(records[0])
+    repeated["record_id"] = f"{repeated['record_id']}__repeated"
+    repeated["metadata"].pop("coreference_pair_id", None)
+    records.append(repeated)
+
+    with pytest.raises(ValueError):
+        alignment_data._assert_no_duplicate_current(records, split="test")
