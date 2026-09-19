@@ -100,6 +100,95 @@ REALIZER_OPENERS = (
     "When you have a moment,",
     "For this signed-in profile,",
 )
+# A request opener cannot be stacked on a question: "Can you how does a card purchase
+# dispute work" is not English. These openers take a bridging verb and the question's
+# embedded (de-inverted) form instead: "Can you tell me how a card purchase dispute
+# works". "Please" bridges only wh-questions, because "Please can you open another
+# checking account" is ordinary English and stays as it is.
+REALIZER_OPENER_BRIDGES = {
+    "Please": "Please explain",
+    "Can you": "Can you tell me",
+    "I need you to": "I need you to explain",
+    "Could you": "Could you tell me",
+    "Help me": "Help me understand",
+    "Would you": "Would you tell me",
+    "I want to": "I want to know",
+}
+# Direct question stem -> embedded form. No rule derives one from the other reliably
+# (subject-auxiliary inversion has to be undone by hand), so every interrogative FAQ
+# stem is listed. Yes/no stems embed with "whether". "can this demo ..." embeds as
+# "whether you can ...": the question is about the assistant, and the trainable-text
+# scrub matches only the direct stem's exact wording, so "demo" must not survive here.
+EMBEDDED_QUESTION_STEMS = {
+    "can you help me open a mortgage account": "whether you can help me open a mortgage account",
+    "how do I apply for a mortgage": "how to apply for a mortgage",
+    "can this demo approve a home loan": "whether you can approve a home loan",
+    "what is involved in getting a mortgage": "what is involved in getting a mortgage",
+    "can you start a mortgage for me": "whether you can start a mortgage for me",
+    "what should I expect when applying for a home loan": (
+        "what to expect when applying for a home loan"
+    ),
+    "how would I open a new savings account": "how I would open a new savings account",
+    "can you open another checking account for me": (
+        "whether you can open another checking account for me"
+    ),
+    "what are the usual steps to open a bank account": (
+        "what the usual steps to open a bank account are"
+    ),
+    "can this demo create a new deposit account": (
+        "whether you can create a new deposit account"
+    ),
+    "what do banks usually require for a new account": (
+        "what banks usually require for a new account"
+    ),
+    "can I add a new checking account in this chat": (
+        "whether I can add a new checking account in this chat"
+    ),
+    "how does interest on a savings account work": "how interest on a savings account works",
+    "what does annual percentage yield mean for savings": (
+        "what annual percentage yield means for savings"
+    ),
+    "how do banks calculate savings interest": "how banks calculate savings interest",
+    "when is savings interest usually credited": "when savings interest is usually credited",
+    "what affects the interest earned on savings": "what affects the interest earned on savings",
+    "what is the policy for disputing a card purchase": (
+        "what the policy for disputing a card purchase is"
+    ),
+    "how does a card purchase dispute work": "how a card purchase dispute works",
+    "what information is needed for a card dispute": (
+        "what information is needed for a card dispute"
+    ),
+    "what happens after I dispute a card purchase": "what happens after I dispute a card purchase",
+    "when can a posted card purchase be disputed": "when a posted card purchase can be disputed",
+    "what should I provide for a card dispute": "what I should provide for a card dispute",
+    "what should I know about replacing a lost card": (
+        "what I should know about replacing a lost card"
+    ),
+    "what happens when a debit card is replaced": "what happens when a debit card is replaced",
+    "how is delivery handled for a replacement card": (
+        "how delivery is handled for a replacement card"
+    ),
+    "what should I do before replacing a lost card": (
+        "what I should do before replacing a lost card"
+    ),
+    "what is the policy for a damaged card replacement": (
+        "what the policy for a damaged card replacement is"
+    ),
+    "what should I do if I see card fraud": "what I should do if I see card fraud",
+    "what is the policy for suspected debit card fraud": (
+        "what the policy for suspected debit card fraud is"
+    ),
+    "how should I respond to a fraudulent card charge": (
+        "how I should respond to a fraudulent card charge"
+    ),
+    "what should I protect when reporting card fraud": (
+        "what I should protect when reporting card fraud"
+    ),
+    "what happens after I report a fraudulent card transaction": (
+        "what happens after I report a fraudulent card transaction"
+    ),
+    "how do I safely report card fraud": "how to safely report card fraud",
+}
 REALIZER_CLOSERS = (
     "",
     "today",
@@ -2717,11 +2806,22 @@ def _realize_user(template: Scenario, occurrence: int) -> str:
     opener = _pick(REALIZER_OPENERS, occurrence // len(stems))
     closer = _pick(REALIZER_CLOSERS, occurrence // (len(stems) * len(REALIZER_OPENERS)))
     context = _natural_context(template, occurrence)
+    opener, stem = _bridge_opener(opener, stem)
     pieces = [opener, stem]
     if closer:
         pieces.append(closer)
     pieces.append(context)
     return " ".join(piece.strip() for piece in pieces if piece.strip())
+
+
+def _bridge_opener(opener: str, stem: str) -> tuple[str, str]:
+    embedded = EMBEDDED_QUESTION_STEMS.get(stem)
+    bridge = REALIZER_OPENER_BRIDGES.get(opener)
+    if embedded is None or bridge is None:
+        return opener, stem
+    if opener == "Please" and embedded.startswith("whether "):
+        return opener, stem
+    return bridge, embedded
 
 
 def _realize_final(template: Scenario, occurrence: int) -> str:

@@ -166,9 +166,8 @@ The release selected epoch 2 and passed every gate.
 > [`banking_conversation_router_data.py`](../src/hello_slm/banking_conversation_router_data.py),
 > described in [Data generation](02-data-generation.md#derivation-guards), remove
 > the cue: the retired-realizer filter drops a template shape from every router
-> split (28 records, 84 derived test rows; the alignment fixtures stay
-> byte-identical), a first-turn phrasing family supplies the plain first ask in
-> question, modal and greeting-led form for every servicing intent (+498 train,
+> split (28 records, 84 derived test rows), a first-turn phrasing family supplies
+> the plain first ask in question, modal and greeting-led form for every servicing intent (+498 train,
 > +99 validation), and a surface-form pass rewrites a fixed share of train and
 > validation rows into the other punctuation form. The result is
 > `data/banking-conversation-router-v9-surface-form`, the release corpus above,

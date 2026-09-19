@@ -871,3 +871,47 @@ def test_training_execute_tool_finals_are_conversational() -> None:
 
     assert short == []
     assert trailing == []
+
+
+def test_no_generated_user_turn_stacks_an_opener_on_a_question() -> None:
+    from hello_slm.banking_conversation_router_data import is_retired_realizer_prompt
+
+    mangled = [
+        str(message["content"])
+        for record in generate_records()
+        for message in record["messages"]
+        if message["role"] == "user" and is_retired_realizer_prompt(str(message["content"]))
+    ]
+
+    assert mangled == []
+
+
+@pytest.mark.parametrize("opener", banking_tool_sft_data.REALIZER_OPENERS)
+@pytest.mark.parametrize("stem", sorted(banking_tool_sft_data.EMBEDDED_QUESTION_STEMS))
+def test_every_opener_and_question_stem_realizes_as_english(opener: str, stem: str) -> None:
+    from hello_slm.banking_conversation_router_data import is_retired_realizer_prompt
+
+    realized_opener, realized_stem = banking_tool_sft_data._bridge_opener(opener, stem)
+    bridged = f"{realized_opener} {realized_stem}"
+    embedded = banking_tool_sft_data.EMBEDDED_QUESTION_STEMS[stem]
+    # A sentence-level opener ("Before I leave,") precedes a question grammatically,
+    # and "Please" may precede a yes/no request; every other opener must bridge.
+    may_stack = opener.endswith(",") or (opener == "Please" and embedded.startswith("whether "))
+
+    assert not is_retired_realizer_prompt(bridged)
+    assert (realized_opener, realized_stem) == (
+        (opener, stem)
+        if may_stack
+        else (banking_tool_sft_data.REALIZER_OPENER_BRIDGES[opener], embedded)
+    )
+    assert may_stack or "demo" not in realized_stem
+
+
+def test_please_keeps_a_yes_no_request_as_written() -> None:
+    stem = "can you open another checking account for me"
+
+    assert banking_tool_sft_data._bridge_opener("Please", stem) == ("Please", stem)
+    assert banking_tool_sft_data._bridge_opener("Help me", stem) == (
+        "Help me understand",
+        "whether you can open another checking account for me",
+    )

@@ -17,6 +17,31 @@ phrase “do not share a password.” Two genuine failures remain: a tool-error
 final response claims success, and a history-resolved replacement request asks
 for the information again.
 
+## Which fixture a score belongs to
+
+A score is comparable only with another score measured on the same fixture.
+Each tool-SFT and alignment `test.jsonl` has a superseded predecessor that
+differs in 28 malformed prompts; see
+[Frozen fixtures](02-data-generation.md#frozen-fixtures).
+
+| Fixture | Scores measured on it |
+| --- | --- |
+| `superseded/test-v1-2026-08-20.jsonl` (alignment `36557c20…`, tool-SFT `9a7938ac…`) | The v8 generative evaluation below (dataset revision `a78bed17`), and the router v9 test split, which samples from it |
+| `test.jsonl` (alignment `bdcf2945…`, tool-SFT `274efa65…`) | No published score |
+
+The Granite continuation lanes, including the deployed v14 adapter, gate on the
+coreference and Granite V7 shadow fixtures, which are identical in both
+versions; v14 has no score on either test fixture.
+
+`cloud_generate_tool_eval.py` loads the split from the directory of its
+manifest. Given `--manifest`, that is a local directory: the local files are
+scored, and `--dataset-revision` is either a recorded Hub revision or
+`sha256:<digest>` of that manifest, which is then checked. Without
+`--manifest`, it downloads the `--dataset-revision` snapshot from the Hub and
+scores the files served there. The remote job, `run_remote_tool_eval_job.sh`,
+never passes `--manifest`, so a remote score on the current fixture needs the
+fixture published as a dataset revision first.
+
 ## 1. Data Gates
 
 Before training, require:

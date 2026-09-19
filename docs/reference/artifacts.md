@@ -67,9 +67,9 @@ Digests below are the corpus **on disk**, which is the v12 iteration plus the
 prompt-realization passes ([Prompt realization](../02-data-generation.md#prompt-realization)):
 366 train and validation questions rewritten so they stop shadowing the eval
 splits. It was published as `ce0d442955c0698d9be1f0592081e648766ffd07` and the
-files served there were verified against these digests after the upload; the
-current head `@a649b766` adds only the dataset card and was re-verified to
-carry the same three files. `@8494c94f` is the same curriculum before the
+train and validation files served there match these digests; the `test.jsonl`
+served there is the superseded fixture, `36557c20…` below. The head
+`@a649b766` adds only the dataset card and serves the same three files. `@8494c94f` is the same curriculum before the
 prompt passes; the deployed v11 adapter was trained earlier still, on
 `@b5ec0489`.
 
@@ -77,21 +77,26 @@ prompt passes; the deployed v11 adapter was trained earlier still, on
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 21,686 | `a18eaceb189f2e247e51d4d665b81df9cf75eb75ff2a4e9dd307ccca7b0543c3` |
+| `train.jsonl` | 841 | `b723dabbe44b5148cd729f723ee236141f03e202bc60de013c8b263eee6aea6c` |
 | `validation.jsonl` | 179 | `e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573` |
-| `test.jsonl` (frozen) | 180 | `9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c` |
+| `test.jsonl` (frozen) | 180 | `274efa6503f91b0d85fd3a3cc8e1e58e9c8227a1c238be5a650c16da0bff2afd` |
+| `superseded/test-v1-2026-08-20.jsonl` | 180 | `9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c` |
 
 `data/banking-servicing-alignment-v5`
 
 | File | Rows | SHA-256 |
 | --- | ---: | --- |
-| `train.jsonl` | 21,686 | `a18eaceb189f2e247e51d4d665b81df9cf75eb75ff2a4e9dd307ccca7b0543c3` |
+| `train.jsonl` | 3,959 | `a1f6f3f4a0c5da106bc049ba8660c22e235a48efd9a206080f2dc439d64d5d95` |
 | `validation.jsonl` | 447 | `cab8b527c0124c7290e53a4192fb504bcbb63dfbcaef05baf90a58ffbcc4763f` |
-| `test.jsonl` (frozen) | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
+| `test.jsonl` (frozen) | 215 | `bdcf29458a7573f66e5e9889e22a4ce10795177f0ddadf6147573fc574198e8e` |
+| `superseded/test-v1-2026-08-20.jsonl` | 215 | `36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811` |
 
-The frozen `test.jsonl` digests, and the alignment `coreference-shadow.jsonl`,
-`granite-v7-shadow.jsonl`, and `screenshot-regression.jsonl` files, are
-unchanged by the regeneration.
+The alignment `coreference-shadow.jsonl`, `granite-v7-shadow.jsonl`, and
+`screenshot-regression.jsonl` files are unchanged by the regeneration. Each
+`test.jsonl` is the current fixture; the `superseded/` file beside it is the
+fixture the v8 generative evaluation was measured on, and the router v9 corpus
+samples its test split from the superseded alignment fixture. See
+[Frozen fixtures](../02-data-generation.md#frozen-fixtures).
 
 The runtime loads the base and attaches the adapter without merging: BF16 on
 ZeroGPU and NF4-quantized base plus adapter locally.

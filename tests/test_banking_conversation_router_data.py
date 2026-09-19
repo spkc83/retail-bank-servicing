@@ -926,10 +926,10 @@ def test_retrospective_status_questions_stay_converse_and_never_touch_test() -> 
 
 
 # The tool-SFT realizer used to stack a request opener on a stem that was already a
-# question, producing "Can you what information is needed for a card dispute". Train
-# stopped carrying that shape on 2026-08-20, but the frozen test splits still do, so a
-# router trained on the current corpus refuses them as out-of-domain and the false-refusal
-# gate measures the retired template instead of the router.
+# question, producing "Can you what information is needed for a card dispute". The
+# superseded test fixtures still carry that shape, and a router trained on clean text
+# refuses it as out-of-domain, so a false-refusal gate that includes it measures the
+# template instead of the router.
 @pytest.mark.parametrize(
     "text",
     [

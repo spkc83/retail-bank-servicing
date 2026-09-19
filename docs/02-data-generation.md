@@ -49,8 +49,15 @@ PYTHONPATH=src uv run python scripts/retail_bank/prepare_conversation_router_dat
 
 The expected lock makes regeneration fail if split digests drift. Use
 `--skip-release-digest-check` only while deliberately creating a new candidate,
-never when reproducing this release. `make corpora` checks that the command
-above reproduces the committed files byte for byte.
+never when reproducing this release.
+
+This corpus is pinned to the deployed router and is kept as a frozen release
+artifact. Its test split samples from the superseded alignment test fixture
+(see [Frozen fixtures](#frozen-fixtures)), so a rebuild from HEAD reproduces train and validation byte for byte but resamples
+test and fails the lock. The fixture the release was built from is kept at
+`data/banking-servicing-alignment-v5/superseded/test-v1-2026-08-20.jsonl`.
+`make corpora` reports the corpus as frozen instead of comparing it; the next
+router corpus is built from the current fixture.
 
 The previous release corpus, `data/banking-conversation-router-v8-first-turn-mutation`
 (lock `data/sources/banking-conversation-router-v8-first-turn-mutation.lock.json`, router
@@ -67,7 +74,7 @@ cue the router would otherwise learn in place of the task.
 
 | Pass | What it does | Why |
 | --- | --- | --- |
-| Retired-realizer filter | Drops any alignment record whose user turn has the shape "Can you what information is needed for a card dispute": a request opener stacked on a text that was already a question. Applies to every split. | The shape is an artefact of a retired realizer template, not something a customer types. The frozen test splits still carry 31 such prompts, and a router trained on clean text refuses them, so without the filter the false-refusal gate scores the template rather than the router. The alignment fixtures themselves are untouched. |
+| Retired-realizer filter | Drops any alignment record whose user turn has the shape "Can you what information is needed for a card dispute": a request opener stacked on a text that was already a question. Applies to every split. | The shape is an artefact of a realizer template, not something a customer types, and a router trained on clean text refuses it, so a false-refusal gate that includes it scores the template rather than the router. The superseded test fixtures carry 28 such prompts; the current fixtures and the generator carry none, and the filter keeps it that way for any input that does. |
 | First-turn phrasing family | Hand-written first turns for every servicing intent and policy: real questions ("What is my checking account balance?"), modal requests ("Could you pull up my transfers?"), greeting-led asks ("Hi, can you freeze my card?") and two-word asks ("Balance check."). Train and validation only. | The corpus was built around transitions between tasks; first-turn wh-questions were zero for six intents and modal requests numbered ten to twenty-six, while CLINC supplies thousands of "can you set an alarm" lines in the same shape. |
 | Surface-form pass | Rewrites a fixed 35% share of train and validation rows into the other punctuation form: banking and social rows lose their terminal mark and capital, out-of-domain rows gain them. The test split is never rewritten. | With an uncased encoder, terminal punctuation was the only surface cue left, and it predicted the domain almost perfectly. The same words scored 0.01 banking bare and 1.00 punctuated. |
 
@@ -320,7 +327,7 @@ PYTHONPATH=src uv run python scripts/retail_bank/measure_split_contamination.py 
 
 | corpus / split | eval rows | train rows echoing an identifying 4-gram | median nearest-train similarity | ≥0.95 | ≥0.90 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| base / test | 180 | 575 | 0.771 | 0 | 4 |
+| base / test | 180 | 577 | 0.773 | 0 | 4 |
 | alignment / test | 35 | 256 | 0.843 | 0 | 8 |
 | alignment / validation | 268 | 1,073 | 0.789 | 0 | 34 |
 
@@ -407,6 +414,30 @@ Regeneration must leave these files byte-identical:
 `data/banking-v5-tool-sft/test.jsonl` and the alignment `test.jsonl`,
 `coreference-shadow.jsonl`, `granite-v7-shadow.jsonl`, and
 `screenshot-regression.jsonl`.
+
+### Frozen fixtures
+
+A frozen fixture changes only by rotation. The replaced file moves to the
+corpus's `superseded/` directory under a versioned name, and
+`superseded/manifest.json` records its digest, the digest of the file that
+replaced it, how many rows changed and why, and which published scores were
+measured on it. A score is only comparable with another score measured on the
+same fixture.
+
+Each `test.jsonl` has one superseded predecessor,
+`superseded/test-v1-2026-08-20.jsonl`. It differs in 28 user turns, which
+stacked a request opener on a question ("Can you how does a card purchase
+dispute work"). The realizer bridges such an opener into the question's
+embedded form ("Can you tell me how a card purchase dispute works") using
+`REALIZER_OPENER_BRIDGES` and the hand-written `EMBEDDED_QUESTION_STEMS`.
+Undoing subject-auxiliary inversion has no reliable rule, so every
+interrogative FAQ stem is listed. Every other row is byte-identical between the
+two fixtures. Train and validation are unaffected by the bridge, because the
+teacher realization overwrites their prompts.
+
+The bridge covers questions only. An opener stacked on a statement ("Please my
+wallet is gone ...") is still generated and appears in both fixtures; changing
+it would rotate the fixtures again.
 
 ### Trainable-text word ban
 

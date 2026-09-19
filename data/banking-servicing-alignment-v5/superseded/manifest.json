@@ -1,0 +1,16 @@
+{
+  "contract": "superseded-evaluation-fixtures",
+  "fixtures": [
+    {
+      "bytes": 594554,
+      "path": "test-v1-2026-08-20.jsonl",
+      "reason": "28 user turns stacked a request opener on a question (\"Can you how does a card purchase dispute work\"); the current fixture bridges the opener into the question's embedded form. Every other row is byte-identical.",
+      "replaces": "test.jsonl",
+      "rows": 215,
+      "rows_changed": 28,
+      "scores_measured_on_this_fixture": "the v8 generative evaluation (dataset spkc83/retail-bank-servicing-alignment-sft@a78bed17) and the router v9 test split, which samples from the alignment fixture",
+      "sha256": "36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811",
+      "superseded_by_sha256": "bdcf29458a7573f66e5e9889e22a4ce10795177f0ddadf6147573fc574198e8e"
+    }
+  ]
+}

@@ -3,9 +3,16 @@
 **Goal:** remove 31 template-mangled prompts from the two frozen evaluation
 splits without destroying the evidence for any number already published.
 
-**Status:** design, revised after a failed execution attempt on 2026-09-12.
-The mechanical version does not work and the reasons are recorded below. What
-remains is a bounded authoring task plus one priced decision, both stated below.
+**Status:** steps 1 to 5 and 7 executed on 2026-09-18; step 6, the priced
+rescore, awaits approval. Two departures from the steps below, both forced by
+the repository: the archived fixtures live in a `superseded/` subdirectory with
+their own `manifest.json`, because the reproduction check compares every
+`*.jsonl` beside the generated splits and the generated `manifest.json` is
+rewritten on every build; and the router v9 corpus joined
+`FROZEN_RELEASE_ARTIFACTS`, because its test split samples from the alignment
+fixture and resamples (338 rows out, 422 in) when the fixture moves, while its
+train and validation rebuild byte for byte. The first section below records the
+failed mechanical attempt.
 
 ## What is wrong with the fixtures
 

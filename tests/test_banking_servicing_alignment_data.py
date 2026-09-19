@@ -558,10 +558,7 @@ def test_grouped_counterfactual_rejects_forged_history_metadata() -> None:
     assert tool_sft_data._is_governed_counterfactual_group([*pair, *forged]) is False
 
 
-def test_candidate5_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
-    _base_manifest, base_splits = load_base_sft_splits()
-    alignment_splits, _report = build_servicing_alignment_splits()
-    rows = [*base_splits["test"], *alignment_splits["test"]]
+def _behavior_fields_sha256(rows: Sequence[dict[str, Any]]) -> str:
     behavioral_fields = ("messages", "expected", "split_keys", "metadata")
     payload = [{field: row[field] for field in behavioral_fields} for row in rows]
     encoded = json.dumps(
@@ -570,11 +567,79 @@ def test_candidate5_preserves_all_215_test_behavior_fields_byte_equivalent() -> 
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+ALIGNMENT_DIR = Path(__file__).resolve().parents[1] / "data/banking-servicing-alignment-v5"
+SUPERSEDED_TEST = ALIGNMENT_DIR / "superseded/test-v1-2026-08-20.jsonl"
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_candidate5_preserves_all_215_test_behavior_fields_byte_equivalent() -> None:
+    _base_manifest, base_splits = load_base_sft_splits()
+    alignment_splits, _report = build_servicing_alignment_splits()
+    rows = [*base_splits["test"], *alignment_splits["test"]]
 
     assert len(rows) == 215
-    assert hashlib.sha256(encoded).hexdigest() == (
+    assert _behavior_fields_sha256(rows) == (
+        "6f4bf1acff453f0def6f57a068ca89c37c084f66bf9d1bb01f81032dbed3b834"
+    )
+
+
+def test_the_superseded_test_fixture_keeps_the_digest_published_scores_were_measured_on() -> None:
+    rows = _read_jsonl(SUPERSEDED_TEST)
+
+    assert len(rows) == 215
+    assert _behavior_fields_sha256(rows) == (
         "4ac64ad9177273edb19c0752f94b71da51337b388cffe8cd03b5a9d9718c186e"
     )
+
+
+@pytest.mark.parametrize("corpus", ["banking-v5-tool-sft", "banking-servicing-alignment-v5"])
+def test_the_fixture_rotation_changed_only_the_28_mangled_user_turns(corpus: str) -> None:
+    from hello_slm.banking_conversation_router_data import is_retired_realizer_prompt
+
+    def without_user_text(row: dict[str, Any]) -> dict[str, Any]:
+        stripped = deepcopy(row)
+        for message in stripped["messages"]:
+            if message["role"] == "user":
+                message["content"] = ""
+        return stripped
+
+    def has_mangled_turn(row: dict[str, Any]) -> bool:
+        return any(
+            message["role"] == "user" and is_retired_realizer_prompt(message["content"])
+            for message in row["messages"]
+        )
+
+    directory = ALIGNMENT_DIR.parent / corpus
+    old_rows = _read_jsonl(directory / "superseded/test-v1-2026-08-20.jsonl")
+    new_rows = _read_jsonl(directory / "test.jsonl")
+    changed = [(old, new) for old, new in zip(old_rows, new_rows, strict=True) if old != new]
+
+    assert len(changed) == 28
+    for old, new in changed:
+        assert without_user_text(old) == without_user_text(new)
+        assert has_mangled_turn(old)
+        assert not has_mangled_turn(new)
+    assert not any(has_mangled_turn(row) for row in new_rows)
+
+
+@pytest.mark.parametrize("corpus", ["banking-v5-tool-sft", "banking-servicing-alignment-v5"])
+def test_the_superseded_manifest_matches_both_fixtures_on_disk(corpus: str) -> None:
+    directory = ALIGNMENT_DIR.parent / corpus
+    manifest = json.loads((directory / "superseded/manifest.json").read_text(encoding="utf-8"))
+    (entry,) = manifest["fixtures"]
+    archived = (directory / "superseded" / entry["path"]).read_bytes()
+    current = (directory / entry["replaces"]).read_bytes()
+
+    assert hashlib.sha256(archived).hexdigest() == entry["sha256"]
+    assert len(archived) == entry["bytes"]
+    assert archived.count(b"\n") == entry["rows"]
+    assert hashlib.sha256(current).hexdigest() == entry["superseded_by_sha256"]
 
 
 def test_alignment_rows_quarantine_unverified_replay_claims() -> None:

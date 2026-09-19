@@ -312,13 +312,12 @@ _SFT_ONLY_SCENARIO_FAMILIES = frozenset(
 
 # The tool-SFT realizer once glued a request opener onto a stem that was already a
 # question, so "what information is needed for a card dispute" shipped as "Can you
-# what information is needed for a card dispute". Train stopped carrying that shape on
-# 2026-08-20; the frozen test splits still do (31 of the 215 alignment test rows), and a
-# router trained on the current corpus refuses them as out-of-domain. The gate was then
-# measuring the retired template, not the router: the shipped artifact passes it only
-# because it trained on 129 such rows. These rows are dropped from every router split
-# so the false-refusal denominator holds prompts the generator can still produce. The
-# alignment fixtures themselves stay byte-identical.
+# what information is needed for a card dispute". The generator and the current test
+# fixtures carry none; the superseded fixtures carry 28 per split. A router trained on
+# clean text refuses the shape as out-of-domain, so a false-refusal gate that includes
+# it measures the template rather than the router. These rows are dropped from every
+# router split so the false-refusal denominator holds only prompts the generator can
+# produce.
 _RETIRED_REALIZER_SHAPE = re.compile(
     r"^\s*(?:"
     r"(?:can you|could you|would you|help me|i need you to)\s+"

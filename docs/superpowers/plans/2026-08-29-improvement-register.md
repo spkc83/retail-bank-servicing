@@ -91,6 +91,8 @@ the release process treats them as making.
 - The Space publishes its own demo credentials on the login screen. This is **deliberate** (a public demo inviting visitors to sign in as a fictional profile), but they are stored as a Space *secret* and validated for strength as if confidential. Pick one model. `app.py:73-81` · S
 - ASR consent/PII-review attestations are caller-set booleans re-emitted as verified facts under `validation`. Must be resolved before any real-transcript use. `banking_asr_sft_data.py:221-228,279-289` · M
 - `tests/test_repository_documentation.py` does existence/link checks only — zero value checks, so it caught none of the doc errors fixed at `2a43086`. · M
+- The realizer still stacks a request opener on a *statement*: 29 generated user turns such as "Can you my card was stolen freeze it" and "Help me help me understand overdraft", including rows in both frozen `test.jsonl` fixtures ("Please my wallet is gone ..."). The fixture rotation of 2026-09-18 repaired only the opener-on-a-question shape; this one needs its own embedded or bridged forms and a second rotation, and the router's retired-realizer filter does not match it. `banking_tool_sft_data.py` `_realize_user` · M
+- `prepare_conversation_router_data.py` defaults both `--source-lock` and `--expected-release-lock` to the committed v6 lock, and writes the source lock whenever the two paths differ, so a scratch rebuild that overrides only one of them silently rewrites a committed release lock. It happened twice while rotating the fixtures and was reverted both times. `prepare_conversation_router_data.py:39,303-312` · S
 
 ## Fixed after the audit
 

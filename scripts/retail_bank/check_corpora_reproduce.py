@@ -48,6 +48,15 @@ FROZEN_RELEASE_ARTIFACTS = {
         "documented in docs/02 and checked here like any other; docs/08 section 4 "
         "records why the two differ."
     ),
+    "banking-conversation-router-v9-surface-form": (
+        "Pinned to the deployed router spkc83/retail-bank-conversation-router@a666075f. "
+        "Its test split samples from the alignment test fixture, which was rotated to "
+        "repair 28 opener-on-a-question prompts; the fixture it was built from is kept "
+        "at data/banking-servicing-alignment-v5/superseded/test-v1-2026-08-20.jsonl. "
+        "A rebuild from HEAD reproduces train and validation byte for byte and "
+        "resamples test, so it no longer matches the release lock. The next router "
+        "corpus is built from the rotated fixture."
+    ),
 }
 #: The fenced block in the docs that holds both regeneration commands.
 COMMAND_PATTERN = re.compile(

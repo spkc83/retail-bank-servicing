@@ -80,7 +80,7 @@
         "validation": 168
       }
     },
-    "base_manifest_sha256": "6b44433ba0223c162524a605cbea3e725de2f9ad850bdc618b9a0be38b8fb63d",
+    "base_manifest_sha256": "f310feb7a18c57e22ab1e60f8ba6e4178e4e98a984f95ff4b63f55656be8c068",
     "base_split_counts": {
       "test": 180,
       "train": 841,
@@ -227,7 +227,7 @@
     "released-retail-bank-agent-sft": {
       "generator_version": "banking-tool-sft/v1.7-v7-argument-contract",
       "license": "MIT",
-      "manifest_sha256": "6b44433ba0223c162524a605cbea3e725de2f9ad850bdc618b9a0be38b8fb63d",
+      "manifest_sha256": "f310feb7a18c57e22ab1e60f8ba6e4178e4e98a984f95ff4b63f55656be8c068",
       "role": "base-tool-use-sft",
       "trainable": true
     },
@@ -263,11 +263,11 @@
       "allowed_use": [
         "granite-continuation-evaluation"
       ],
-      "bytes": 594554,
+      "bytes": 594801,
       "name": "test",
       "path": "test.jsonl",
       "record_count": 215,
-      "sha256": "36557c20e13f9ab292d6310df0732d6ba9cdf9a7fa6ffef42ee2e3ef4f289811"
+      "sha256": "bdcf29458a7573f66e5e9889e22a4ce10795177f0ddadf6147573fc574198e8e"
     }
   ]
 }

@@ -42,7 +42,7 @@
       "sha256": "e7c7ca152a2376b0f95c5e4bd495db437a53a02d637258698b28060f2f062573"
     },
     {
-      "bytes": 514409,
+      "bytes": 514656,
       "licenses": [
         "MIT"
       ],
@@ -51,7 +51,7 @@
       "record_count": 180,
       "role": "tool_sft",
       "schema_version": "banking-tool-sft/v1",
-      "sha256": "9a7938ac5e5dfdc5e176de9d599debdd7c0e7a02fa70ce8f585541b68e03618c"
+      "sha256": "274efa6503f91b0d85fd3a3cc8e1e58e9c8227a1c238be5a650c16da0bff2afd"
     }
   ]
 }
