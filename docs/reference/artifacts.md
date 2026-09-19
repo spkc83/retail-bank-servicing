@@ -69,7 +69,10 @@ prompt-realization passes ([Prompt realization](../02-data-generation.md#prompt-
 splits. It was published as `ce0d442955c0698d9be1f0592081e648766ffd07` and the
 train and validation files served there match these digests; the `test.jsonl`
 served there is the superseded fixture, `36557c20…` below. The head
-`@a649b766` adds only the dataset card and serves the same three files. `@8494c94f` is the same curriculum before the
+`@a649b766` adds only the dataset card and serves the same three files, as
+does `@9c0db035`, a card edit. `@5c16347a1e017ecaa3bc461082bd9891eec74d38`
+serves the current `test.jsonl` and `manifest.json`, with the superseded
+fixture under `superseded/`; every other file is unchanged. `@8494c94f` is the same curriculum before the
 prompt passes; the deployed v11 adapter was trained earlier still, on
 `@b5ec0489`.
 

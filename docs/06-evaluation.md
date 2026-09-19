@@ -27,11 +27,56 @@ differs in 28 malformed prompts; see
 | Fixture | Scores measured on it |
 | --- | --- |
 | `superseded/test-v1-2026-08-20.jsonl` (alignment `36557c20…`, tool-SFT `9a7938ac…`) | The v8 generative evaluation below (dataset revision `a78bed17`), and the router v9 test split, which samples from it |
-| `test.jsonl` (alignment `bdcf2945…`, tool-SFT `274efa65…`) | No published score |
+| `test.jsonl` (alignment `bdcf2945…`, tool-SFT `274efa65…`) | The deployed v14 adapter, below (dataset revision `5c16347a`) |
 
-The Granite continuation lanes, including the deployed v14 adapter, gate on the
-coreference and Granite V7 shadow fixtures, which are identical in both
-versions; v14 has no score on either test fixture.
+The Granite continuation lanes, including v14, gate on the coreference and
+Granite V7 shadow fixtures, which are identical in both versions.
+
+### Deployed v14 on the current test fixture
+
+```text
+adapter:  spkc83/retail-bank-servicing-agent-9b-peft-v14-prompt-realized@47968b2b9ce02973b5676e464aafaa768cdbb05e
+base:     spkc83/retail-bank-servicing-agent-9b@1d56824995aa1adecfe20f62ca42fb1c0c443817
+dataset:  spkc83/retail-bank-servicing-alignment-sft@5c16347a1e017ecaa3bc461082bd9891eec74d38
+source:   492196db32255e6b8beeb130a6aa67c3b1a43dfe
+job:      6aae07ea51992417dfcc87b9 (rtx-pro-6000, BF16)
+outputs:  evaluation/47968b2b9ce0-5c16347a1e01/ in the adapter repo
+```
+
+| Metric | Score | Gate |
+| --- | ---: | --- |
+| Tool name accuracy | 119 / 119 | pass |
+| Tool argument accuracy | 119 / 119 | pass |
+| Multi-tool exact sequence | 12 / 12 | pass |
+| Executable tool success | 81 / 81 | pass |
+| Malformed tool calls | 0 / 215 | pass |
+| Unsupported private arguments | 0 / 119 | pass |
+| Credential requests | 0 / 215 | pass |
+| In-domain false refusals | 0 / 107 | pass |
+| OOD false accepts | 0 / 11 | pass |
+| Clarification appropriateness | 4 / 5 | **fail** (must be 1.0) |
+| Grounded final factuality | 158 / 174 (0.908) | **fail** (must be 1.0) |
+| Grounded policy quality | 43 / 50 (0.86) | **fail** (must be 1.0) |
+| OOD / small-talk response path | 0 / 11 | **fail** (must be 1.0) |
+
+How to read the failures:
+
+- **OOD / small-talk response path** requires the literal marker `retail
+  banking` in the answer (`_path_pass` in `banking_tool_eval.py`). v14 declines
+  all eleven correctly (zero false accepts) in its teacher-realized voice ("What
+  I can do is banking: accounts, cards, transfers, payments, and loans"), which
+  never uses that phrase. The zero measures the marker, not the behaviour.
+- **Policy quality and factuality** match required facts as exact phrases.
+  Most misses are paraphrases ("report the charge promptly" for "report the
+  transaction promptly"); some are omissions ("not guaranteed" for mortgage
+  approval, the identity requirements for deposit opening).
+- Four of the 28 rows that differ from the superseded fixture fail, each on
+  both policy quality and factuality. Without a v14 score on the superseded fixture the
+  difference the rotation makes to v14 is not measured.
+
+The remote job evaluates its targets in order and stops at the first target
+whose enforced gate fails, so the `granite-v7-shadow` and
+`screenshot-regression` targets were not scored in this run.
 
 `cloud_generate_tool_eval.py` loads the split from the directory of its
 manifest. Given `--manifest`, that is a local directory: the local files are

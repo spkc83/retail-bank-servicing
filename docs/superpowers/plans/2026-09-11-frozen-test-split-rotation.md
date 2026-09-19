@@ -3,8 +3,9 @@
 **Goal:** remove 31 template-mangled prompts from the two frozen evaluation
 splits without destroying the evidence for any number already published.
 
-**Status:** steps 1 to 5 and 7 executed on 2026-09-18; step 6, the priced
-rescore, awaits approval. Two departures from the steps below, both forced by
+**Status:** executed on 2026-09-18. Step 6 ran as HF job 6aae07ea against dataset
+revision 5c16347a (485 s, about $0.37); the result is in
+[docs/06](../../06-evaluation.md#deployed-v14-on-the-current-test-fixture). Two departures from the steps below, both forced by
 the repository: the archived fixtures live in a `superseded/` subdirectory with
 their own `manifest.json`, because the reproduction check compares every
 `*.jsonl` beside the generated splits and the generated `manifest.json` is
