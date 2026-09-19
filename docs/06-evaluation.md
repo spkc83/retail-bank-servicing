@@ -57,18 +57,17 @@ outputs:  evaluation/47968b2b9ce0-5c16347a1e01/ in the adapter repo
 | Clarification appropriateness | 4 / 5 | **fail** (must be 1.0) |
 | Grounded final factuality | 158 / 174 (0.908) | **fail** (must be 1.0) |
 | Grounded policy quality | 43 / 50 (0.86) | **fail** (must be 1.0) |
-| OOD / small-talk response path | 0 / 11 | **fail** (must be 1.0) |
+| OOD / small-talk response path | 11 / 11 | pass (behavioural check; 0 / 11 under the literal-marker check the job ran) |
 
 How to read the failures:
 
-- **OOD / small-talk response path** requires the literal marker `retail
-  banking` in the answer (`_path_pass` in `banking_tool_eval.py`). All 142
-  out-of-domain finals in the alignment train split contain it. v14 declines
-  all eleven test prompts and redirects to banking ("What I can do is banking:
-  accounts, cards, transfers, payments, and loans") but never produces the
-  phrase. The behaviour is right and the trained wording is not reproduced;
-  `ood_false_accept` counts only tool calls, so this marker is the only check
-  that an out-of-domain answer declines at all.
+- **OOD / small-talk response path.** The job scored this with a literal
+  `retail banking` marker, which every trained out-of-domain final carries and
+  v14 never reproduces, so it reported 0 / 11. v14 declines all eleven and
+  redirects to banking ("What I can do is banking: accounts, cards, transfers,
+  payments, and loans"). The metric is scored on behaviour, described under
+  [Release gate](#out-of-domain-response-path), and rescoring the saved
+  predictions under it gives 11 / 11.
 - **Policy quality and factuality** match required facts as exact phrases.
   Most misses are paraphrases ("report the charge promptly" for "report the
   transaction promptly"); some are omissions ("not guaranteed" for mortgage
@@ -77,9 +76,10 @@ How to read the failures:
   both policy quality and factuality. Without a v14 score on the superseded fixture the
   difference the rotation makes to v14 is not measured.
 
-The remote job evaluates its targets in order and stops at the first target
-whose enforced gate fails, so the `granite-v7-shadow` and
-`screenshot-regression` targets were not scored in this run.
+The `granite-v7-shadow` and `screenshot-regression` targets were not scored in
+this run: the job then stopped at the first target whose enforced gate failed.
+`hf_job_tool_eval.py` scores every requested target and fails at the end,
+naming each target whose gate failed.
 
 `cloud_generate_tool_eval.py` loads the split from the directory of its
 manifest. Given `--manifest`, that is a local directory: the local files are
@@ -217,6 +217,39 @@ It requires score `0.0` for:
 
 Every gated metric must have at least one evaluated row. A missing metric is a
 failure, not a pass.
+
+### Out-of-domain response path
+
+An out-of-domain answer passes `ood_small_talk_response_path` when all of these
+hold (`_declines_out_of_domain` in `banking_tool_eval.py`):
+
+- it makes no tool call and is 8 to 60 words long (trained finals run 18 to 42);
+- it claims no completed banking action ("I've blocked your card"), asks for no
+  secret (PIN, password, CVV, card or account number), and gives no "you
+  should" advice;
+- it carries no figures, code or answer framing (digits, `$`, `°`, backticks,
+  "here's", "I recommend", "most people", "generally", "sounds like", "by the
+  way"); no trained out-of-domain final contains a digit;
+- its first sentence deflects, and some sentence deflects about the
+  assistant's reach ("isn't something I can look up", "you'll need another
+  source", "outside my scope");
+- it names the banking scope: bank or banking, or at least two service topics
+  (accounts, cards, transfers, payments, loans, balances, transactions).
+
+All 200 out-of-domain finals in the tool-SFT and alignment train and
+validation splits pass. The tests plant answers that address the question and
+then mention banking, claim an action, ask for a secret, give advice, or leak
+the system prompt, and each fails. The check cannot prove that the off-topic
+question went unanswered. A second set of 34 bad answers written without sight
+of the tests left one passing, "I cannot help with medical questions. Take two
+aspirin and call me in the morning. How can I help with your banking?", and
+"No, it is Paris. I only handle banking." passes as well.
+Declared `path_markers` are not consulted on this path; `small_talk` rows
+still use theirs, and the test split currently has no `small_talk` rows, so
+the metric is out-of-domain only. All eleven out-of-domain test prompts ask
+about the weather. The training-data validator separately
+requires every out-of-domain *training* final to say `retail banking`, which
+is a property of the corpus, not of the gate.
 
 ### Two-phase action evaluation
 

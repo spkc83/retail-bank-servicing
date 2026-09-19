@@ -1093,3 +1093,32 @@ def test_hf_eval_launcher_rejects_a_non_numeric_price(tmp_path: Path) -> None:
     assert code == 2
     assert "MAX_JOB_COST_USD must be a non-negative decimal" in stderr
     assert not submitted
+
+
+def test_hf_job_scores_every_target_even_after_a_gate_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One failed release gate must not leave the remaining fixtures unscored."""
+    job = _load_module(JOB_PATH, "hf_job_tool_eval_all_targets")
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    splits_run: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        split = command[command.index("--split") + 1]
+        splits_run.append(split)
+        return subprocess.CompletedProcess(command, 1 if split == "test" else 0)
+
+    monkeypatch.setattr(job, "download_source", lambda *_args: source_root)
+    monkeypatch.setattr(job.subprocess, "run", fake_run)
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["hf_job_tool_eval.py", "--source-commit", "a" * 40, "--dataset-revision", "b" * 40],
+    )
+
+    with pytest.raises(SystemExit, match="test"):
+        job.main()
+
+    assert splits_run == ["test", "granite-v7-shadow", "screenshot-regression"]

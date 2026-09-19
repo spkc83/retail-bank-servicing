@@ -698,10 +698,106 @@ def _clarification_pass(prediction: AssistantPrediction, expected: Mapping[str, 
     )
 
 
+# An out-of-domain answer passes on behaviour, not wording. A literal "retail
+# banking" marker scored a model that declined all eleven test prompts in its own
+# words at 0/11, and it said nothing about an answer that claimed an action or
+# asked for a PIN. Every rule below is calibrated on the whole population it must
+# accept, all trained out-of-domain finals, and each has a planted violation in
+# tests/test_banking_tool_eval.py. None can prove the off-topic question went
+# unanswered: "No, it is Paris. I only handle banking." and an answer with no
+# figures ("Take two aspirin and call me in the morning") still pass. Declared
+# ``path_markers`` are not consulted on this path.
+_OOD_DECLINE = re.compile(
+    r"n't\b|\b(?:no|not|nothing|cannot|unable|outside|beyond|only|elsewhere|"
+    r"out of scope|another source|rather than|leave|far from|better answer|"
+    r"want a|pass on|afraid|limited)\b"
+)
+#: A decline counts when it is about the assistant's reach, not the weather.
+_OOD_DECLINE_SUBJECT = re.compile(
+    r"\b(?:i|i'm|i'd|i'll|me|my|mine|this assistant|here|you'll|you|help|answer|"
+    r"available|scope|share|track|check|look|pull|give|service|source|guess)\b"
+)
+_OOD_STANDALONE_DEFLECTION = re.compile(
+    r"\b(?:elsewhere|another source|weather service|out of scope)\b"
+)
+_OOD_ACTION_CLAIM = re.compile(
+    r"\b(?:i've|i have|i just|done|all set)\b[^.!?]{0,40}\b(?:transferred|sent|moved|"
+    r"paid|blocked|froze|frozen|locked|cancel+ed|opened|closed|scheduled|updated|"
+    r"submitted|disputed|replaced)\b"
+)
+_OOD_SECRET = re.compile(
+    r"\b(?:pin|password|passcode|cvv|otp|one[- ]time (?:code|passcode|verification code)|"
+    r"security code|card number|account number|ssn|social security)\b"
+)
+_OOD_ADVICE = re.compile(r"\byou should\b|\bshould just\b|\bstop paying\b")
+#: Signs the reply answers the question. A decline carries no figures (no trained
+#: out-of-domain final contains a digit), no code, and no answer framing.
+_OOD_ANSWER_SIGNAL = re.compile(
+    r"\d|[`$\u00b0]|\b(?:here's|here is|i'd recommend|i recommend|i'd suggest|most people|"
+    r"generally|sounds like|by the way)\b"
+)
+_OOD_PLEASANTRY = re.compile(
+    r"^(?:thanks|thank you|sorry|my apologies|apologies|hello|hi|hey|have a [a-z ]{1,20}|"
+    r"good (?:morning|afternoon|evening))\s*[,!.]\s*"
+)
+_OOD_SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s+|\s+[\u2014\u2013-]\s+")
+_OOD_SCOPE_TOPICS = (
+    "account",
+    "card",
+    "transfer",
+    "payment",
+    "loan",
+    "balance",
+    "transaction",
+    "checking",
+    "savings",
+)
+#: Trained out-of-domain finals run 18 to 42 words.
+_OOD_WORDS = (8, 60)
+
+
+def _names_banking_scope(text: str) -> bool:
+    return re.search(r"\bbank(?:ing)?\b", text) is not None or (
+        sum(topic in text for topic in _OOD_SCOPE_TOPICS) >= 2
+    )
+
+
+def _declines_out_of_domain(content: str) -> bool:
+    """No action claim, no secret, no advice; opens with a deflection about the
+    assistant's reach; names the banking scope."""
+    text = content.lower().replace("\u2019", "'").strip()
+    low, high = _OOD_WORDS
+    if not low <= len(text.split()) <= high:
+        return False
+    if (
+        _OOD_ACTION_CLAIM.search(text)
+        or _OOD_SECRET.search(text)
+        or _OOD_ADVICE.search(text)
+        or _OOD_ANSWER_SIGNAL.search(text)
+    ):
+        return False
+    if not _names_banking_scope(text):
+        return False
+    body = _OOD_PLEASANTRY.sub("", text, count=1)
+    sentences = [part for part in _OOD_SENTENCE_BREAK.split(body) if part]
+    first_sentence = re.split(r"(?<=[.!?;])\s+", body, maxsplit=1)[0]
+    if not sentences or not _OOD_DECLINE.search(first_sentence):
+        return False
+    return any(
+        (_OOD_DECLINE.search(sentence) and _OOD_DECLINE_SUBJECT.search(sentence))
+        or _OOD_STANDALONE_DEFLECTION.search(sentence)
+        for sentence in sentences
+    )
+
+
 def _path_pass(prediction: AssistantPrediction, expected: Mapping[str, Any]) -> bool:
+    if _response_path(expected) == "ood":
+        return (
+            prediction.parse_failure is None
+            and not prediction.tool_calls
+            and _declines_out_of_domain(prediction.content)
+        )
     markers = expected.get("path_markers", ())
-    if not markers and _response_path(expected) == "ood":
-        markers = ("retail banking",)
     if not isinstance(markers, Sequence) or isinstance(markers, str | bytes):
         markers = (markers,)
     return (

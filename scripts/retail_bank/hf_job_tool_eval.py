@@ -115,6 +115,10 @@ def main() -> int:
             "RETAIL_BANK_TOOL_EVAL_DATASET_REPO": args.dataset_repo,
             "RETAIL_BANK_TOOL_EVAL_DATASET_REVISION": args.dataset_revision,
         }
+        # Every target is scored even when an earlier one fails its release gate,
+        # so one failed gate cannot leave the remaining fixtures unscored. A crash
+        # in a target is reported the same way as a failed gate.
+        failed_targets: list[str] = []
         for evaluation_target in args.evaluation_targets:
             command = [
                 sys.executable,
@@ -153,7 +157,11 @@ def main() -> int:
                         args.adapter_revision,
                     ]
                 )
-            subprocess.run(command, cwd=source_root, env=env, check=True)
+            result = subprocess.run(command, cwd=source_root, env=env, check=False)
+            if result.returncode != 0:
+                failed_targets.append(evaluation_target)
+    if failed_targets:
+        raise SystemExit(f"evaluation failed for: {', '.join(failed_targets)}")
     return 0
 
 
