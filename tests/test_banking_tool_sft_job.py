@@ -171,6 +171,8 @@ printf '%s\\n' "$@" > "$HF_LOG"
         # under the cost ceiling. The default 5h timeout is worth $13.75.
         env["JOB_TIMEOUT"] = "45m"
         env["CONFIRM_SPEND"] = "1"
+    if launcher == "run_remote_tool_eval_job.sh":
+        env["CONFIRM_SPEND"] = "1"
 
     subprocess.run(
         ["bash", f"scripts/retail_bank/{launcher}", *arguments],

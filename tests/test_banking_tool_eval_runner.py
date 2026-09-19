@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -1001,7 +1003,8 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     source = LAUNCHER_PATH.read_text(encoding="utf-8")
 
     assert "--flavor rtx-pro-6000" in source
-    assert "--timeout 2h" in source
+    assert 'job_timeout="${JOB_TIMEOUT:-2h}"' in source
+    assert '--timeout "$job_timeout"' in source
     assert "--volume hf://buckets/spkc83/jobs-artifacts:/data" in source
     assert "/scripts/retail_bank/hf_job_tool_eval.py" in source
     assert "/scripts/banking_v2/hf_job_tool_eval.py" not in source
@@ -1020,3 +1023,73 @@ def test_hf_eval_launcher_uses_pinned_url_durable_volume_and_two_hour_cap() -> N
     assert '--base-model-revision "$base_model_revision"' in source
     assert '--adapter-revision "$adapter_revision"' in source
     assert "--evaluation-targets test granite-v7-shadow screenshot-regression" in source
+
+
+def _run_eval_launcher(tmp_path: Path, **env_overrides: str) -> tuple[int, str, bool]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    hf_log = tmp_path / "hf.log"
+    (bin_dir / "curl").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (bin_dir / "hf").write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$HF_LOG"\n', encoding="utf-8"
+    )
+    for tool in ("curl", "hf"):
+        (bin_dir / tool).chmod(0o755)
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"CONFIRM_SPEND", "DRY_RUN", "JOB_TIMEOUT", "MAX_JOB_COST_USD"}
+    }
+    env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", HF_LOG=str(hf_log), **env_overrides)
+    result = subprocess.run(
+        ["bash", str(LAUNCHER_PATH), "a" * 40, "b" * 40, "c" * 40],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode, result.stderr, hf_log.exists()
+
+
+def test_hf_eval_launcher_refuses_to_bill_without_confirmation(tmp_path: Path) -> None:
+    code, stderr, submitted = _run_eval_launcher(tmp_path)
+
+    assert code == 2
+    assert "CONFIRM_SPEND=1" in stderr
+    assert "$5.50" in stderr
+    assert not submitted
+
+
+def test_hf_eval_launcher_refuses_a_timeout_above_the_cost_ceiling(tmp_path: Path) -> None:
+    code, stderr, submitted = _run_eval_launcher(tmp_path, JOB_TIMEOUT="3h", CONFIRM_SPEND="1")
+
+    assert code == 2
+    assert "exceeds MAX_JOB_COST_USD" in stderr
+    assert not submitted
+
+
+def test_hf_eval_launcher_dry_run_prices_without_submitting(tmp_path: Path) -> None:
+    code, stderr, submitted = _run_eval_launcher(tmp_path, JOB_TIMEOUT="30m", DRY_RUN="1")
+
+    assert code == 0
+    assert "Worst case if it runs to the timeout: $1.38" in stderr
+    assert "--timeout 30m" in stderr
+    assert not submitted
+
+
+def test_hf_eval_launcher_submits_the_priced_timeout_once_confirmed(tmp_path: Path) -> None:
+    code, _stderr, submitted = _run_eval_launcher(tmp_path, JOB_TIMEOUT="30m", CONFIRM_SPEND="1")
+
+    assert code == 0
+    assert submitted
+    arguments = (tmp_path / "hf.log").read_text(encoding="utf-8").splitlines()
+    assert arguments[:2] == ["jobs", "uv"]
+    assert arguments[arguments.index("--timeout") + 1] == "30m"
+
+
+def test_hf_eval_launcher_rejects_a_non_numeric_price(tmp_path: Path) -> None:
+    code, stderr, submitted = _run_eval_launcher(tmp_path, MAX_JOB_COST_USD="lots", DRY_RUN="1")
+
+    assert code == 2
+    assert "MAX_JOB_COST_USD must be a non-negative decimal" in stderr
+    assert not submitted
