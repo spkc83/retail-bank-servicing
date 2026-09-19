@@ -28,7 +28,12 @@ exists and from wording only where nothing better does:
 | `policy_question` | intent `policy_knowledge` | policy path, `faq_*` families |
 | `intent_drift` / `loop_back` / `agent_repair` / `clarification_answer` | relation labels | family name |
 | `adversarial` | wording: instruction override, credential extraction | `credential_hygiene`, `hard_negative_private_id` |
-| `multi_intent` | wording: two verb-plus-object clauses joined | same |
+| `multi_intent` | wording: two verb-plus-object clauses joined, in the current turn | same wording, in any user turn |
+
+The two wording detectors read different turns in the two corpora. The router
+labels the current turn, so a two-ask turn in its history is context, not a
+two-ask example. An alignment row trains on its whole dialogue, so a two-ask
+request followed by a confirmation ("Yes, freeze that one") counts.
 
 **Phrasing form**, one per row: `imperative`, `wh_question` ("What is my
 balance?"), `modal_request` ("Could you pull up my accounts?"), `elliptical`
@@ -107,9 +112,13 @@ for `cancel_transfer` (19) and `dispute_transaction` (31), against 2,005 for
 ## What the alignment corpus contains today
 
 3,959 training rows. It is better balanced on categories the router corpus
-lacks — 116 adversarial rows (`credential_hygiene`, `hard_negative_private_id`),
-200 long-running, 43% counterfactual — and shares the router corpus's two
-absences: **multi-intent is 0**, and question-form first asks are thin.
+lacks: 116 adversarial rows (`credential_hygiene`, `hard_negative_private_id`),
+52 multi-intent rows, 200 long-running, 43% counterfactual. The multi-intent
+rows are all two-step card requests ("Find my active debit card and freeze
+it", "review my cards, then lock the active debit card") from the
+`action_summary_followup`, `multi_tool_card_action` and `emergency_card_freeze`
+families; no other intent pair appears. Question-form first asks are thin, as
+in the router corpus.
 
 ## Authoring order
 
@@ -125,7 +134,8 @@ authoring order:
 4. adversarial turns in the **router** corpus — the router has no notion of an
    instruction-override or credential request and routes one as whatever it
    superficially resembles;
-5. multi-intent turns, absent from both corpora;
+5. multi-intent turns: absent from the router corpus, and limited to
+   find-then-freeze card requests in the alignment corpus;
 6. long-running conversations beyond six turns.
 
 New rows for the router corpus derive from the alignment corpus through

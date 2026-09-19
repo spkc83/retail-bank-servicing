@@ -213,5 +213,5 @@ in_domain = 0
 multi_turn = 1
 long_running = 1
 policy_question = 0
-adversarial = 0
-multi_intent = 0
+adversarial = 1
+multi_intent = 1

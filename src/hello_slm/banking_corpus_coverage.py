@@ -100,7 +100,7 @@ _ADVERSARIAL = re.compile(
 )
 _VERB = (
     r"(?:show|list|pull|bring|display|freeze|cancel|replace|dispute|open|start|stop|"
-    r"check|tell|give|send|report|block|find|get)"
+    r"check|tell|give|send|report|block|find|get|review|lock|unlock|view|look up)"
 )
 _OBJECT = (
     r"(?:card|cards|transfer|transfers|transaction|transactions|purchase|charge|"
@@ -225,11 +225,28 @@ def categories_for(row: Mapping[str, Any], text: str) -> frozenset[str]:
         if relations["clarification_answer"]:
             found.add("clarification_answer")
 
-    if _ADVERSARIAL.search(text or ""):
+    # The router labels the current turn, so only that turn is judged. An
+    # alignment row trains on its whole dialogue: a two-ask request followed by
+    # a confirmation teaches the two-ask request.
+    turns = [text or ""]
+    if "messages" in row and "history" not in row:
+        turns = _user_turns(row) or turns
+    if any(_ADVERSARIAL.search(turn) for turn in turns):
         found.add("adversarial")
-    if _MULTI_INTENT.search(text or ""):
+    if any(_MULTI_INTENT.search(turn) for turn in turns):
         found.add("multi_intent")
     return frozenset(found)
+
+
+def _user_turns(row: Mapping[str, Any]) -> list[str]:
+    messages = row.get("messages")
+    if not isinstance(messages, list):
+        return []
+    return [
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "user"
+    ]
 
 
 def row_text(row: Mapping[str, Any]) -> str:
