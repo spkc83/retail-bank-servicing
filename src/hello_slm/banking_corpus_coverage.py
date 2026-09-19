@@ -92,10 +92,10 @@ _DEICTIC = re.compile(
 _ADVERSARIAL = re.compile(
     r"(ignore (?:your|all|the) (?:previous|prior|earlier) instructions|"
     r"disregard (?:your|the) (?:rules|instructions|guidelines)|"
-    r"you are now|pretend (?:you are|to be)|jailbreak|"
+    r"you are now|pretend (?:you are|you're|to be)|jailbreak|"
     r"(?:print|show|tell|give|read)(?: me)? (?:the |my )?(?:full |entire |complete )?"
     r"(?:card number|pin|password|cvv|security code|ssn|social security)|"
-    r"what(?:'s| is) my (?:pin|password|cvv))",
+    r"what(?:'s| is) my (?:[a-z]+ ){0,2}(?:pin|password|passcode|cvv))",
     re.IGNORECASE,
 )
 _VERB = (
