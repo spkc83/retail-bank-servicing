@@ -62,10 +62,13 @@ outputs:  evaluation/47968b2b9ce0-5c16347a1e01/ in the adapter repo
 How to read the failures:
 
 - **OOD / small-talk response path** requires the literal marker `retail
-  banking` in the answer (`_path_pass` in `banking_tool_eval.py`). v14 declines
-  all eleven correctly (zero false accepts) in its teacher-realized voice ("What
-  I can do is banking: accounts, cards, transfers, payments, and loans"), which
-  never uses that phrase. The zero measures the marker, not the behaviour.
+  banking` in the answer (`_path_pass` in `banking_tool_eval.py`). All 142
+  out-of-domain finals in the alignment train split contain it. v14 declines
+  all eleven test prompts and redirects to banking ("What I can do is banking:
+  accounts, cards, transfers, payments, and loans") but never produces the
+  phrase. The behaviour is right and the trained wording is not reproduced;
+  `ood_false_accept` counts only tool calls, so this marker is the only check
+  that an out-of-domain answer declines at all.
 - **Policy quality and factuality** match required facts as exact phrases.
   Most misses are paraphrases ("report the charge promptly" for "report the
   transaction promptly"); some are omissions ("not guaranteed" for mortgage
